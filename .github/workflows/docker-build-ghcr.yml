@@ -1,0 +1,75 @@
+name: Build & Push Public Image to GHCR (Multi-Arch)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: '手动触发时的镜像标签'
+        required: true
+        default: 'manual-latest'
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. 设置 QEMU 以支持 ARM64 等多架构交叉构建
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # 2. 设置 Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      # 3. 登录到 GitHub Container Registry
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 4. 提取镜像元数据并处理小写命名
+      - name: Set Image Metadata
+        id: meta
+        run: |
+          # 转换为小写以符合 GHCR 规范
+          REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME="iptv-m3u-manager"
+          FULL_IMAGE="ghcr.io/$REPO_OWNER/$IMAGE_NAME"
+          
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="${{ github.event.inputs.image_tag }}"
+          fi
+          
+          echo "full_image=$FULL_IMAGE" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      # 5. 构建并推送（包含 AMD64 和 ARM64）
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # 关键修改：明确指定构建平台
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ steps.meta.outputs.full_image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.full_image }}:latest
+          # 缓存优化
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
