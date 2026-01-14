@@ -17,25 +17,47 @@
 
 ### 运行指南
 
-#### 方案一：Docker 启动（推荐，开箱即用）
-1. **下载源码**：
-   ```bash
-   git clone https://github.com/XianYuDaXian/iptv-m3u-manager.git
-   cd iptv-m3u-manager
-   ```
-2. **启动容器**：
-   ```bash
-   docker-compose up -d
-   ```
-3. **访问界面**：在浏览器打开 `http://localhost:8000`
-4. **更新方法**：
-   ```bash
-   git pull
-   docker-compose up -d --build
-   ```
-> **注意**：所有数据（数据库、缓存）将持久化在当前目录下的 `data/` 文件夹中。
+#### 方案一：Docker 镜像一键启动（推荐，无需下载源码）
+如果你只需使用功能，这是最快的方式。直接运行以下命令即可拉取我们自动构建的镜像：
 
-#### 方案二：本地手动运行
+```bash
+# 启动容器
+docker run -d \
+  --name iptv-manager \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  -v $(pwd)/data:/data \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/xianyudaxian/iptv-m3u-manager:latest
+```
+> **注意**：
+> - Windows PowerShell 用户请将 `$(pwd)` 替换为 `${PWD}`
+> - 数据文件将保存在当前目录下的 `data/` 文件夹中。
+
+#### 方案二：Docker Compose 部署（便于管理）
+创建一个 `docker-compose.yml` 文件，写入以下内容：
+
+```yaml
+version: '3.8'
+services:
+  iptv-manager:
+    image: ghcr.io/xianyudaxian/iptv-m3u-manager:latest
+    container_name: iptv-manager
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      - TZ=Asia/Shanghai
+```
+然后运行：
+```bash
+docker-compose up -d
+```
+
+#### 方案三：本地源码开发
+如果你想修改代码或进行二次开发：
 1. **下载源码**：
    ```bash
    git clone https://github.com/XianYuDaXian/iptv-m3u-manager.git
@@ -49,9 +71,6 @@
    ```bash
    uvicorn main:app --host 0.0.0.0 --port 8000 --reload
    ```
-4. **访问界面**：
-   - 本机访问：在浏览器打开 `http://localhost:8000`
-   - 局域网访问：在浏览器打开 `http://<主机IP>:8000`
 
 ### 更新日志
 
