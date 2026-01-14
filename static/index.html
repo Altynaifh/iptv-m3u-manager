@@ -659,7 +659,8 @@
             // 批量加载 EPG (防卡死)
             if (window.currentEPGUrl) {
                 batch.forEach((c, idx) => {
-                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, `epg_${renderOffset}_${idx}`, c.logo, c.id);
+                    const isRefresh = !!window.forceRefreshEPG || (window.refreshSelectedOnly && window.selectedChannelIds.has(c.id));
+                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, `epg_${renderOffset}_${idx}`, c.logo, c.id, isRefresh);
                 });
             }
 
@@ -682,20 +683,15 @@
         window.epgCache = new Map(); // 会话级缓存
         const pendingEpgRequests = new Map(); // 请求去重
 
-        async function loadChannelEPG(epgUrl, tvgId, tvgName, cellId, currentLogo, channelId) {
+        async function loadChannelEPG(epgUrl, tvgId, tvgName, cellId, currentLogo, channelId, isRefresh = false) {
             const cell = document.getElementById(cellId);
             if (!cell) return;
 
             try {
-                let isRefresh = !!window.forceRefreshEPG;
-                if (window.refreshSelectedOnly && channelId) {
-                    isRefresh = window.selectedChannelIds.has(channelId);
-                }
+                // 合并/去重 Key (缓存 Key 不应包含 refresh 状态，否则刷新后的结果无法复用)
+                const dedupeKey = `${epgUrl}_${tvgId}_${tvgName}`;
 
-                // 合并/去重 Key
-                const dedupeKey = `${epgUrl}_${tvgId}_${tvgName}_${isRefresh}`;
-
-                // 1. 检查缓存
+                // 1. 检查缓存 (如果不是刷新请求，则尝试读缓存)
                 if (!isRefresh && window.epgCache.has(dedupeKey)) {
                     applyEpgData(cell, window.epgCache.get(dedupeKey), cellId);
                     return;
@@ -718,6 +714,7 @@
                 pendingEpgRequests.set(dedupeKey, fetchPromise);
 
                 const data = await fetchPromise;
+                // 成功后更新缓存 (刷新请求也会覆盖缓存)
                 window.epgCache.set(dedupeKey, data);
                 pendingEpgRequests.delete(dedupeKey);
 
@@ -757,23 +754,33 @@
         // EPG 请求队列 (防卡死)
         const epgQueue = [];
         let activeEpgRequests = 0;
-        const MAX_EPG_CONCURRENCY = 10;
+        const MAX_EPG_CONCURRENCY = 5; // 降低并发，减少服务端压力
+        const EPG_REQ_TIMEOUT = 12000; // 12秒陈旧请求自动丢弃
 
         function enqueueEpgLoad(...args) {
-            epgQueue.push(args);
+            epgQueue.push({
+                args: args,
+                time: Date.now()
+            });
             processEpgQueue();
         }
 
         async function processEpgQueue() {
             if (activeEpgRequests >= MAX_EPG_CONCURRENCY || epgQueue.length === 0) return;
 
-            const args = epgQueue.shift();
+            const item = epgQueue.shift();
+            // 如果请求太旧了（比如滑动很快产生的过往请求），直接丢弃
+            if (Date.now() - item.time > EPG_REQ_TIMEOUT) {
+                processEpgQueue();
+                return;
+            }
+
             activeEpgRequests++;
             try {
-                await loadChannelEPG(...args);
+                await loadChannelEPG(...item.args);
             } finally {
                 activeEpgRequests--;
-                setTimeout(processEpgQueue, 10);
+                setTimeout(processEpgQueue, 20); // 稍微拉开一点间距
             }
         }
 

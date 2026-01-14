@@ -3,3 +3,5 @@ uvicorn
 sqlmodel
 aiohttp
 static-ffmpeg
+python-dateutil
+zhconv
