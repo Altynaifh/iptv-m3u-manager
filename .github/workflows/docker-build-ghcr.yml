@@ -1,0 +1,77 @@
+name: Build & Push Public Image to GHCR (Any Tag)
+
+on:
+  push:
+    # 核心修改：使用 '*' 匹配所有推送的 tag，不再限制必须以 'v' 开头
+    tags:
+      - '*' 
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: '手动触发时的镜像标签'
+        required: true
+        default: 'manual-latest'
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. 设置 QEMU
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # 2. 设置 Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      # 3. 登录 GHCR
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 4. 提取镜像元数据
+      - name: Set Image Metadata
+        id: meta
+        run: |
+          # 将用户名转为小写
+          REPO_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_NAME="iptv-m3u-manager"
+          FULL_IMAGE="ghcr.io/$REPO_OWNER/$IMAGE_NAME"
+          
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            # 获取当前推送的任意 tag 名
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            # 使用手动输入的 tag 名
+            TAG="${{ github.event.inputs.image_tag }}"
+          fi
+          
+          echo "full_image=$FULL_IMAGE" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      # 5. 构建并推送（多架构）
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # 保持多架构支持，确保 ARM64/AMD64 都能用
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ steps.meta.outputs.full_image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.full_image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
