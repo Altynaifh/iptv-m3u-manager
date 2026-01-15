@@ -7,8 +7,10 @@ import json
 from datetime import datetime, timedelta
 
 from database import engine, create_engine, sqlite_url
-from models import SQLModel, Subscription, Channel, OutputSource
-from routers import subscriptions, outputs, tools, channels
+from models import SQLModel, Subscription, Channel, OutputSource, TaskRecord
+from routers import subscriptions, outputs, tools, channels, tasks
+from task_broker import broker, update_task_status
+import uuid
 
 app = FastAPI(title="IPTV M3U Manager")
 
@@ -22,6 +24,7 @@ app.include_router(subscriptions.router)
 app.include_router(outputs.router)
 app.include_router(tools.router)
 app.include_router(channels.router)
+app.include_router(tasks.router)
 
 from sqlalchemy import text
 
@@ -167,15 +170,26 @@ async def auto_update_task():
                     
                     if elapsed_mins >= sub.auto_update_minutes:
                         print(f"[自动更新] 正在刷新订阅 {sub.id} ({sub.name})。已耗时: {elapsed_mins:.1f}分钟")
-                        try:
-                            from routers.subscriptions import process_subscription_refresh
-                            count = await process_subscription_refresh(session, sub)
-                            print(f"[自动更新] 订阅 {sub.id} 已同步。共提取到 {count} 个频道。")
-                        except Exception as e:
-                            print(f"[自动更新] 订阅 {sub.id} 刷新失败: {e}")
-                            sub.last_update_status = f"AutoUpdate Error: {str(e)}"
-                            session.add(sub)
-                            session.commit()
+                        
+                        # 派发异步任务
+                        from services.fetcher import fetch_subscription_task
+                        task_id = f"auto-sub-{sub.id}-{int(now.timestamp())}"
+                        task_record = TaskRecord(
+                            id=task_id,
+                            name=f"自动同步订阅: {sub.name}",
+                            status="pending",
+                            is_shown=False # 自动任务默认不在前端弹窗，但在任务列表可见
+                        )
+                        session.add(task_record)
+                        session.commit()
+                        
+                        await fetch_subscription_task.kiq(
+                            task_id=task_id,
+                            sub_id=sub.id,
+                            url_str=sub.url,
+                            ua=sub.user_agent,
+                            headers_json=sub.headers
+                        )
             
                 # 2. 更新聚合源
                 outputs = session.exec(select(OutputSource).where(
@@ -183,17 +197,16 @@ async def auto_update_task():
                     OutputSource.is_enabled == True
                 )).all()
                 for out in outputs:
+                        now = datetime.utcnow()
+                        last = out.last_updated or datetime.min
+                        elapsed_mins = (now - last).total_seconds() / 60
+
                         if elapsed_mins >= out.auto_update_minutes:
                             print(f"[自动更新] 正在刷新聚合源 {out.id} ({out.name})...")
                             try:
                                 sub_ids = json.loads(out.subscription_ids)
-                                for sid in sub_ids:
-                                    sub = session.get(Subscription, sid)
-                                    if sub:
-                                        from routers.subscriptions import process_subscription_refresh
-                                        await process_subscription_refresh(session, sub)
-                                
-                                # 刷新聚合 EPG (如果有)
+                                # 此处不需要 process_subscription_refresh，因为步骤1已经刷过所有订阅
+                                # 直接刷新聚合 EPG (如果有)
                                 if out.epg_url:
                                     from services.epg import fetch_epg_cached
                                     await fetch_epg_cached(out.epg_url, refresh=True)
@@ -202,46 +215,48 @@ async def auto_update_task():
                                 out.last_update_status = "自动更新成功"
                                 session.add(out)
                                 session.commit()
-                                print(f"[自动更新] 聚合源 {out.id} 及其关联订阅同步完成。")
+                                print(f"[自动更新] 聚合源 {out.id} 同步完成。")
 
                                 # 4. 自动化深度检测 (如果开启)
                                 if out.auto_visual_check:
                                     print(f"[自动同步] 聚合源 {out.id} 开启了同步后深度检测，正在启动...")
+                                    
+                                    from services.generator import M3UGenerator
+                                    from models import Channel
+                                    
+                                    # 1. 获取该聚合源关联的所有原始频道对象（带具体属性用于过滤）
+                                    raw_channels = []
+                                    for sid in sub_ids:
+                                        chs = session.exec(select(Channel).where(Channel.subscription_id == sid)).all()
+                                        raw_channels.extend(chs)
+                                    
+                                    # 2. 应用聚合源的过滤逻辑（关键词+正则），这才能保证检测的是正确的频道
                                     try:
-                                        from services.stream_checker import StreamChecker
-                                        from services.generator import M3UGenerator
-                                        from models import Channel
-                                        
-                                        # 1. 获取该聚合源关联的所有原始频道
-                                        raw_channels = []
-                                        for sid in sub_ids:
-                                            chs = session.exec(select(Channel).where(Channel.subscription_id == sid)).all()
-                                            raw_channels.extend(chs)
-                                        
-                                        # 2. 应用聚合源的过滤逻辑（关键词+正则）
-                                        try:
-                                            keywords = json.loads(out.keywords)
-                                        except:
-                                            keywords = []
-                                        matched_channels = M3UGenerator.filter_channels(raw_channels, out.filter_regex, keywords)
-                                        
-                                        # 3. 彻底移除冷却限制：只要开启了自动检测，每次同步都对所有匹配频道进行全量探测
-                                        pending_channels = matched_channels
+                                        keywords = json.loads(out.keywords)
+                                    except:
+                                        keywords = []
+                                    matched_channels = M3UGenerator.filter_channels(raw_channels, out.filter_regex, keywords)
+                                    
+                                    matched_ids = [c.id for c in matched_channels]
 
-                                        if pending_channels:
-                                            print(f"[自动同步] 聚合匹配 {len(matched_channels)} 个，开始全量深度探测...")
-                                            await StreamChecker.run_batch_check(session, pending_channels, source='auto')
-                                            out.last_update_status = "自动更新+深度检测完成"
-                                            session.add(out)
-                                            session.commit()
-                                            print(f"[自动同步] 聚合源 {out.id} 自动化深度检测任务完成。")
-                                        else:
-                                            print(f"[自动同步] 聚合源 {out.id} 所有匹配频道近期已测过，跳过。")
-                                            out.last_update_status = "自动更新成功(跳过检测)"
-                                            session.add(out)
-                                            session.commit()
-                                    except Exception as vis_e:
-                                        print(f"[自动同步] 聚合源 {out.id} 自动化深度检测执行失败: {vis_e}")
+                                    if matched_ids:
+                                        from services.stream_checker import check_channels_task
+                                        task_id = f"auto-check-{out.id}-{int(now.timestamp())}"
+                                        task_record = TaskRecord(
+                                            id=task_id,
+                                            name=f"自动深度检测: {out.name}",
+                                            status="pending",
+                                            is_shown=False
+                                        )
+                                        session.add(task_record)
+                                        session.commit()
+                                        
+                                        await check_channels_task.kiq(
+                                            task_id=task_id,
+                                            channel_ids=matched_ids,
+                                            source='auto'
+                                        )
+                                        print(f"[自动同步] 聚合源 {out.id} 已派发深度检测任务 ({len(matched_ids)} 个频道)。")
                             except Exception as e:
                                 print(f"[自动更新] 聚合源 {out.id} 刷新失败: {e}")
                                 out.last_update_status = f"自动更新失败: {str(e)}"
@@ -253,10 +268,26 @@ async def auto_update_task():
         await asyncio.sleep(30) # 每隔 30 秒检查一次，提高 2 分钟测试任务的灵敏度
 
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     """启动时初始化"""
     create_db_and_tables()
     migrate_db()
+    
+    # 启动 Taskiq Broker
+    await broker.startup()
+    
+    # 纠正“僵尸任务”：将重启前仍处于运行中或等待中的任务重置为已中止
+    with Session(engine) as session:
+        statement = select(TaskRecord).where(TaskRecord.status.in_(["running", "pending"]))
+        zombie_tasks = session.exec(statement).all()
+        if zombie_tasks:
+            print(f"[System] 正在重置 {len(zombie_tasks)} 个僵尸任务记录...")
+            for t in zombie_tasks:
+                t.status = "canceled"
+                t.message = "系统重启或非正常终止"
+                session.add(t)
+            session.commit()
+    
     asyncio.create_task(auto_update_task())
 
 @app.get("/")

@@ -333,10 +333,378 @@
 
     <div id="toast-container"></div>
 
+    <!-- 任务中心挂载点 -->
+    <div class="navbar-tools">
+        <div class="task-toggle-btn" onclick="taskCenter.toggle()" title="查看任务中心">
+            <span id="task_icon">🔔</span>
+            <div id="task_badge" class="task-count-badge" style="display: none;">0</div>
+        </div>
+    </div>
+
+    <!-- 控制台日志面板 -->
+    <div id="console_panel" class="console-panel">
+        <div class="console-header">
+            <h3>🖥️ 系统控制台</h3>
+            <div style="display: flex; gap: 8px;">
+                <button class="btn btn-sm" onclick="clearConsole()"
+                    style="background: rgba(255,255,255,0.1); font-size: 0.8em;">清空</button>
+                <button class="btn btn-sm" onclick="toggleConsole()"
+                    style="background:transparent; font-size: 1.25em; opacity: 0.7; padding:0 5px;">&times;</button>
+            </div>
+        </div>
+        <div id="console_output" class="console-output">
+            <div style="color: #6366f1; opacity: 0.8; font-family: monospace;">[System] 正在等待实时日志流...</div>
+        </div>
+    </div>
+
+    <!-- 任务中心面板 -->
+    <div id="task_panel" class="task-panel">
+        <div class="task-panel-header">
+            <h3>任务中心</h3>
+            <div style="display: flex; gap: 8px; align-items:center;">
+                <button class="btn btn-sm" onclick="restartServiceJS()"
+                    style="background: #ef4444; font-size: 0.75em; padding: 2px 8px; font-weight: bold; box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);">
+                    🚨 重启服务
+                </button>
+                <button class="btn btn-sm" onclick="taskCenter.toggle()"
+                    style="background:transparent; font-size: 1.2em; opacity: 0.7; border:none; padding:0 5px;">&times;</button>
+            </div>
+        </div>
+        <div id="task_list_container" class="task-list-container">
+            <div class="empty-task-state">暂无任务记录</div>
+        </div>
+        <div class="task-panel-footer" style="display: flex; gap: 10px;">
+            <button class="btn btn-sm btn-outline" style="flex: 1; background: rgba(255,255,255,0.05);"
+                onclick="taskCenter.loadTasks()">🔄 刷新列表</button>
+            <button class="btn btn-sm btn-outline"
+                style="flex: 1; background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: rgba(239, 68, 68, 0.2);"
+                onclick="taskCenter.cleanupTasks()">🧹 清理历史</button>
+            <button class="btn btn-sm" style="flex: 1; background: #6366f1;" onclick="toggleConsole()">🖥️ 控制台</button>
+        </div>
+    </div>
+
     <script>
         window.previewDebounceTimer = null;
         window.searchDebounceTimer = null;
         let currentSubTab = 'normal';
+
+        // ==========================================
+        // 核心任务中心控制引擎 (NAS Style)
+        // ==========================================
+        class GlobalTaskCenter {
+            constructor() {
+                this.tasks = new Map();
+                this.isVisible = false;
+                this.ws = null;
+                this.initialized = false;
+            }
+
+            init() {
+                if (this.initialized) return;
+                this.loadTasks();
+                this.connectWS();
+                this.initialized = true;
+                this.updateBadge();
+            }
+
+            toggle() {
+                const panel = document.getElementById('task_panel');
+                this.isVisible = !this.isVisible;
+                if (this.isVisible) {
+                    panel.classList.add('active');
+                    this.loadTasks(); // 展开时刷新
+                } else {
+                    panel.classList.remove('active');
+                }
+            }
+
+            async loadTasks() {
+                try {
+                    const res = await fetch('/api/tasks/');
+                    const data = await res.json();
+                    data.forEach(task => this.tasks.set(task.id, task));
+                    this.render();
+                    this.updateBadge();
+                } catch (e) {
+                    console.error("Failed to load tasks", e);
+                }
+            }
+
+            connectWS() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/api/tasks/ws`;
+
+                this.ws = new WebSocket(wsUrl);
+
+                this.ws.onmessage = (event) => {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.type === 'task_update') {
+                            this.handleUpdate(msg.data);
+                        } else if (msg.type === 'console_log') {
+                            this.handleConsoleLog(msg);
+                        }
+                    } catch (e) { console.error("WS Message Error", e); }
+                };
+
+                this.ws.onclose = () => {
+                    console.log("Task WS Closed. Reconnecting...");
+                    setTimeout(() => this.connectWS(), 3000);
+                };
+            }
+
+            handleConsoleLog(msg) {
+                const output = document.getElementById('console_output');
+                if (!output) return;
+
+                const line = document.createElement('div');
+                line.className = 'console-line';
+                line.innerHTML = `<span class="log-time">[${msg.timestamp}]</span> <span class="log-content">${this.escapeHTML(msg.line)}</span>`;
+                output.appendChild(line);
+
+                // 自动滚动到最下方
+                output.scrollTop = output.scrollHeight;
+
+                // 限制行数 (300行) 防止内存溢出
+                while (output.childNodes.length > 300) {
+                    output.removeChild(output.firstChild);
+                }
+            }
+
+            escapeHTML(str) {
+                const p = document.createElement('p');
+                p.textContent = str;
+                return p.innerHTML;
+            }
+
+            handleUpdate(task) {
+                const oldTask = this.tasks.get(task.id);
+                const isStatusChange = oldTask && oldTask.status !== task.status;
+
+                // 如果任务不存在或者状态/进度有变，则更新
+                this.tasks.set(task.id, { ...oldTask, ...task });
+                this.render();
+                this.updateBadge();
+
+                // 重点：任务状态变为终态时的强提醒
+                if (isStatusChange) {
+                    if (task.status === 'success') {
+                        showToast(`任务成功: ${task.name}`, "success");
+                    } else if (task.status === 'failure') {
+                        showToast(`任务失败: ${task.name}`, "error");
+                    } else if (task.status === 'canceled') {
+                        showToast(`任务已中止: ${task.name}`, "info");
+                    }
+                }
+
+                // 处理自动更新完成后的刷新逻辑 (如果是成功的关键任务)
+                if (task.status === 'success' && (task.id.startsWith('auto-') || task.id.startsWith('fetch-') || task.id.startsWith('check-'))) {
+                    // 延迟刷新主列表，确保后端数据库已持久化
+                    setTimeout(() => {
+                        fetchSubs(true);
+                        fetchOutputs(true);
+                        // 如果当前开着预览框，尝试局部刷新预览数据
+                        if (typeof searchChannels === 'function' && document.getElementById('channel_modal').style.display === 'flex') {
+                            searchChannels();
+                        }
+                    }, 1000);
+                }
+            }
+
+            async stopTask(taskId) {
+                if (!confirm("确定要中止该任务吗？")) return;
+                try {
+                    const res = await fetch(`/api/tasks/${taskId}/stop`, { method: 'POST' });
+                    const result = await res.json();
+                    if (result.status === 'success') {
+                        showToast("中止信号已发送", "info");
+                    } else {
+                        showToast(result.message, "error");
+                    }
+                } catch (e) {
+                    showToast("操作失败", "error");
+                }
+            }
+
+            async cleanupTasks() {
+                if (!confirm("确定要清理所有已完成的任务记录吗？\n(运行中的任务将被保留)")) return;
+                try {
+                    const res = await fetch('/api/tasks/cleanup', { method: 'DELETE' });
+                    const result = await res.json();
+                    if (result.status === 'success') {
+                        showToast(result.message, "success");
+                        // 局部清理本地缓存并重新渲染
+                        for (const [id, task] of this.tasks.entries()) {
+                            if (['success', 'failure', 'canceled'].includes(task.status)) {
+                                this.tasks.delete(id);
+                            }
+                        }
+                        this.render();
+                        this.updateBadge();
+                    }
+                } catch (e) {
+                    showToast("清理失败", "error");
+                }
+            }
+
+            updateBadge() {
+                const badge = document.getElementById('task_badge');
+                const runningCount = Array.from(this.tasks.values()).filter(t => t.status === 'running' || t.status === 'pending').length;
+
+                if (runningCount > 0) {
+                    badge.innerText = runningCount;
+                    badge.style.display = 'flex';
+                    document.getElementById('task_icon').innerHTML = '⚙️';
+                    document.getElementById('task_icon').classList.add('icon-spin');
+                } else {
+                    badge.style.display = 'none';
+                    document.getElementById('task_icon').innerHTML = '🔔';
+                    document.getElementById('task_icon').classList.remove('icon-spin');
+                }
+            }
+
+            render() {
+                const container = document.getElementById('task_list_container');
+                if (this.tasks.size === 0) {
+                    container.innerHTML = '<div class="empty-task-state">暂无任务记录</div>';
+                    return;
+                }
+
+                // 按更新时间降序排列
+                const sortedTasks = Array.from(this.tasks.values())
+                    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+                    .slice(0, 30); // 仅显示最近30个
+
+                container.innerHTML = sortedTasks.map(task => {
+                    const progress = task.progress || 0;
+                    const statusClass = task.status;
+                    const canStop = task.status === 'running' || task.status === 'pending';
+
+                    let statusText = '';
+                    switch (task.status) {
+                        case 'pending': statusText = '⏳ 等待中...'; break;
+                        case 'running': statusText = `🚀 正在运行 (${progress}%)`; break;
+                        case 'success': statusText = '✅ 任务完成'; break;
+                        case 'failure': statusText = '❌ 执行失败'; break;
+                        case 'canceled': statusText = '🛑 已中止'; break;
+                    }
+
+                    return `
+                        <div class="task-card" id="task_card_${task.id}">
+                            <div class="task-info-row">
+                                <div class="task-main-info">
+                                    <div class="task-name">${task.name}</div>
+                                    <div class="task-sub-info">
+                                        <span>${formatDate(task.updated_at).split(' ')[1]}</span>
+                                        <span style="opacity: 0.8">${task.message || ''}</span>
+                                    </div>
+                                </div>
+                                <div class="task-actions">
+                                    ${canStop ? `<button class="task-stop-btn" onclick="taskCenter.stopTask('${task.id}')">中止</button>` : ''}
+                                </div>
+                            </div>
+                            <div class="task-progress-wrapper">
+                                <div class="task-progress-bar ${statusClass}" style="width: ${progress}%"></div>
+                            </div>
+                            <div class="task-status-text ${statusClass}">${statusText}</div>
+                        </div>
+                    `;
+                }).join('');
+            }
+        }
+
+        const taskCenter = new GlobalTaskCenter();
+        document.addEventListener('DOMContentLoaded', () => {
+            taskCenter.init();
+            makeDraggable(document.getElementById('console_panel'), document.querySelector('.console-header'));
+        });
+
+        function makeDraggable(element, handle) {
+            if (!element || !handle) return;
+            let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+            handle.onmousedown = dragMouseDown;
+
+            function dragMouseDown(e) {
+                e = e || window.event;
+                e.preventDefault();
+                pos3 = e.clientX;
+                pos4 = e.clientY;
+                document.onmouseup = closeDragElement;
+                document.onmousemove = elementDrag;
+                element.style.transition = 'none'; // 拖动时禁用动画
+            }
+
+            function elementDrag(e) {
+                e = e || window.event;
+                e.preventDefault();
+                pos1 = pos3 - e.clientX;
+                pos2 = pos4 - e.clientY;
+                pos3 = e.clientX;
+                pos4 = e.clientY;
+                element.style.top = (element.offsetTop - pos2) + "px";
+                element.style.left = (element.offsetLeft - pos1) + "px";
+                element.style.bottom = 'auto'; // 清除原有对齐
+                element.style.right = 'auto';
+            }
+
+            function closeDragElement() {
+                document.onmouseup = null;
+                document.onmousemove = null;
+                element.style.transition = 'all 0.3s cubic-bezier(0.19, 1, 0.22, 1)'; // 恢复动画
+            }
+        }
+
+        function toggleConsole() {
+            const panel = document.getElementById('console_panel');
+            panel.classList.toggle('active');
+        }
+
+        async function restartServiceJS() {
+            if (!confirm("🚨 警告：此操作将强制重启后端服务进程！\n\n这通常用于解决任务彻底假死且无法中止的情况。\n重启期间所有正在进行的任务将中断。\n确定要继续吗？")) return;
+
+            try {
+                showToast("正在发送重启指令...", "info");
+                const res = await fetch('/api/system/restart', { method: 'POST' });
+                const result = await res.json();
+
+                if (result.status === 'success') {
+                    // 显示全屏锁定遮罩
+                    const overlay = document.createElement('div');
+                    overlay.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:9999; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; backdrop-filter:blur(10px);';
+                    overlay.innerHTML = `
+                        <div style="font-size: 3em; margin-bottom: 20px;">🔄</div>
+                        <h2 style="color:white; margin:0;">正在重启服务...</h2>
+                        <p style="opacity:0.7; margin-top:10px;">请稍后，系统正在尝试自动重新连接</p>
+                        <div style="margin-top:20px; width:200px; height:4px; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden;">
+                            <div id="restart_progress" style="width:0%; height:100%; background:#6366f1; transition:width 5s linear;"></div>
+                        </div>
+                    `;
+                    document.body.appendChild(overlay);
+
+                    // 启动进度条动画
+                    setTimeout(() => {
+                        const bar = document.getElementById('restart_progress');
+                        if (bar) bar.style.width = '100%';
+                    }, 100);
+
+                    // 5秒后尝试刷新页面
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 5500);
+                } else {
+                    showToast(result.message, "error");
+                }
+            } catch (e) {
+                showToast("重启指令由于连接中断无法确认，请5秒后手动刷新页面", "warning");
+                // 同样执行刷新逻辑
+                setTimeout(() => window.location.reload(), 5000);
+            }
+        }
+
+        function clearConsole() {
+            const output = document.getElementById('console_output');
+            output.innerHTML = '<div style="color: #6366f1; opacity: 0.5; font-family: monospace;">[System] 控制台已清空</div>';
+        }
 
         function switchSubTab(mode) {
             currentSubTab = mode;
