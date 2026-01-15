@@ -1,29 +1,47 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlmodel import Session, select
 from typing import List
-from models import Subscription, Channel
-from database import get_session
-from services.fetcher import IPTVFetcher
+from models import Subscription, Channel, TaskRecord
+from database import get_session, engine
+from services.fetcher import IPTVFetcher, fetch_subscription_task
 from services.epg import fetch_epg_cached
 from datetime import datetime
+import uuid
+from task_broker import update_task_status
 
 router = APIRouter(prefix="/subscriptions", tags=["subscriptions"])
 
-@router.post("/", response_model=Subscription)
+@router.post("/", response_model=dict)
 async def create_subscription(sub: Subscription, session: Session = Depends(get_session)):
-    """加个新订阅，顺便刷一遍"""
-    sub.url = sub.url.strip()
+    """加个新订阅，顺便异步刷一遍"""
+    print(f"[Action] 创建新订阅: {sub.name}")
+    sub.url = (sub.url or "").strip()
     session.add(sub)
     session.commit()
     session.refresh(sub)
     
-    # 第一次加，先刷下 EPG
-    try:
-        await process_subscription_refresh(session, sub)
-    except Exception as e:
-        print(f"首次刷新失败 {sub.url}: {e}")
+    # 创建异步任务记录
+    task_id = str(uuid.uuid4())
+    task_record = TaskRecord(
+        id=task_id,
+        name=f"首次同步订阅: {sub.name}",
+        status="pending",
+        progress=0,
+        message="任务排队中..."
+    )
+    session.add(task_record)
+    session.commit()
+
+    # 派发异步任务
+    await fetch_subscription_task.kiq(
+        task_id=task_id,
+        sub_id=sub.id,
+        url_str=sub.url or "",
+        ua=sub.user_agent or "AptvPlayer/1.4.1",
+        headers_json=sub.headers or "{}"
+    )
         
-    return sub
+    return {"subscription": sub, "task_id": task_id}
 
 @router.get("/", response_model=List[Subscription])
 def list_subscriptions(session: Session = Depends(get_session)):
@@ -37,6 +55,7 @@ def delete_subscription(sub_id: int, session: Session = Depends(get_session)):
     if not sub:
         raise HTTPException(status_code=404, detail="订阅不存在")
     
+    print(f"[Action] 删除订阅: {sub.name} (ID: {sub_id})")
     # 频道得跟着一块走
     channels = session.exec(select(Channel).where(Channel.subscription_id == sub_id)).all()
     for c in channels:
@@ -119,20 +138,31 @@ async def process_subscription_refresh(session: Session, sub: Subscription) -> i
 
 @router.post("/{sub_id}/refresh")
 async def refresh_subscription(sub_id: int, session: Session = Depends(get_session)):
-    """手动刷新订阅"""
+    """手动刷新订阅 (后台异步)"""
     sub = session.get(Subscription, sub_id)
     if not sub:
         raise HTTPException(status_code=404, detail="订阅不存在")
     
-    try:
-        count = await process_subscription_refresh(session, sub)
-        return {"message": f"成功抓取 {count} 个频道"}
-    except Exception as e:
-        sub = session.get(Subscription, sub_id)
-        if sub:
-            sub.last_update_status = f"Error: {str(e)}"
-            session.add(sub)
-            session.commit()
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+    # 创建异步任务记录
+    task_id = str(uuid.uuid4())
+    task_record = TaskRecord(
+        id=task_id,
+        name=f"同步订阅: {sub.name}",
+        status="pending",
+        progress=0,
+        message="任务排队中..."
+    )
+    session.add(task_record)
+    session.commit()
+
+    # 派发异步任务
+    print(f"[Action] 手动触发订阅刷新: {sub.name} (ID: {sub.id})")
+    await fetch_subscription_task.kiq(
+        task_id=task_id,
+        sub_id=sub.id,
+        url_str=sub.url or "",
+        ua=sub.user_agent or "AptvPlayer/1.4.1",
+        headers_json=sub.headers or "{}"
+    )
+    
+    return {"status": "success", "task_id": task_id, "message": "已启动后台同步任务"}

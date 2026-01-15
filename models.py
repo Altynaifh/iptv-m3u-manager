@@ -53,3 +53,15 @@ class OutputSource(SQLModel, table=True):
     is_enabled: bool = Field(default=True) # 是否启用该聚合源
     auto_update_minutes: int = Field(default=0) # 自动同步频率 (分钟)
     auto_visual_check: bool = Field(default=False) # 同步后自动执行深度检测
+
+class TaskRecord(SQLModel, table=True):
+    """全局任务记录"""
+    id: Optional[str] = Field(default=None, primary_key=True) # Taskiq 的 task_id
+    name: str # 任务显示名称
+    status: str = Field(default="pending") # pending, running, success, failure, canceled
+    progress: int = Field(default=0) # 进度百分比 0-100
+    message: Optional[str] = None # 当前步骤描述或错误信息
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    result: Optional[str] = None # 任务执行结果 (JSON)
+    is_shown: bool = Field(default=True) # 是否在 UI 任务中心显示

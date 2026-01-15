@@ -172,50 +172,110 @@ async def refresh_output(output_id: int, background_tasks: BackgroundTasks, sess
     out = session.get(OutputSource, output_id)
     if not out:
         raise HTTPException(status_code=404, detail="输出源不存在")
-    
-    try:
-        sub_ids = json.loads(out.subscription_ids)
-    except:
-        sub_ids = []
-        
-    results = []
-    # 逐个刷新订阅
-    for sub_id in sub_ids:
-        try:
-            sub = session.get(Subscription, sub_id)
-            if sub:
-               await process_subscription_refresh(session, sub)
-               results.append(f"Sub {sub_id}: Success")
-        except Exception as e:
-            sub = session.get(Subscription, sub_id)
-            if sub:
-                sub.last_update_status = f"Error: {str(e)}"
-                session.add(sub)
-            results.append(f"Sub {sub_id}: Failed")
 
-    # 刷新聚合 EPG
-    if out.epg_url:
-        try:
-            await fetch_epg_cached(out.epg_url, refresh=True)
-            results.append("Aggregate EPG: Success")
-        except:
-            results.append("Aggregate EPG: Failed")
-            
-    out.last_updated = datetime.utcnow()
-    out.last_update_status = "手动更新成功"
-    session.add(out)
+    import uuid
+    from models import TaskRecord
+    from task_broker import update_task_status
+    
+    task_id = str(uuid.uuid4())
+    task_record = TaskRecord(
+        id=task_id,
+        name=f"刷新聚合: {out.name}",
+        status="running",
+        progress=10,
+        message="正在刷新关联订阅..."
+    )
+    session.add(task_record)
     session.commit()
 
-    # 如果开启了自动深度检测，手动刷新时也异步触发
-    trigger_visual = False
-    if out.auto_visual_check:
-        print(f"DEBUG: [手动刷新] 聚合源 {output_id} 开启了深度检测，加入后台任务 (强制探测模式)...")
-        background_tasks.add_task(run_output_visual_check, output_id, force_check=True)
-        trigger_visual = True
-    else:
-        print(f"DEBUG: [手动刷新] 聚合源 {output_id} 未开启深度检测 (auto_visual_check={out.auto_visual_check})")
+    # 初始广播
+    background_tasks.add_task(update_task_status, task_id, status="running", progress=10, message="开始刷新关联订阅...")
 
-    return {"message": "刷新完成", "details": results, "trigger_visual": trigger_visual}
+    async def _do_refresh():
+        try:
+            sub_ids = json.loads(out.subscription_ids)
+        except:
+            sub_ids = []
+            
+        results_info = []
+        # 逐个刷新订阅
+        for i, sub_id in enumerate(sub_ids):
+            try:
+                sub = session.get(Subscription, sub_id)
+                if sub:
+                   await process_subscription_refresh(session, sub)
+                   results_info.append(f"Sub {sub_id}: Success")
+                   # 更新进度（分摊到前 50%）
+                   p = 10 + int((i+1)/len(sub_ids) * 40) if sub_ids else 50
+                   await update_task_status(task_id, progress=p, message=f"已同步订阅: {sub.name or sub_id}")
+            except Exception as e:
+                results_info.append(f"Sub {sub_id}: Failed")
+
+        # 刷新聚合 EPG
+        if out.epg_url:
+            await update_task_status(task_id, progress=50, message="正在更新 EPG...")
+            try:
+                await fetch_epg_cached(out.epg_url, refresh=True)
+            except: pass
+                
+        out.last_updated = datetime.utcnow()
+        out.last_update_status = "手动更新成功"
+        session.add(out)
+        session.commit()
+
+        # 如果开启了自动深度检测
+        if out.auto_visual_check:
+            await update_task_status(task_id, progress=60, message="准备深度检测...")
+            # 注意：此处直接复用 run_output_visual_check，但需要让它接管已有的 task_id
+            await run_output_visual_check_v2(output_id, task_id=task_id, force_check=True)
+        else:
+            await update_task_status(task_id, status="success", progress=100, message="刷新完成")
+
+    # 为了不阻塞 FastAPI 响应，刷新逻辑也在后台跑（或者如果刷新不慢，也可以 await）
+    # 这里我们采用 await 方式以保证 results 正确返回前端 UI 立即更新，而深度检测由其内部异步逻辑接管
+    background_tasks.add_task(_do_refresh)
+
+    return {"message": "任务已提交", "task_id": task_id}
+
+async def run_output_visual_check_v2(output_id: int, task_id: str, force_check: bool = False):
+    """(优化版) 后台运行深度检测，接管已有 TaskID"""
+    from database import engine
+    from sqlmodel import Session
+    
+    with Session(engine) as session:
+        out = session.get(OutputSource, output_id)
+        if not out: return
+        
+        try:
+            sub_ids = json.loads(out.subscription_ids)
+            raw_channels = []
+            for sid in sub_ids:
+                chs = session.exec(select(Channel).where(Channel.subscription_id == sid)).all()
+                raw_channels.extend(chs)
+            
+            try: keywords = json.loads(out.keywords)
+            except: keywords = []
+            
+            from services.generator import M3UGenerator
+            matched_channels = M3UGenerator.filter_channels(raw_channels, out.filter_regex, keywords)
+            
+            if matched_channels:
+                from services.stream_checker import StreamChecker
+                check_source = 'manual' if force_check else 'auto'
+                await StreamChecker.run_batch_check(session, matched_channels, source=check_source, task_id=task_id)
+                
+                # 再次同步聚合源状态
+                out = session.get(OutputSource, output_id)
+                if out:
+                    out.last_update_status = "手动更新+深度检测完成"
+                    session.add(out)
+                    session.commit()
+                
+                await update_task_status(task_id, status="success", progress=100, message="更新与检测全部完成")
+            else:
+                await update_task_status(task_id, status="success", progress=100, message="刷新完成 (无匹配频道需检测)")
+        except Exception as e:
+            await update_task_status(task_id, status="failure", message=f"检测执行出错: {e}")
 
 async def run_output_visual_check(output_id: int, force_check: bool = False):
     """后台运行深度检测"""
@@ -226,6 +286,24 @@ async def run_output_visual_check(output_id: int, force_check: bool = False):
         out = session.get(OutputSource, output_id)
         if not out: return
         
+        # 创建一个异步任务记录，以便“刷新节目表”后触发的检测也能在任务中心看到
+        import uuid
+        from models import TaskRecord
+        from task_broker import update_task_status
+        task_id = str(uuid.uuid4())
+        task_record = TaskRecord(
+            id=task_id,
+            name=f"刷新聚合检测: {out.name}",
+            status="pending",
+            progress=0,
+            message="正在准备检测..."
+        )
+        session.add(task_record)
+        session.commit()
+        
+        # 初始广播
+        await update_task_status(task_id, status="pending", progress=0, message="任务排队中")
+
         try:
             sub_ids = json.loads(out.subscription_ids)
             raw_channels = []
@@ -243,20 +321,26 @@ async def run_output_visual_check(output_id: int, force_check: bool = False):
             
             # 彻底移除冷却限制：只要触发此任务，就对所有匹配频道进行探测
             pending_channels = matched_channels
-            print(f"DEBUG: [后台检测] 开始探测全部 {len(pending_channels)} 个匹配频道")
             
             if pending_channels:
                 print(f"[后台检测] 聚合源 {out.id} 触发同步深度检测，待测: {len(pending_channels)}")
                 from services.stream_checker import StreamChecker
                 check_source = 'manual' if force_check else 'auto'
-                await StreamChecker.run_batch_check(session, pending_channels, source=check_source)
                 
-                # 重新获取对象以防 session 冲突
+                # 传入 task_id 以便更新进度
+                await StreamChecker.run_batch_check(session, pending_channels, source=check_source, task_id=task_id)
+                
+                # 重新获取对象并更新状态
                 out = session.get(OutputSource, output_id)
-                out.last_update_status = "手动更新+深度检测完成"
-                session.add(out)
-                session.commit()
+                if out:
+                    out.last_update_status = "手动更新+深度检测完成"
+                    session.add(out)
+                    session.commit()
+                
+                await update_task_status(task_id, status="success", progress=100, message="检测完成")
                 print(f"[后台检测] 聚合源 {out.id} 检测完成。")
+            else:
+                await update_task_status(task_id, status="success", progress=100, message="无匹配频道需要检测")
         except Exception as e:
             print(f"[后台检测] 聚合源 {out.id} 执行失败: {e}")
 

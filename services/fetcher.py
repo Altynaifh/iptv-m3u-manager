@@ -1,11 +1,84 @@
 import re
+from typing import Optional, List
 import aiohttp
 import json
 import os
 import subprocess
 import hashlib
 import glob
-from models import Channel
+from models import Channel, TaskRecord
+from task_broker import broker, update_task_status
+import asyncio
+
+@broker.task
+async def fetch_subscription_task(task_id: str, sub_id: int, url_str: str, ua: str, headers_json: str):
+    """包装订阅抓取为后台任务"""
+    from database import engine
+    from sqlmodel import Session, select
+    from models import Subscription, Channel
+    from datetime import datetime
+    
+    await update_task_status(task_id, status="running", progress=0, message="正在连接订阅源...")
+    print(f"[Task] 收到同步订阅请求: {sub_id}")
+    
+    try:
+        with Session(engine) as session:
+            sub = session.get(Subscription, sub_id)
+            if not sub:
+                print(f"[Task] 失败: 订阅 {sub_id} 不存在")
+                await update_task_status(task_id, status="failure", message="订阅不存在")
+                return
+
+            print(f"[Task] 正在同步订阅: {sub.name} (ID: {sub.id})")
+            # 1. 记住当前已有的状态（禁用状态、检测结果），防止刷新后丢失
+            old_channels = session.exec(select(Channel).where(Channel.subscription_id == sub.id)).all()
+            print(f"[Task] 正在迁移旧频道状态 ({len(old_channels)} 个)...")
+            channel_states = {
+                c.url: {
+                    "is_enabled": c.is_enabled,
+                    "check_status": c.check_status,
+                    "check_date": c.check_date,
+                    "check_image": c.check_image
+                } for c in old_channels
+            }
+            
+            # 2. 清掉旧台
+            for c in old_channels:
+                session.delete(c)
+            session.commit()
+
+            # 3. 抓取并解析
+            all_channels, all_metadata = await IPTVFetcher.fetch_subscription(url_str, ua, headers_json, task_id)
+            print(f"[Task] 抓取完成，解析得到 {len(all_channels)} 个频道")
+            
+            # 4. 入库新台并恢复状态
+            print(f"[Task] 正在将新频道入库并恢复状态...")
+            for item in all_channels:
+                url = item.get("url")
+                state = channel_states.get(url, {})
+                channel = Channel(
+                    **item, 
+                    subscription_id=sub.id, 
+                    is_enabled=state.get("is_enabled", True),
+                    check_status=state.get("check_status"),
+                    check_date=state.get("check_date"),
+                    check_image=state.get("check_image")
+                )
+                session.add(channel)
+            
+            sub.last_updated = datetime.utcnow()
+            sub.last_update_status = "Success"
+            session.add(sub)
+            session.commit()
+            print(f"[Task] 数据库持久化完成")
+        
+        await update_task_status(task_id, status="success", progress=100, message=f"同步完成，共抓取 {len(all_channels)} 个频道")
+        print(f"[Task] 任务执行成功: {task_id}")
+        return {"channel_count": len(all_channels)}
+    except Exception as e:
+        print(f"[Task] 异常错误: {e}")
+        await update_task_status(task_id, status="failure", message=f"同步失败: {str(e)}")
+        raise e
 
 class M3UParser:
     """M3U/TXT 解析器"""
@@ -178,10 +251,11 @@ class IPTVFetcher:
         )
 
     @staticmethod
-    async def fetch_subscription(url_str: str, ua: str, headers_json: str):
+    async def fetch_subscription(url_str: str, ua: str, headers_json: str, task_id: Optional[str] = None):
         """核心抓取函数"""
         # 支持逗号分隔多个地址
         urls = [u.strip() for u in url_str.split(",") if u.strip()]
+        total_urls = len(urls)
         
         all_channels = []
         all_metadata = {}
@@ -198,7 +272,20 @@ class IPTVFetcher:
 
         connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(connector=connector) as session:
-            for url in urls:
+            for i, url in enumerate(urls):
+                if task_id:
+                    # 检查是否已中止
+                    from sqlmodel import Session
+                    from database import engine
+                    with Session(engine) as db_session:
+                        task = db_session.get(TaskRecord, task_id)
+                        if task and task.status == "canceled":
+                            print(f"[Task] 任务 {task_id} 已由用户取消")
+                            return all_channels, all_metadata
+                            
+                    progress = int((i / total_urls) * 100)
+                    await update_task_status(task_id, progress=progress, message=f"处理源 ({i+1}/{total_urls}): {url[:30]}...")
+
                 print(f"--- 正在处理源: [{url}] ---")
                 try:
                     # 识别是否为 Git 仓库
