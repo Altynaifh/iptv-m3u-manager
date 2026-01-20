@@ -18,6 +18,7 @@
     background: rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(10px);
     border: 1px solid var(--glass-border);
+    border: 1px solid var(--glass-border);
     border-radius: 12px;
     display: flex;
     align-items: center;
@@ -25,9 +26,9 @@
     cursor: pointer;
     position: relative;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    color: #fff;
+    color: var(--text);
     font-size: 1.4em;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 4px 15px var(--shadow);
 }
 
 .task-toggle-btn:hover {
@@ -41,7 +42,7 @@
     position: absolute;
     top: -5px;
     right: -5px;
-    background: #ef4444;
+    background: var(--danger);
     color: white;
     font-size: 10px;
     min-width: 18px;
@@ -79,11 +80,13 @@
     right: 20px;
     width: 380px;
     max-height: 80vh;
-    background: rgba(30, 30, 45, 0.96);
+    width: 380px;
+    max-height: 80vh;
+    background: var(--bg-surface);
     backdrop-filter: blur(20px);
     border: 1px solid var(--glass-border);
     border-radius: 16px;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 10px 40px var(--shadow);
     z-index: 2004;
     display: flex;
     flex-direction: column;
@@ -113,7 +116,7 @@
 .task-panel-header h3 {
     margin: 0;
     font-size: 1.1em;
-    color: #fff;
+    color: var(--text);
     font-weight: 600;
 }
 
@@ -156,7 +159,7 @@
 .task-name {
     font-weight: 600;
     font-size: 0.95em;
-    color: #fff;
+    color: var(--text);
     margin-bottom: 2px;
 }
 
@@ -188,12 +191,12 @@
 }
 
 .task-progress-bar.success {
-    background: #10b981;
+    background: var(--success);
     box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
 }
 
 .task-progress-bar.failure {
-    background: #ef4444;
+    background: var(--danger);
     box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
 }
 
@@ -217,7 +220,8 @@
 
 .task-stop-btn {
     background: rgba(239, 68, 68, 0.1);
-    color: #ef4444;
+    /* Keep opacity for now or define --danger-soft */
+    color: var(--danger);
     border: 1px solid rgba(239, 68, 68, 0.2);
     padding: 4px 8px;
     border-radius: 6px;
@@ -227,15 +231,40 @@
 }
 
 .task-stop-btn:hover {
-    background: #ef4444;
+    background: var(--danger);
     color: #fff;
 }
 
 .task-panel-footer {
     padding: 12px 16px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid var(--glass-border);
     display: flex;
     justify-content: flex-end;
+    gap: 10px;
+}
+
+/* New Theme-aware Button Classes */
+.btn-outline {
+    background: transparent;
+    border: 1px solid var(--glass-border);
+    color: var(--text);
+    transition: all 0.2s;
+}
+
+.btn-outline:hover {
+    background: var(--glass-bg);
+    border-color: var(--primary);
+}
+
+.btn-danger-outline {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.btn-danger-outline:hover {
+    background: var(--danger);
+    color: #fff;
 }
 
 .empty-task-state {
@@ -255,6 +284,66 @@
     }
 }
 
+/* ==========================================
+   预览弹窗 (Modal) 全局样式底座
+   ========================================== */
+.modal {
+    display: none !important;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--modal-bg);
+    backdrop-filter: blur(12px);
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+.channel-modal-card {
+    max-width: 800px;
+    width: 100%;
+    max-height: 90vh;
+    position: relative;
+    padding: 0 !important;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    margin: 0;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.modal-footer-stats {
+    padding: 16px 24px;
+    border-top: 1px solid var(--glass-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--modal-header);
+    flex-shrink: 0;
+}
+
+[data-theme="light"] .modal-footer-stats,
+[data-theme="light"] .modal-header-toolbar {
+    background: #f8fafc !important;
+    border-color: #cbd5e1;
+}
+
+.modal-header-toolbar {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--glass-border);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--modal-header);
+    z-index: 10;
+    flex-shrink: 0;
+}
+
 .icon-spin {
     display: inline-block;
     animation: spin 2s linear infinite;
@@ -268,15 +357,96 @@
 }
 
 :root {
+    /* 深色模式 - 柔和护眼 (Material Dark 灵感) */
     --primary: #6366f1;
-    --bg-dark: #0f172a;
+    /* Indigo 500 */
+    --bg-body: #121212;
+    /* 避免纯黑 */
+    --bg-surface: #1e1e1e;
+    /* 稍微提亮 */
+    --bg-card: #252526;
     --glass-bg: rgba(255, 255, 255, 0.05);
-    --glass-border: rgba(255, 255, 255, 0.1);
-    --text: #f8fafc;
+    --glass-border: rgba(255, 255, 255, 0.12);
+    --text: #e0e0e0;
+    /* 避免纯白 */
+    --text-muted: #a0a0a0;
+    --shadow: rgba(0, 0, 0, 0.4);
+
+    /* 状态色 */
+    --success: #10b981;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+    --info: #3b82f6;
+
+    /* 特定组件 */
+    --modal-bg: rgba(18, 18, 18, 0.95);
+    --modal-header: #1e1e1e;
+    --input-bg: rgba(255, 255, 255, 0.08);
+    /* 半透明白 */
+    --code-bg: rgba(0, 0, 0, 0.3);
+    --code-text: #86efac;
+    --btn-text: #ffffff;
+    /* 按钮文字保持白色以确保在 Primary色上可见 */
+    --text-highlight: #34d399;
+    --text-loading: #a5b4fc;
+    --checkbox-border: rgba(255, 255, 255, 0.3);
 }
 
+[data-theme="light"] {
+    --primary: #7C3AED;
+    /* Deep Purple - Solid */
+    --bg-body: #f8fafc;
+    /* Slate 50 */
+    --bg-surface: #ffffff;
+    --bg-card: #ffffff;
+    --glass-bg: #ffffff;
+    /* Opaque white for cards */
+    --glass-border: #e2e8f0;
+    /* Slate 200 */
+
+    --text: #0f172a;
+    /* Slate 900 - Almost Black */
+    --text-muted: #64748b;
+    /* Slate 500 */
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    /* Card Shadow */
+
+    /* Solid State Colors (No Fluorescence) */
+    --success: #16a34a;
+    /* Green 600 */
+    --danger: #dc2626;
+    /* Red 600 */
+    --warning: #d97706;
+    /* Amber 600 */
+    --info: #2563eb;
+    /* Blue 600 */
+
+    --modal-bg: #ffffff;
+    --modal-header: #ffffff;
+    --input-bg: #f1f5f9;
+    /* Slate 100 */
+    --code-bg: #e2e8f0;
+    --code-text: #334155;
+    --btn-text: #ffffff;
+    --text-highlight: #15803d;
+    /* Green 700 */
+    --text-loading: #4338ca;
+    /* Indigo 700 */
+    --checkbox-border: #cbd5e1;
+}
+
+/* Light Mode Card Depth */
+[data-theme="light"] .glass-card,
+[data-theme="light"] .modal {
+    border: 1px solid #e2e8f0;
+    box-shadow: var(--shadow);
+    background: #ffffff !important;
+    backdrop-filter: none;
+}
+
+
 body {
-    background-color: var(--bg-dark);
+    background-color: var(--bg-body);
     color: var(--text);
     font-family: 'Inter', sans-serif;
     margin: 0;
@@ -297,7 +467,7 @@ input[type="checkbox"] {
 }
 
 .glass-card {
-    background: var(--glass-bg);
+    background: var(--bg-card);
     backdrop-filter: blur(12px);
     border: 1px solid var(--glass-border);
     border-radius: 16px;
@@ -338,7 +508,7 @@ input[type="checkbox"] {
 }
 
 .url-display {
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--code-bg);
     padding: 12px;
     border-radius: 6px;
     margin-top: 10px;
@@ -346,7 +516,7 @@ input[type="checkbox"] {
     font-family: 'JetBrains Mono', 'Fira Code', monospace;
     font-size: 0.9em;
     word-break: break-all;
-    color: #86efac;
+    color: var(--code-text);
     border: 1px dashed var(--glass-border);
     cursor: pointer;
     position: relative;
@@ -385,7 +555,7 @@ h2 {
 
 .btn {
     background: var(--primary);
-    color: white;
+    color: var(--btn-text);
     border: none;
     padding: 10px 20px;
     border-radius: 8px;
@@ -433,7 +603,7 @@ h2 {
     border-radius: 8px;
     background: rgba(255, 255, 255, 0.1);
     border: 1px solid var(--glass-border);
-    color: #fff;
+    color: var(--text);
     cursor: pointer;
     font-size: 0.9em;
     display: flex;
@@ -476,9 +646,8 @@ h2 {
 input,
 textarea {
     width: 100%;
-    background: rgba(0, 0, 0, 0.2);
-    border: 1px solid var(--glass-border);
-    color: white;
+    background: var(--input-bg);
+    color: var(--text);
     padding: 12px;
     border-radius: 8px;
     box-sizing: border-box;
@@ -499,7 +668,7 @@ textarea {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--input-bg);
     border: 1px solid var(--glass-border);
     padding: 8px;
     border-radius: 8px;
@@ -543,7 +712,7 @@ textarea {
 .sub-selector-list {
     max-height: 380px;
     overflow-y: auto;
-    background: rgba(0, 0, 0, 0.2);
+    background: var(--input-bg);
     border: 1px solid var(--glass-border);
     border-radius: 8px;
     padding: 10px;
@@ -563,8 +732,10 @@ textarea {
     cursor: pointer !important;
     width: 100% !important;
     box-sizing: border-box !important;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-    color: #fff !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    border-bottom: 1px solid var(--glass-border);
+    color: var(--text) !important;
 
 }
 
@@ -629,9 +800,12 @@ textarea {
 }
 
 .preview-item img {
-    height: 20px;
-    width: 20px;
+    height: 24px;
+    width: 24px;
     object-fit: contain;
+    background: rgba(125, 125, 125, 0.1);
+    padding: 2px;
+    border-radius: 4px;
 }
 
 .edit-mode {
@@ -667,11 +841,11 @@ textarea {
     /* 避开任务面板 */
     width: 500px;
     height: 350px;
-    background: rgba(10, 10, 15, 0.98);
+    background: var(--bg-surface);
     backdrop-filter: blur(25px);
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: 1px solid var(--glass-border);
     border-radius: 12px;
-    box-shadow: 0 15px 45px rgba(0, 0, 0, 0.6);
+    box-shadow: 0 15px 45px var(--shadow);
     z-index: 2003;
     display: flex;
     flex-direction: column;
@@ -739,6 +913,14 @@ textarea {
     color: #e2e8f0;
 }
 
+/* 通用 Logo 样式 (PC & Mobile) */
+.channel-table-container img {
+    background: rgba(125, 125, 125, 0.1);
+    padding: 2px;
+    border-radius: 4px;
+    object-fit: contain;
+}
+
 /* 移动端适配 */
 @media (max-width: 1000px) {
     .console-panel {
@@ -746,5 +928,489 @@ textarea {
         bottom: 80px;
         width: calc(100vw - 40px);
         height: 300px;
+    }
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+    .container {
+        margin: 10px auto;
+        padding: 10px;
+    }
+
+    .glass-card {
+        padding: 16px;
+        margin-bottom: 16px;
+    }
+
+    /* 隐藏表头 */
+    .channel-table-container thead {
+        display: none;
+    }
+
+    /* 表格转卡片列表 */
+    .channel-table-container,
+    .channel-table-container tbody,
+    .channel-table-container tr,
+    .channel-table-container td {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .channel-table-container tr {
+        background: var(--bg-card);
+        border: 1px solid var(--glass-border);
+        border-radius: 10px;
+        padding: 12px;
+        margin-bottom: 8px;
+        position: relative;
+        overflow: hidden;
+        transition: all 0.2s;
+        opacity: 1 !important;
+        /* 覆盖之前的透明度设置 */
+    }
+
+    .channel-table-container tr.card-selected {
+        border-color: #fbbf24 !important;
+        background: rgba(251, 191, 36, 0.05) !important;
+        box-shadow: 0 0 15px rgba(251, 191, 36, 0.1);
+    }
+
+    .channel-table-container tr[style*="opacity: 0.5"] {
+        background: rgba(0, 0, 0, 0.4);
+    }
+
+    [data-theme="light"] .channel-table-container tr[style*="opacity: 0.5"] {
+        background: rgba(0, 0, 0, 0.05);
+        /* Lighter background for disabled items in light mode */
+        opacity: 0.6 !important;
+    }
+
+    /* 单元格样式适配卡片 */
+    .channel-table-container td {
+        padding: 4px 0 !important;
+        border: none !important;
+        display: flex;
+        align-items: flex-start;
+        /* 改为起点对齐，防止长文本错位 */
+        gap: 8px;
+        min-height: 20px;
+        gap: 8px;
+        min-height: 20px;
+        font-size: 13px;
+        /* 统一字号 */
+        color: var(--text);
+        /* 统一内容颜色 */
+        line-height: 1.4;
+    }
+
+    /* 为特定字段添加标签 */
+    .channel-table-container td::before {
+        content: attr(data-label);
+        font-weight: 600;
+        /* 统一样式：中粗体 */
+        color: var(--text-muted);
+        /* 使用主题变量 */
+        min-width: 60px;
+        font-size: 13px;
+        flex-shrink: 0;
+    }
+
+    [data-theme="light"] .channel-table-container td::before {
+        font-weight: 700;
+        color: var(--text-muted);
+        /* Ensure legible in light mode */
+    }
+
+    /* 隐藏不需要标签的字段 */
+    .channel-table-container td:nth-child(1)::before,
+    .channel-table-container td:nth-child(2)::before {
+        display: none;
+    }
+
+    /* 复选框位置 */
+    .channel-table-container td:nth-child(1) {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: auto;
+        padding: 0 !important;
+        z-index: 2;
+    }
+
+    .channel-table-container td:nth-child(2) {
+        margin-bottom: 8px;
+        padding-top: 0 !important;
+    }
+
+    .channel-table-container td:nth-child(2) img {
+        height: 28px !important;
+        max-width: 120px;
+        object-fit: contain;
+        border-radius: 4px;
+        background: rgba(125, 125, 125, 0.1);
+        /* Neutral grey bg for logos */
+        padding: 2px;
+    }
+
+    /* 截图预览区域特殊处理 */
+    .channel-table-container td:has(img[style*="height: 40px"]) {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+        margin-top: 10px;
+    }
+
+    .channel-table-container td:has(img[style*="height: 40px"])::before {
+        margin-bottom: 4px;
+    }
+
+    .channel-table-container td img[style*="height: 40px"] {
+        height: auto !important;
+        max-height: 160px;
+        width: 100% !important;
+        max-width: 100%;
+        border-radius: 10px;
+        object-fit: cover;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* 底部操作按钮 */
+    .channel-table-container td:last-child {
+        margin-top: 10px;
+        padding-top: 10px !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+        display: block;
+    }
+
+    .channel-table-container td:last-child::before {
+        display: none;
+    }
+
+    .channel-table-container td:last-child .btn {
+        width: 100%;
+        padding: 8px;
+        font-size: 15px;
+        border-radius: 10px;
+        font-weight: bold;
+    }
+
+    /* 弹窗及工具栏适配 - 修复显示不全 */
+    .modal .glass-card {
+        height: 100dvh !important;
+        /* 使用 dynamic vh 处理移动端地址栏变动 */
+        max-height: 100dvh !important;
+        border-radius: 0;
+        padding: 0 !important;
+        width: 100vw !important;
+        left: 0 !important;
+        top: 0 !important;
+        margin: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+
+    /* 顶部工具栏高度优化 */
+    #channel_modal .glass-card>div:first-child {
+        padding: 8px 12px !important;
+        /* 缩小内边距 */
+        gap: 6px !important;
+        background: var(--modal-header) !important;
+        border-bottom: 1px solid var(--glass-border);
+        z-index: 10;
+    }
+
+    /* 核心修复：工具栏按钮排版美化 & 紧凑化 (iOS 增强版) */
+    #channel_modal .glass-card>div:first-child>div:last-child {
+        display: flex !important;
+        flex-wrap: wrap !important;
+        gap: 5px !important;
+        /* 统一更小的间距 */
+        width: 100% !important;
+    }
+
+    .toolbar-btn {
+        flex: 1 1 calc(50% - 4px) !important;
+        /* 增加余量防止 iOS 溢出 */
+        max-width: calc(50% - 4px) !important;
+        font-size: 13px !important;
+        height: 38px !important;
+        border-radius: 8px !important;
+        font-weight: 500;
+        padding: 0 2px !important;
+        display: flex;
+        /* 移除 !important 以允许 JS 控制显隐 */
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+    }
+
+    /* 辅助选择按钮在手机端强制 2 行 2 列，解决 iOS 文字重叠 */
+    .toolbar-btn[onclick*="toggleSelectAll"],
+    .toolbar-btn[onclick*="invertSelection"],
+    .toolbar-btn[onclick*="selectByStatus"] {
+        flex: 1 1 calc(50% - 4px) !important;
+        max-width: calc(50% - 4px) !important;
+        font-size: 11px !important;
+        /* 稍微缩小字号防止 iOS 换行 */
+        height: 34px !important;
+    }
+
+    /* 启用/禁用选中按钮 并排 */
+    .toolbar-btn[onclick*="batchSetStatus(true)"],
+    .toolbar-btn[onclick*="batchSetStatus(false)"] {
+        flex: 1 1 calc(50% - 4px) !important;
+        max-width: calc(50% - 4px) !important;
+        height: 38px !important;
+    }
+
+    /* 刷新节目表按钮特殊处理 */
+    #refresh_epg_btn {
+        flex: 1 1 100% !important;
+        max-width: 100% !important;
+        height: 34px !important;
+        font-size: 12px !important;
+        background: linear-gradient(135deg, #10b981, #059669) !important;
+    }
+
+    #check_options_container {
+        width: 100% !important;
+        background: rgba(255, 255, 255, 0.08);
+        padding: 8px 12px !important;
+        border-radius: 10px;
+        margin-bottom: 2px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+    }
+
+    #check_options_container input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+    }
+
+    .modal-header-toolbar {
+        padding: 12px 16px !important;
+        gap: 6px !important;
+        background: rgba(20, 20, 30, 0.98) !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        z-index: 20 !important;
+    }
+
+    .modal-footer-stats {
+        padding: 12px 16px max(16px, env(safe-area-inset-bottom)) !important;
+        gap: 10px !important;
+        background: rgba(15, 15, 25, 1) !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        z-index: 20 !important;
+        flex-direction: column !important;
+    }
+
+    .modal-footer-stats div:first-child {
+        font-size: 13px !important;
+        text-align: center;
+        width: 100%;
+    }
+
+    .modal-footer-stats .btn {
+        width: 100% !important;
+        height: 42px !important;
+        font-size: 15px !important;
+        border-radius: 12px !important;
+        background: #334155 !important;
+        display: flex;
+        /* 移除 !important */
+        align-items: center;
+        justify-content: center;
+    }
+
+    #channel_list_container {
+        flex: 1 !important;
+        overflow-y: auto !important;
+        padding: 10px !important;
+    }
+
+    #channel_list_container {
+        flex: 1 !important;
+        overflow-y: auto !important;
+        padding: 10px !important;
+    }
+
+    /* 订阅列表适配 */
+    .sub-item {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        padding: 18px 0 !important;
+        gap: 14px !important;
+    }
+
+    .sub-item>div:first-child {
+        width: 100% !important;
+        margin-bottom: 4px;
+    }
+
+    /* 订阅项按钮组 */
+    .sub-item>div:last-child {
+        width: 100% !important;
+        display: grid !important;
+        grid-template-columns: repeat(5, 1fr) !important;
+        /* 5列平铺 */
+        gap: 6px !important;
+    }
+
+    .sub-item .btn-sm {
+        padding: 10px 0 !important;
+        width: 100% !important;
+        font-size: 11px !important;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+        border-radius: 8px !important;
+        min-width: 0 !important;
+    }
+
+    /* 优化订阅项内的状态文字 */
+    .sub-item small {
+        display: block;
+        word-break: break-all;
+        margin-top: 4px;
+        line-height: 1.2;
+    }
+}
+
+/* ============================================================
+   平板及大屏移动设备适配 (针对用户提到的 1504px / 2442px 等)
+   ============================================================ */
+@media (min-width: 769px) and (max-width: 2560px) {
+    .modal .glass-card {
+        max-height: calc(100dvh - 60px) !important;
+        /* 对屏幕较大的平板，留出一定的上下边距 */
+        height: auto !important;
+        width: 92vw !important;
+        max-width: 1200px !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+
+    #channel_list_container {
+        flex: 1 !important;
+        overflow-y: auto !important;
+    }
+
+    /* 平板下的工具栏按钮美化 */
+    #channel_modal .toolbar-btn {
+        height: 36px !important;
+        border-radius: 10px !important;
+        font-size: 13px !important;
+        padding: 0 12px !important;
+        flex: unset !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+    }
+
+    #channel_search {
+        height: 36px !important;
+        border-radius: 10px !important;
+        background: rgba(0, 0, 0, 0.3) !important;
+    }
+
+    /* 优化自动检测选项排版 */
+    #check_options_container {
+        background: rgba(99, 102, 241, 0.1) !important;
+        padding: 5px 12px !important;
+        border-radius: 8px !important;
+        border: 1px solid rgba(99, 102, 241, 0.2) !important;
+    }
+
+    /* 平板模式下让统计栏也保持固定且更美观 */
+    .modal-footer-stats {
+        position: sticky;
+        bottom: 0;
+        background: rgba(15, 15, 25, 1) !important;
+        z-index: 10;
+        padding: 12px 24px !important;
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 -5px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .modal-footer-stats .btn {
+        height: 36px !important;
+        padding: 0 20px !important;
+        font-size: 14px !important;
+        border-radius: 8px !important;
+    }
+}
+
+/* ==========================================
+   图片预览 Lightbox
+   ========================================== */
+.lightbox {
+    display: none;
+    position: fixed;
+    z-index: 3000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.9);
+    justify-content: center;
+    align-items: center;
+    backdrop-filter: blur(5px);
+    animation: fadeIn 0.2s ease-out;
+}
+
+.lightbox-content {
+    margin: auto;
+    display: block;
+    max-width: 95%;
+    max-height: 90%;
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 0 30px rgba(0, 0, 0, 0.5);
+    transition: transform 0.2s;
+    animation: zoomIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.lightbox-close {
+    position: absolute;
+    top: 20px;
+    right: 30px;
+    color: #f1f1f1;
+    font-size: 40px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: 0.3s;
+    z-index: 3001;
+    text-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.lightbox-close:hover,
+.lightbox-close:focus {
+    color: #bbb;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes zoomIn {
+    from {
+        transform: scale(0.9);
+        opacity: 0;
+    }
+
+    to {
+        transform: scale(1);
+        opacity: 1;
     }
 }

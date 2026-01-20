@@ -20,12 +20,12 @@
         }
 
         .toast {
-            background: rgba(30, 30, 45, 0.95);
-            color: #fff;
+            background: var(--bg-surface);
+            color: var(--text);
             padding: 12px 24px;
             border-radius: 8px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4 15px var(--shadow);
+            border: 1px solid var(--glass-border);
             backdrop-filter: blur(10px);
             font-size: 0.95em;
             display: flex;
@@ -37,15 +37,15 @@
         }
 
         .toast.success {
-            border-left: 3px solid #10b981;
+            border-left: 4px solid var(--success);
         }
 
         .toast.error {
-            border-left: 3px solid #ef4444;
+            border-left: 4px solid var(--danger);
         }
 
         .toast.info {
-            border-left: 3px solid #3b82f6;
+            border-left: 4px solid var(--info);
         }
 
         @keyframes slideUp {
@@ -116,7 +116,7 @@
                 </div>
                 <div class="form-group">
                     <select id="sub_auto_update"
-                        style="width: 100%; padding: 12px; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: #fff; border-radius: 8px; outline: none;">
+                        style="width: 100%; padding: 12px; background: var(--input-bg); border: 1px solid var(--glass-border); color: var(--text); border-radius: 8px; outline: none;">
                         <option value="0">自动更新: 关闭 (手动刷新)</option>
                         <option value="2">自动更新: 每 2 分钟 (测试用)</option>
                         <option value="60">自动更新: 每 1 小时</option>
@@ -198,10 +198,10 @@
                 </div>
 
                 <div class="form-group"
-                    style="display: flex; gap: 12px; align-items: center; margin-bottom: 16px; background: rgba(255,255,255,0.03); padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.05);">
+                    style="display: flex; gap: 12px; align-items: center; margin-bottom: 16px; background: var(--input-bg); padding: 10px; border-radius: 10px; border: 1px solid var(--glass-border);">
                     <div style="flex: 1;">
                         <select id="out_auto_update"
-                            style="width: 100%; padding: 10px; background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); color: #fff; border-radius: 8px; outline: none; font-size: 0.9em; cursor: pointer;">
+                            style="width: 100%; padding: 10px; background: transparent; border: 1px solid var(--glass-border); color: var(--text); border-radius: 8px; outline: none; font-size: 0.9em; cursor: pointer;">
                             <option value="0">自动更新: 关闭 (手动刷新)</option>
                             <option value="2">自动更新: 每 2 分钟 (测试用)</option>
                             <option value="60">自动更新: 每 1 小时</option>
@@ -215,7 +215,7 @@
                         </select>
                     </div>
                     <div id="auto_visual_toggle_container"
-                        style="flex: 1.2; display: flex; align-items: center; gap: 6px; padding-left: 10px; border-left: 1px solid rgba(255,255,255,0.1);">
+                        style="flex: 1.2; display: flex; align-items: center; gap: 6px; padding-left: 10px; border-left: 1px solid var(--glass-border);">
                         <input type="checkbox" id="out_auto_visual"
                             style="width: 18px; height: 18px; cursor: pointer; margin: 0;">
                         <label for="out_auto_visual"
@@ -250,21 +250,18 @@
     </div>
 
 
-    <div id="channel_modal" class="modal" onclick="if(event.target == this) closePreview()"
-        style="display:none !important; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); backdrop-filter: blur(12px); align-items: center; justify-content: center; padding: 20px; box-sizing: border-box;">
+    <div id="channel_modal" class="modal" onclick="if(event.target == this) closePreview()">
 
         <button id="back-to-top" class="btn" onclick="scrollToTop()"
             style="background: var(--primary); border-radius: 50%; width: 50px; height: 50px; font-size: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; position: fixed; bottom: 30px; right: 30px; z-index: 2001;">↑</button>
 
-        <div class="glass-card"
-            style="max-width: 800px; width: 100%; max-height: 90vh; position: relative; padding: 0; display: flex; flex-direction: column; overflow: hidden; margin: 0;">
+        <div class="glass-card channel-modal-card">
 
-            <div
-                style="padding: 20px 24px; border-bottom: 1px solid var(--glass-border); display: flex; flex-direction: column; gap: 10px; background: rgba(30,30,45,0.98); z-index: 10; flex-shrink: 0;">
+            <div class="modal-header-toolbar">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <h2 id="modal_title" style="margin: 0;">频道预览</h2>
                     <span onclick="closePreview()"
-                        style="cursor: pointer; font-size: 32px; line-height: 1; color: #fff; opacity: 0.8;">&times;</span>
+                        style="cursor: pointer; font-size: 32px; line-height: 1; color: var(--text); opacity: 0.8;">&times;</span>
                 </div>
                 <!-- 工具栏 -->
                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
@@ -279,7 +276,7 @@
                     <div id="check_options_container"
                         style="display: none; align-items: center; gap: 5px; margin-right: 5px;">
                         <label
-                            style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: #fff; opacity: 0.9;">
+                            style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text); opacity: 0.9;">
                             <input type="checkbox" id="auto_disable_check" style="width: 16px; height: 16px;">
                             <span style="font-size: 0.9em;">根据结果自动启用/禁用</span>
                         </label>
@@ -293,20 +290,16 @@
 
                     <!-- 批量选择和操作 -->
                     <div style="display: flex; gap: 10px;">
-                        <button class="btn btn-sm btn-outline toolbar-btn" onclick="toggleSelectAll(true)"
+                        <button class="btn btn-sm toolbar-btn btn-primary" onclick="toggleSelectAll(true)"
                             id="sel_all_btn" style="display: none;">全选</button>
-                        <button class="btn btn-sm btn-outline toolbar-btn" onclick="invertSelection()" id="sel_inv_btn"
+                        <button class="btn btn-sm toolbar-btn btn-primary" onclick="invertSelection()" id="sel_inv_btn"
                             style="display: none;">反选</button>
-                        <button class="btn btn-sm toolbar-btn" onclick="selectByStatus(true)"
-                            style="background: rgba(16, 185, 129, 0.2); display: none;"
-                            id="sel_enabled_btn">全选启用</button>
-                        <button class="btn btn-sm toolbar-btn" onclick="selectByStatus(false)"
-                            style="background: rgba(239, 68, 68, 0.2); display: none;"
-                            id="sel_disabled_btn">全选禁用</button>
+                        <button class="btn btn-sm toolbar-btn btn-success-soft" onclick="selectByStatus(true)"
+                            style="display: none;" id="sel_enabled_btn">全选启用</button>
+                        <button class="btn btn-sm toolbar-btn btn-danger-soft" onclick="selectByStatus(false)"
+                            style="display: none;" id="sel_disabled_btn">全选禁用</button>
                     </div>
 
-                    <div style="width: 1px; height: 20px; background: rgba(255,255,255,0.2); margin: 0 5px; display: none;"
-                        id="batch_sep"></div>
 
                     <button class="btn btn-sm toolbar-btn" onclick="batchSetStatus(true)"
                         style="background: #059669; display: none;" id="batch_enable_btn">启用选中</button>
@@ -321,8 +314,7 @@
                 <div id="channel_list">加载中...</div>
             </div>
 
-            <div
-                style="padding: 16px; border-top: 1px solid var(--glass-border); display: flex; justify-content: space-between; align-items: center; background: rgba(30,30,45,0.98); flex-shrink: 0;">
+            <div class="modal-footer-stats">
                 <div id="preview_stats" style="font-size: 0.9em; opacity: 0.8;">
                     共 0 个频道 / 已启用 0 个
                 </div>
@@ -362,8 +354,12 @@
         <div class="task-panel-header">
             <h3>任务中心</h3>
             <div style="display: flex; gap: 8px; align-items:center;">
+                <button class="btn btn-sm" onclick="toggleTheme()" id="theme_toggle_btn"
+                    style="background: var(--bg-card); color: var(--text); border: 1px solid var(--glass-border); font-size: 0.9em; padding: 2px 8px; font-weight: bold; margin-right: 4px;">
+                    🌞 日间模式
+                </button>
                 <button class="btn btn-sm" onclick="restartServiceJS()"
-                    style="background: #ef4444; font-size: 0.75em; padding: 2px 8px; font-weight: bold; box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);">
+                    style="background: var(--danger); font-size: 0.75em; padding: 2px 8px; font-weight: bold; box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);">
                     🚨 重启服务
                 </button>
                 <button class="btn btn-sm" onclick="taskCenter.toggle()"
@@ -373,13 +369,12 @@
         <div id="task_list_container" class="task-list-container">
             <div class="empty-task-state">暂无任务记录</div>
         </div>
-        <div class="task-panel-footer" style="display: flex; gap: 10px;">
-            <button class="btn btn-sm btn-outline" style="flex: 1; background: rgba(255,255,255,0.05);"
-                onclick="taskCenter.loadTasks()">🔄 刷新列表</button>
-            <button class="btn btn-sm btn-outline"
-                style="flex: 1; background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: rgba(239, 68, 68, 0.2);"
-                onclick="taskCenter.cleanupTasks()">🧹 清理历史</button>
-            <button class="btn btn-sm" style="flex: 1; background: #6366f1;" onclick="toggleConsole()">🖥️ 控制台</button>
+        <div class="task-panel-footer">
+            <button class="btn btn-sm btn-outline" style="flex: 1;" onclick="taskCenter.loadTasks()">🔄 刷新列表</button>
+            <button class="btn btn-sm btn-danger-outline" style="flex: 1;" onclick="taskCenter.cleanupTasks()">🧹
+                清理历史</button>
+            <button class="btn btn-sm" style="flex: 1; background: var(--primary); color: #fff;"
+                onclick="toggleConsole()">🖥️ 控制台</button>
         </div>
     </div>
 
@@ -387,6 +382,41 @@
         window.previewDebounceTimer = null;
         window.searchDebounceTimer = null;
         let currentSubTab = 'normal';
+
+        // --- 主题切换逻辑 ---
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            const btn = document.getElementById('theme_toggle_btn');
+            if (savedTheme === 'light') {
+                document.documentElement.setAttribute('data-theme', 'light');
+                if (btn) btn.innerText = '🌙 深色模式';
+            } else {
+                document.documentElement.removeAttribute('data-theme');
+                if (btn) btn.innerText = '🌞 日间模式';
+            }
+        }
+
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const btn = document.getElementById('theme_toggle_btn');
+
+            if (currentTheme === 'light') {
+                // 切换到深色 (默认)
+                document.documentElement.removeAttribute('data-theme');
+                localStorage.setItem('theme', 'dark');
+                if (btn) btn.innerText = '🌞 日间模式';
+                showToast('已切换至深色模式', 'info');
+            } else {
+                // 切换到亮色
+                document.documentElement.setAttribute('data-theme', 'light');
+                localStorage.setItem('theme', 'light');
+                if (btn) btn.innerText = '🌙 深色模式';
+                showToast('已切换至日间模式', 'info');
+            }
+        }
+
+        // 立即初始化主题
+        initTheme();
 
         // ==========================================
         // 核心任务中心控制引擎 (NAS Style)
@@ -980,7 +1010,7 @@
                         visualHtml = `<td style="padding: 10px; font-size: 0.85em;">🔄 检测中...</td>`;
                     } else if ((c.visualStatus === 'ok' || !c.visualStatus) && image) {
                         visualHtml = `<td style="padding: 10px;">
-                            <img src="${image}" style="height: 40px; cursor: pointer;" onclick="window.open('${image}')" title="点击放大">
+                            <img src="${image}" style="height: 40px; cursor: zoom-in;" onclick="event.stopPropagation(); showLightbox('${image}')" title="点击放大">
                             ${dateHtml}
                         </td>`;
                     } else if (c.visualStatus === 'error' || error) {
@@ -994,19 +1024,19 @@
                 }
 
                 return `
-                <tr style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''}">
+                <tr onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''}">
                     ${window.lastRenderShowActions ? `<td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>` : ''}
-                    <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;">${c.logo ? `<img src="${c.logo}" style="height:30px; border-radius:4px" onerror="this.style.display='none'">` : ''}</td>
-                    <td style="padding: 10px;">${c.name}</td>
-                    <td style="padding: 10px; font-size: 0.8em; opacity: 0.6;">${c.tvg_id || '-'}</td>
+                    <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo">${c.logo ? `<img src="${c.logo}" style="height:30px; border-radius:4px" onerror="this.style.display='none'">` : ''}</td>
+                    <td style="padding: 10px;" data-label="名称：">${c.name}</td>
+                    <td style="padding: 10px;" data-label="TVG："><span style="font-size: 0.8em; opacity: 0.6;">${c.tvg_id || '-'}</span></td>
                     ${window.currentEPGUrl ? `
-                    <td id="epg_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px; font-size: 0.85em; color: #a5b4fc;">
-                        ⏳ 加载中...
+                    <td id="epg_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="节目：">
+                        <span style="font-size: 0.85em; color: var(--text-loading);">⏳ 加载中...</span>
                     </td>` : ''}
-                    <td style="padding: 10px;">${c.group || '默认'}</td>
-                    ${window.lastRenderShowActions ? `<td style="padding: 10px; font-size: 0.85em; opacity: 0.7;">${c.source || '未知'}</td>` : ''}
-                    ${window.lastRenderShowActions ? `<td style="padding: 10px;">${statusHtml}</td>` : ''}
-                    ${visualHtml}
+                    <td style="padding: 10px;" data-label="分组：">${c.group || '默认'}</td>
+                    ${window.lastRenderShowActions ? `<td style="padding: 10px;" data-label="来源："><span style="font-size: 0.85em; opacity: 0.7;">${c.source || '未知'}</span></td>` : ''}
+                    ${window.lastRenderShowActions ? `<td style="padding: 10px;" data-label="状态：">${statusHtml}</td>` : ''}
+                    ${visualHtml.replace('<td ', '<td data-label="画面预览：" ')}
                     ${window.lastRenderShowActions ? `
                     <td style="padding: 10px;">
                         <button class="btn btn-sm" 
@@ -1090,7 +1120,7 @@
             } catch (e) {
                 if (cell) {
                     cell.innerText = '加载失败';
-                    cell.style.color = '#f87171';
+                    cell.style.color = 'var(--text-failure, #ef4444)';
                     cell.title = e.message;
                     console.error("EPG Load Error:", e);
                 }
@@ -1100,7 +1130,7 @@
         function applyEpgData(cell, data, cellId) {
             cell.innerText = data.program || '无节目信息';
             if (data.program && data.program !== 'No Program Info') {
-                cell.style.color = '#34d399';
+                cell.style.color = 'var(--text-highlight)';
                 cell.style.opacity = '1';
             } else {
                 cell.style.opacity = '0.5';
@@ -1291,7 +1321,7 @@
             btn.disabled = false;
             btn.innerText = "🛑 取消检测";
             const originalBg = btn.style.background;
-            btn.style.background = "#ef4444";
+            btn.style.background = "var(--danger)";
 
             const autoDisable = document.getElementById('auto_disable_check').checked;
 
@@ -2271,15 +2301,40 @@
                 window.selectedChannelIds.delete(id);
             }
 
-            // 同步所有相同 ID 的复选框
+            // 同步所有相同 ID 的复选框及行样式
             const duplicates = document.querySelectorAll(`.ch-checkbox[data-id="${id}"]`);
             duplicates.forEach(cb => {
                 if (cb.checked !== isChecked) {
                     cb.checked = isChecked;
                 }
+                // 更新行样式
+                const tr = cb.closest('tr');
+                if (tr) {
+                    if (isChecked) {
+                        tr.classList.add('card-selected');
+                    } else {
+                        tr.classList.remove('card-selected');
+                    }
+                }
             });
 
             updatePreviewStats();
+        }
+
+
+        function handleCardClick(event, id) {
+            // 如果点击的是按钮、复选框或链接，则不处理，避免冲突
+            if (event.target.closest('button') || event.target.closest('input') || event.target.closest('a')) {
+                return;
+            }
+
+            const checkbox = document.querySelector(`.ch-checkbox[data-id="${id}"]`);
+            if (checkbox) {
+                const newState = !checkbox.checked;
+                checkbox.checked = newState;
+                toggleChannelSelection(id, newState);
+                // toggleChannelSelection 会处理样式更新
+            }
         }
 
         function toggleSelectAll(checked) {
@@ -2315,7 +2370,18 @@
             checkboxes.forEach(cb => {
                 const id = parseInt(cb.dataset.id);
                 if (!isNaN(id)) {
-                    cb.checked = window.selectedChannelIds.has(id);
+                    const isChecked = window.selectedChannelIds.has(id);
+                    cb.checked = isChecked;
+
+                    // 更新行样式
+                    const tr = cb.closest('tr');
+                    if (tr) {
+                        if (isChecked) {
+                            tr.classList.add('card-selected');
+                        } else {
+                            tr.classList.remove('card-selected');
+                        }
+                    }
                 }
             });
             updatePreviewStats();
@@ -2471,6 +2537,27 @@
 
         fetchSubs();
         fetchOutputs();
+    </script>
+    <!-- 图片预览 Lightbox -->
+    <div id="lightbox" class="lightbox" onclick="closeLightbox()">
+        <span class="lightbox-close">&times;</span>
+        <img class="lightbox-content" id="lightbox-img" onclick="event.stopPropagation()">
+    </div>
+
+    <script>
+        function showLightbox(src) {
+            const lightbox = document.getElementById('lightbox');
+            const img = document.getElementById('lightbox-img');
+            img.src = src;
+            lightbox.style.display = 'flex';
+            document.body.style.overflow = 'hidden'; // 防止背景滚动
+        }
+
+        function closeLightbox() {
+            const lightbox = document.getElementById('lightbox');
+            lightbox.style.display = 'none';
+            document.body.style.overflow = '';
+        }
     </script>
 </body>
 
