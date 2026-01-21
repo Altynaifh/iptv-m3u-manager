@@ -1146,32 +1146,180 @@ textarea {
         white-space: nowrap;
     }
 
-    /* 辅助选择按钮在手机端强制 2 行 2 列，解决 iOS 文字重叠 */
+    /* ========== 移动端工具栏按钮美化 (效果图风格) ========== */
+
+    /* 全选/反选按钮的父容器强制100%宽度 */
+    .modal-header-toolbar>div:last-child>div:has(.toolbar-btn[onclick*="toggleSelectAll"]) {
+        width: 100% !important;
+        flex-wrap: nowrap !important;
+        gap: 6px !important;
+    }
+
+    /* 全选/反选/全选启用/全选禁用 - 白色描边风格 */
     .toolbar-btn[onclick*="toggleSelectAll"],
     .toolbar-btn[onclick*="invertSelection"],
-    .toolbar-btn[onclick*="selectByStatus"] {
-        flex: 1 1 calc(50% - 4px) !important;
-        max-width: calc(50% - 4px) !important;
-        font-size: 11px !important;
-        /* 稍微缩小字号防止 iOS 换行 */
-        height: 34px !important;
+    .toolbar-btn[onclick*="selectByStatus"],
+    #sel_all_btn,
+    #sel_inv_btn,
+    #sel_enabled_btn,
+    #sel_disabled_btn {
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        font-size: 12px !important;
+        height: 32px !important;
+        background: transparent !important;
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        color: var(--text) !important;
+        border-radius: 8px !important;
+        transition: all 0.2s ease !important;
+        padding: 0 8px !important;
     }
 
-    /* 启用/禁用选中按钮 并排 */
-    .toolbar-btn[onclick*="batchSetStatus(true)"],
-    .toolbar-btn[onclick*="batchSetStatus(false)"] {
-        flex: 1 1 calc(50% - 4px) !important;
-        max-width: calc(50% - 4px) !important;
-        height: 38px !important;
+    .toolbar-btn[onclick*="toggleSelectAll"]:hover,
+    .toolbar-btn[onclick*="invertSelection"]:hover,
+    .toolbar-btn[onclick*="selectByStatus"]:hover {
+        background: rgba(255, 255, 255, 0.1) !important;
+        border-color: rgba(255, 255, 255, 0.5) !important;
     }
 
-    /* 刷新节目表按钮特殊处理 */
+    /* 快速检测 - 紫色渐变描边风格 */
+    #check_btn {
+        flex: 1 1 calc(50% - 4px) !important;
+        max-width: calc(50% - 4px) !important;
+        height: 36px !important;
+        font-size: 13px !important;
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.3)) !important;
+        border: 1.5px solid #8b5cf6 !important;
+        color: #c4b5fd !important;
+        border-radius: 12px !important;
+        box-shadow: 0 0 15px rgba(139, 92, 246, 0.2) !important;
+    }
+
+    #check_btn:hover {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.5), rgba(139, 92, 246, 0.5)) !important;
+        box-shadow: 0 0 20px rgba(139, 92, 246, 0.4) !important;
+    }
+
+    /* 深度检测 - 粉红渐变描边风格 */
+    #check_visual_btn {
+        flex: 1 1 calc(50% - 4px) !important;
+        max-width: calc(50% - 4px) !important;
+        height: 36px !important;
+        font-size: 13px !important;
+        background: linear-gradient(135deg, rgba(236, 72, 153, 0.25), rgba(219, 39, 119, 0.25)) !important;
+        border: 1.5px solid #ec4899 !important;
+        color: #f9a8d4 !important;
+        border-radius: 12px !important;
+        box-shadow: 0 0 15px rgba(236, 72, 153, 0.2) !important;
+    }
+
+    #check_visual_btn:hover {
+        background: linear-gradient(135deg, rgba(236, 72, 153, 0.4), rgba(219, 39, 119, 0.4)) !important;
+        box-shadow: 0 0 20px rgba(236, 72, 153, 0.4) !important;
+    }
+
+    /* 刷新节目表 - 绿色描边透明背景 */
     #refresh_epg_btn {
         flex: 1 1 100% !important;
         max-width: 100% !important;
-        height: 34px !important;
+        height: 32px !important;
         font-size: 12px !important;
-        background: linear-gradient(135deg, #10b981, #059669) !important;
+        background: transparent !important;
+        border: 1.5px solid #10b981 !important;
+        color: #6ee7b7 !important;
+        border-radius: 12px !important;
+        box-shadow: 0 0 10px rgba(16, 185, 129, 0.15) !important;
+    }
+
+    #refresh_epg_btn:hover {
+        background: rgba(16, 185, 129, 0.15) !important;
+        box-shadow: 0 0 20px rgba(16, 185, 129, 0.3) !important;
+    }
+
+    /* 启用选中 - 绿色渐变实心 + 底部发光 */
+    .toolbar-btn[onclick*="batchSetStatus(true)"],
+    #batch_enable_btn {
+        flex: 1 1 calc(50% - 4px) !important;
+        max-width: calc(50% - 4px) !important;
+        height: 38px !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        background: linear-gradient(180deg, #4ade80 0%, #16a34a 100%) !important;
+        border: none !important;
+        color: white !important;
+        border-radius: 22px !important;
+        box-shadow: 0 4px 20px rgba(22, 163, 74, 0.5), 0 8px 30px rgba(22, 163, 74, 0.3) !important;
+    }
+
+    .toolbar-btn[onclick*="batchSetStatus(true)"]:hover,
+    #batch_enable_btn:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 25px rgba(22, 163, 74, 0.6), 0 10px 40px rgba(22, 163, 74, 0.4) !important;
+    }
+
+    /* 禁用选中 - 红色渐变实心 + 底部发光 */
+    .toolbar-btn[onclick*="batchSetStatus(false)"],
+    #batch_disable_btn {
+        flex: 1 1 calc(50% - 4px) !important;
+        max-width: calc(50% - 4px) !important;
+        height: 38px !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        background: linear-gradient(180deg, #f87171 0%, #dc2626 100%) !important;
+        border: none !important;
+        color: white !important;
+        border-radius: 22px !important;
+        box-shadow: 0 4px 20px rgba(220, 38, 38, 0.5), 0 8px 30px rgba(220, 38, 38, 0.3) !important;
+    }
+
+    .toolbar-btn[onclick*="batchSetStatus(false)"]:hover,
+    #batch_disable_btn:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 25px rgba(220, 38, 38, 0.6), 0 10px 40px rgba(220, 38, 38, 0.4) !important;
+    }
+
+    /* ========== 浅色主题按钮适配 ========== */
+    [data-theme="light"] .toolbar-btn[onclick*="toggleSelectAll"],
+    [data-theme="light"] .toolbar-btn[onclick*="invertSelection"],
+    [data-theme="light"] .toolbar-btn[onclick*="selectByStatus"],
+    [data-theme="light"] #sel_all_btn,
+    [data-theme="light"] #sel_inv_btn,
+    [data-theme="light"] #sel_enabled_btn,
+    [data-theme="light"] #sel_disabled_btn {
+        border: 1px solid rgba(0, 0, 0, 0.2) !important;
+        color: #333 !important;
+    }
+
+    [data-theme="light"] .toolbar-btn[onclick*="toggleSelectAll"]:hover,
+    [data-theme="light"] .toolbar-btn[onclick*="invertSelection"]:hover,
+    [data-theme="light"] .toolbar-btn[onclick*="selectByStatus"]:hover,
+    [data-theme="light"] #sel_all_btn:hover,
+    [data-theme="light"] #sel_inv_btn:hover,
+    [data-theme="light"] #sel_enabled_btn:hover,
+    [data-theme="light"] #sel_disabled_btn:hover {
+        background: rgba(0, 0, 0, 0.05) !important;
+        border-color: rgba(0, 0, 0, 0.4) !important;
+    }
+
+    [data-theme="light"] #check_btn {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15)) !important;
+        border: 1.5px solid #6366f1 !important;
+        color: #4f46e5 !important;
+        font-weight: 600 !important;
+    }
+
+    [data-theme="light"] #check_visual_btn {
+        background: linear-gradient(135deg, rgba(236, 72, 153, 0.15), rgba(219, 39, 119, 0.15)) !important;
+        border: 1.5px solid #db2777 !important;
+        color: #be185d !important;
+        font-weight: 600 !important;
+    }
+
+    [data-theme="light"] #refresh_epg_btn {
+        border-color: #059669 !important;
+        color: #059669 !important;
+        font-weight: 600 !important;
     }
 
     #check_options_container {
@@ -1200,8 +1348,8 @@ textarea {
     }
 
     .modal-footer-stats {
-        padding: 12px 16px max(16px, env(safe-area-inset-bottom)) !important;
-        gap: 10px !important;
+        padding: 8px 16px max(8px, env(safe-area-inset-bottom)) !important;
+        gap: 6px !important;
         background: rgba(15, 15, 25, 1) !important;
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         z-index: 20 !important;
@@ -1216,8 +1364,8 @@ textarea {
 
     .modal-footer-stats .btn {
         width: 100% !important;
-        height: 42px !important;
-        font-size: 15px !important;
+        height: 36px !important;
+        font-size: 14px !important;
         border-radius: 12px !important;
         background: #334155 !important;
         display: flex;
@@ -1413,4 +1561,312 @@ textarea {
         transform: scale(1);
         opacity: 1;
     }
+}
+
+/* ============================================================
+   移动端频道预览卡片 - 双层布局 (大卡片 + 毛玻璃小卡片)
+   仅在聚合预览模式下使用
+   ============================================================ */
+
+/* 大卡片容器 - 作为背景层 */
+.mobile-channel-card {
+    position: relative;
+    background: var(--bg-card);
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    min-height: 200px;
+    overflow: hidden;
+    display: flex;
+    align-items: stretch;
+}
+
+/* 禁用状态的卡片 */
+.mobile-channel-card.disabled {
+    opacity: 0.6;
+}
+
+.mobile-channel-card.disabled .mobile-channel-card__bg {
+    filter: grayscale(0.5);
+}
+
+/* 选中状态 - 渐变光圈效果 */
+.mobile-channel-card.selected {
+    border: 2px solid transparent !important;
+    background:
+        linear-gradient(var(--bg-card), var(--bg-card)) padding-box,
+        linear-gradient(135deg, #6366f1, #8b5cf6, #d946ef) border-box !important;
+    box-shadow:
+        0 0 20px rgba(99, 102, 241, 0.4),
+        0 0 40px rgba(139, 92, 246, 0.2),
+        inset 0 0 20px rgba(99, 102, 241, 0.05);
+    animation: selectedPulse 2s ease-in-out infinite;
+}
+
+@keyframes selectedPulse {
+
+    0%,
+    100% {
+        box-shadow:
+            0 0 20px rgba(99, 102, 241, 0.4),
+            0 0 40px rgba(139, 92, 246, 0.2),
+            inset 0 0 20px rgba(99, 102, 241, 0.05);
+    }
+
+    50% {
+        box-shadow:
+            0 0 25px rgba(99, 102, 241, 0.6),
+            0 0 50px rgba(139, 92, 246, 0.3),
+            inset 0 0 25px rgba(99, 102, 241, 0.1);
+    }
+}
+
+/* 背景预览图层 - 右侧偏移显示 */
+.mobile-channel-card__bg {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 60%;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.mobile-channel-card__bg img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 0 5px 5px 0;
+    filter: brightness(0.85);
+}
+
+/* 无预览图时的占位 - 右侧区域居中显示 */
+.mobile-channel-card__bg--empty {
+    background: linear-gradient(135deg, rgba(50, 55, 70, 0.6), rgba(40, 45, 60, 0.8));
+}
+
+.mobile-channel-card__bg--empty span {
+    font-size: 3em;
+    opacity: 0.4;
+    color: var(--text-muted);
+}
+
+/* 毛玻璃信息小卡片 - 左侧 55% 宽度 */
+.mobile-channel-card__info {
+    position: relative;
+    z-index: 2;
+    width: 55%;
+    min-width: 55%;
+    background: rgba(40, 45, 60, 0.55);
+    backdrop-filter: blur(25px) saturate(1.2);
+    -webkit-backdrop-filter: blur(25px) saturate(1.2);
+    border-radius: 5px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 8px 0 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(0, 0, 0, 0.3);
+}
+
+/* 浅色主题适配 */
+/* 浅色主题适配 - 增加毛玻璃 */
+[data-theme="light"] .mobile-channel-card__info {
+    background: rgba(255, 255, 255, 0.65);
+    backdrop-filter: blur(25px) saturate(1.5);
+    -webkit-backdrop-filter: blur(25px) saturate(1.5);
+    border-right: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+/* 频道 Logo - 大卡片右上角（预览图上方） */
+.mobile-channel-card__logo {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 56px;
+    height: 40px;
+    object-fit: contain;
+    background: transparent;
+    border-radius: 4px;
+    padding: 0;
+    z-index: 10;
+}
+
+/* 信息行 */
+.mobile-channel-card__row {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    font-size: 13px;
+    line-height: 1.3;
+    color: var(--text);
+}
+
+.mobile-channel-card__label {
+    min-width: 40px;
+    color: var(--text-muted);
+    font-weight: 500;
+    flex-shrink: 0;
+}
+
+.mobile-channel-card__value {
+    flex: 1;
+    word-break: break-word;
+}
+
+/* 节目标签样式 */
+.mobile-channel-card__epg-tag {
+    display: inline-block;
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.mobile-channel-card__epg-tag--empty {
+    background: rgba(100, 116, 139, 0.15);
+    color: #94a3b8;
+    border-color: rgba(100, 116, 139, 0.2);
+}
+
+/* 上次检测时间 */
+.mobile-channel-card__check-time {
+    font-size: 11px;
+    color: var(--text-muted);
+    opacity: 0.7;
+    margin-top: 4px;
+}
+
+/* 底部操作栏 */
+.mobile-channel-card__actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: auto;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="light"] .mobile-channel-card__actions {
+    border-top-color: rgba(0, 0, 0, 0.08);
+}
+
+/* 圆形复选框 - 新拟态 Neumorphism 风格 */
+.mobile-channel-card__checkbox {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.mobile-channel-card__checkbox input {
+    -webkit-appearance: none;
+    appearance: none;
+    cursor: pointer;
+    height: 40px;
+    width: 40px;
+    background: rgba(60, 65, 80, 0.9);
+    box-shadow:
+        -5px -5px 10px rgba(255, 255, 255, 0.08),
+        5px 5px 10px rgba(0, 0, 0, 0.4),
+        inset -3px -3px 8px rgba(255, 255, 255, 0.1),
+        inset 3px 3px 8px rgba(0, 0, 0, 0.3);
+    border-radius: 50%;
+    border: none;
+    outline: none;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: all 0.4s ease;
+    position: relative;
+    margin: 0;
+}
+
+.mobile-channel-card__checkbox input::after {
+    content: '';
+    width: 10px;
+    height: 16px;
+    border: solid rgba(150, 150, 150, 0.5);
+    border-width: 0 3px 3px 0;
+    transform: rotate(45deg);
+    transition: all 0.4s ease;
+    margin-bottom: 3px;
+}
+
+.mobile-channel-card__checkbox input:checked {
+    background: rgba(60, 65, 80, 0.9);
+    box-shadow:
+        -6px -6px 12px rgba(255, 255, 255, 0.08),
+        6px 6px 12px rgba(0, 0, 0, 0.4);
+}
+
+.mobile-channel-card__checkbox input:checked::after {
+    border-color: #10b981;
+}
+
+/* 浅色主题适配 */
+[data-theme="light"] .mobile-channel-card__checkbox input {
+    background: #ececec;
+    box-shadow:
+        -10px -10px 15px rgba(255, 255, 255, 0.5),
+        10px 10px 15px rgba(0, 0, 70, 0.12),
+        inset -10px -10px 15px rgba(255, 255, 255, 0.5),
+        inset 10px 10px 15px rgba(70, 70, 70, 0.12);
+    border: 4px solid #ececec;
+}
+
+[data-theme="light"] .mobile-channel-card__checkbox input::after {
+    border-color: #7a7a7a;
+}
+
+[data-theme="light"] .mobile-channel-card__checkbox input:checked {
+    box-shadow:
+        -10px -10px 15px rgba(255, 255, 255, 0.5),
+        10px 10px 15px rgba(70, 70, 70, 0.12);
+}
+
+[data-theme="light"] .mobile-channel-card__checkbox input:checked::after {
+    border-color: #15e38a;
+}
+
+/* 禁用/启用按钮 - 胶囊形状红色 */
+/* 切换按钮 */
+.mobile-channel-card__toggle-btn {
+    flex: 1;
+    max-width: 140px;
+    border: none;
+    border-radius: 20px;
+    padding: 6px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    color: white;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    letter-spacing: 0.5px;
+}
+
+.mobile-channel-card__toggle-btn--disable {
+    background: linear-gradient(180deg, #f87171 0%, #dc2626 100%);
+    color: white;
+    box-shadow: 0 4px 15px rgba(220, 38, 38, 0.4);
+}
+
+.mobile-channel-card__toggle-btn--enable {
+    background: linear-gradient(180deg, #4ade80 0%, #16a34a 100%);
+    color: white;
+    box-shadow: 0 4px 15px rgba(22, 163, 74, 0.4);
+}
+
+.mobile-channel-card__toggle-btn:active {
+    transform: scale(0.97);
+    box-shadow: none;
 }

@@ -933,6 +933,21 @@
                 return;
             }
 
+            // 移动端聚合预览模式：使用新的卡片布局
+            const isMobile = window.innerWidth <= 768;
+            if (isMobile && showActions) {
+                list.innerHTML = `
+                    <div id="channel_cards_container"></div>
+                    <div id="load_more_container" style="text-align: center; padding: 20px;">
+                        <button class="btn" style="min-width: 200px;" onclick="renderNextBatch()">查看更多 (剩余 ${filteredChannels.length} 条)</button>
+                    </div>
+                `;
+                renderNextBatch();
+                updatePreviewStats();
+                return;
+            }
+
+            // 桌面端及非聚合预览模式：使用传统表格布局
             list.innerHTML = `
                 <table class="channel-table-container" style="width: 100%; border-collapse: collapse; margin-top: 10px;">
                     <thead>
@@ -962,91 +977,196 @@
 
 
         function renderNextBatch() {
-            const list = document.getElementById('channel_tbody');
+            const isMobile = window.innerWidth <= 768;
+            const isMobileCardMode = isMobile && window.lastRenderShowActions;
+
+            // 根据模式选择目标容器
+            const list = isMobileCardMode
+                ? document.getElementById('channel_cards_container')
+                : document.getElementById('channel_tbody');
+
+            if (!list) return;
+
             const end = Math.min(renderOffset + RENDER_SIZE, filteredChannels.length);
             const batch = filteredChannels.slice(renderOffset, end);
 
-            const html = batch.map(c => {
-                let statusHtml = '<span style="opacity: 0.3;">-</span>';
-                if (c.status !== undefined) {
-                    if (c.status) {
-                        statusHtml = `<span style="color: #10b981; font-size: 0.85em;">✅ ${c.latency}ms</span>`;
-                    } else {
-                        statusHtml = `<span style="color: #ef4444; font-size: 0.85em;" title="${c.error || '未知'}">❌ 失败</span>`;
-                    }
-                } else if (c.checking) {
-                    statusHtml = `<span style="color: #fbbf24; font-size: 0.85em;">⏳ 检测中...</span>`;
-                }
+            let html = '';
 
-                // 深度检测 HTML
-                let visualHtml = '';
-                if (window.lastRenderShowActions) {
+            if (isMobileCardMode) {
+                // 移动端聚合预览模式：渲染新的双层卡片
+                html = batch.map((c, idx) => {
                     const image = c.visualImage || c.check_image;
-                    const error = c.visualError || c.check_error;
-                    const date = c.check_date;
+                    const isSelected = window.selectedChannelIds.has(c.id);
+                    const isDisabled = c.is_enabled === false;
 
-                    let dateHtml = '';
-                    if (date) {
-                        // 确保兼容性：将 "2024-01-01 12:00:00" 转为 "2024-01-01T12:00:00Z"
-                        let dateStr = date.replace(' ', 'T');
+                    // 状态文字
+                    let statusText = '-';
+                    if (c.status !== undefined) {
+                        statusText = c.status ? `✅ ${c.latency}ms` : `❌ 失败`;
+                    } else if (c.checking) {
+                        statusText = '⏳ 检测中...';
+                    }
+
+                    // 上次检测时间
+                    let checkTimeHtml = '';
+                    if (c.check_date) {
+                        let dateStr = c.check_date.replace(' ', 'T');
                         if (!dateStr.endsWith('Z')) dateStr += 'Z';
                         const dateObj = new Date(dateStr);
-
                         const now = new Date();
                         const mins = Math.floor((now - dateObj) / 60000);
                         let timeStr = mins < 60 ? `${mins}分前` : (mins < 1440 ? `${Math.floor(mins / 60)}时前` : `${Math.floor(mins / 1440)}天前`);
-
-                        // 增加具体格点的时分显示，方便核对
                         const hhmm = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-
-                        // 逻辑：直接读取 check_source
                         const isAuto = c.check_source === 'auto';
-                        const autoTag = isAuto ? `<span style="background: rgba(251,191,36,0.15); color: #fbbf24; padding: 1px 4px; border-radius: 3px; font-size: 0.7em; border: 1px solid rgba(251,191,36,0.2); margin-left: 4px;">自动</span>` : '';
-
-                        dateHtml = `<div style="font-size: 0.75em; opacity: 0.5; margin-top: 2px;">上次检测: ${timeStr} <small>(${hhmm})</small> ${autoTag}</div>`;
+                        const autoTag = isAuto ? '<span style="background: rgba(251,191,36,0.15); color: #fbbf24; padding: 1px 4px; border-radius: 3px; font-size: 0.8em; margin-left: 4px;">自动</span>' : '';
+                        checkTimeHtml = `<div class="mobile-channel-card__check-time">上次检测: ${timeStr} (${hhmm}) ${autoTag}</div>`;
                     }
 
-                    if (c.visualStatus === 'loading') {
-                        visualHtml = `<td style="padding: 10px; font-size: 0.85em;">🔄 检测中...</td>`;
-                    } else if ((c.visualStatus === 'ok' || !c.visualStatus) && image) {
-                        visualHtml = `<td style="padding: 10px;">
-                            <img src="${image}" style="height: 40px; cursor: zoom-in;" onclick="event.stopPropagation(); showLightbox('${image}')" title="点击放大">
-                            ${dateHtml}
-                        </td>`;
-                    } else if (c.visualStatus === 'error' || error) {
-                        visualHtml = `<td style="padding: 10px;">
-                            <div style="color: #ef4444; font-size: 0.8em;" title="${error || '检测失败'}">❌ 无画面</div>
-                            ${dateHtml}
-                        </td>`;
-                    } else {
-                        visualHtml = `<td style="padding: 10px; font-size: 0.8em; opacity: 0.5;">-</td>`;
-                    }
-                }
+                    // EPG 节目（异步加载，先显示占位）
+                    const epgCellId = `mobile_epg_${renderOffset}_${idx}`;
 
-                return `
-                <tr onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''}">
-                    ${window.lastRenderShowActions ? `<td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>` : ''}
-                    <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo">${c.logo ? `<img src="${c.logo}" style="height:30px; border-radius:4px" onerror="this.style.display='none'">` : ''}</td>
-                    <td style="padding: 10px;" data-label="名称：">${c.name}</td>
-                    <td style="padding: 10px;" data-label="TVG："><span style="font-size: 0.8em; opacity: 0.6;">${c.tvg_id || '-'}</span></td>
-                    ${window.currentEPGUrl ? `
-                    <td id="epg_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="节目：">
-                        <span style="font-size: 0.85em; color: var(--text-loading);">⏳ 加载中...</span>
-                    </td>` : ''}
-                    <td style="padding: 10px;" data-label="分组：">${c.group || '默认'}</td>
-                    ${window.lastRenderShowActions ? `<td style="padding: 10px;" data-label="来源："><span style="font-size: 0.85em; opacity: 0.7;">${c.source || '未知'}</span></td>` : ''}
-                    ${window.lastRenderShowActions ? `<td style="padding: 10px;" data-label="状态：">${statusHtml}</td>` : ''}
-                    ${visualHtml.replace('<td ', '<td data-label="画面预览：" ')}
-                    ${window.lastRenderShowActions ? `
-                    <td style="padding: 10px;">
-                        <button class="btn btn-sm" 
-                            style="background: ${c.is_enabled !== false ? '#ef4444' : '#10b981'}; padding: 4px 8px; font-size: 0.8em;"
-                            onclick="toggleChannel(${c.id})">
-                            ${c.is_enabled !== false ? '禁用' : '启用'}
-                        </button>
-                    </td>` : ''}
-                </tr>
-            `}).join('');
+                    return `
+                    <div class="mobile-channel-card ${isDisabled ? 'disabled' : ''} ${isSelected ? 'selected' : ''}" 
+                         data-id="${c.id}" onclick="handleMobileCardClick(event, ${c.id})">
+                        <!-- Logo 放在大卡片右上角 -->
+                        ${c.logo ? `<img class="mobile-channel-card__logo" src="${c.logo}" onerror="this.style.display='none'" alt="Logo">` : ''}
+                        <!-- 背景预览图 -->
+                        <div class="mobile-channel-card__bg ${!image ? 'mobile-channel-card__bg--empty' : ''}">
+                            ${image
+                            ? `<img src="${image}" onclick="event.stopPropagation(); showLightbox('${image}')" alt="预览">`
+                            : '<span>📺</span>'}
+                        </div>
+                        <!-- 毛玻璃信息卡片 -->
+                        <div class="mobile-channel-card__info">
+                            
+                            <div class="mobile-channel-card__row">
+                                <span class="mobile-channel-card__label">名称:</span>
+                                <span class="mobile-channel-card__value"><strong>${c.name}</strong></span>
+                            </div>
+                            
+                            <div class="mobile-channel-card__row">
+                                <span class="mobile-channel-card__label">TVG:</span>
+                                <span class="mobile-channel-card__value">${c.tvg_id || '-'}</span>
+                            </div>
+                            
+                            ${window.currentEPGUrl ? `
+                            <div class="mobile-channel-card__row">
+                                <span class="mobile-channel-card__label">节目:</span>
+                                <span class="mobile-channel-card__value" id="${epgCellId}">
+                                    <span class="mobile-channel-card__epg-tag mobile-channel-card__epg-tag--empty">加载中...</span>
+                                </span>
+                            </div>` : ''}
+                            
+                            <div class="mobile-channel-card__row">
+                                <span class="mobile-channel-card__label">分组:</span>
+                                <span class="mobile-channel-card__value"><strong>${c.group || '默认'}</strong></span>
+                            </div>
+                            
+                            <div class="mobile-channel-card__row">
+                                <span class="mobile-channel-card__label">来源:</span>
+                                <span class="mobile-channel-card__value">${c.source || '未知'}</span>
+                            </div>
+                            
+                            <div class="mobile-channel-card__row">
+                                <span class="mobile-channel-card__label">状态:</span>
+                                <span class="mobile-channel-card__value">${statusText}</span>
+                            </div>
+                            
+                            ${checkTimeHtml}
+                            
+                            <!-- 底部操作栏 -->
+                            <div class="mobile-channel-card__actions">
+                                <label class="mobile-channel-card__checkbox">
+                                    <input type="checkbox" class="ch-checkbox" data-id="${c.id}" 
+                                           ${isSelected ? 'checked' : ''} 
+                                           onchange="event.stopPropagation(); toggleChannelSelection(${c.id}, this.checked); updateMobileCardSelection(${c.id}, this.checked);">
+                                </label>
+                                <button class="mobile-channel-card__toggle-btn ${isDisabled ? 'mobile-channel-card__toggle-btn--enable' : 'mobile-channel-card__toggle-btn--disable'}"
+                                        onclick="event.stopPropagation(); toggleChannel(${c.id})">
+                                    ${isDisabled ? '启用' : '禁用'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    `;
+                }).join('');
+            } else {
+                // 桌面端：保持原有表格渲染逻辑
+                html = batch.map(c => {
+                    let statusHtml = '<span style="opacity: 0.3;">-</span>';
+                    if (c.status !== undefined) {
+                        if (c.status) {
+                            statusHtml = `<span style="color: #10b981; font-size: 0.85em;">✅ ${c.latency}ms</span>`;
+                        } else {
+                            statusHtml = `<span style="color: #ef4444; font-size: 0.85em;" title="${c.error || '未知'}">❌ 失败</span>`;
+                        }
+                    } else if (c.checking) {
+                        statusHtml = `<span style="color: #fbbf24; font-size: 0.85em;">⏳ 检测中...</span>`;
+                    }
+
+                    // 深度检测 HTML
+                    let visualHtml = '';
+                    if (window.lastRenderShowActions) {
+                        const image = c.visualImage || c.check_image;
+                        const error = c.visualError || c.check_error;
+                        const date = c.check_date;
+
+                        let dateHtml = '';
+                        if (date) {
+                            let dateStr = date.replace(' ', 'T');
+                            if (!dateStr.endsWith('Z')) dateStr += 'Z';
+                            const dateObj = new Date(dateStr);
+                            const now = new Date();
+                            const mins = Math.floor((now - dateObj) / 60000);
+                            let timeStr = mins < 60 ? `${mins}分前` : (mins < 1440 ? `${Math.floor(mins / 60)}时前` : `${Math.floor(mins / 1440)}天前`);
+                            const hhmm = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                            const isAuto = c.check_source === 'auto';
+                            const autoTag = isAuto ? `<span style="background: rgba(251,191,36,0.15); color: #fbbf24; padding: 1px 4px; border-radius: 3px; font-size: 0.7em; border: 1px solid rgba(251,191,36,0.2); margin-left: 4px;">自动</span>` : '';
+                            dateHtml = `<div style="font-size: 0.75em; opacity: 0.5; margin-top: 2px;">上次检测: ${timeStr} <small>(${hhmm})</small> ${autoTag}</div>`;
+                        }
+
+                        if (c.visualStatus === 'loading') {
+                            visualHtml = `<td style="padding: 10px; font-size: 0.85em;">🔄 检测中...</td>`;
+                        } else if ((c.visualStatus === 'ok' || !c.visualStatus) && image) {
+                            visualHtml = `<td style="padding: 10px;">
+                                <img src="${image}" style="height: 40px; cursor: zoom-in;" onclick="event.stopPropagation(); showLightbox('${image}')" title="点击放大">
+                                ${dateHtml}
+                            </td>`;
+                        } else if (c.visualStatus === 'error' || error) {
+                            visualHtml = `<td style="padding: 10px;">
+                                <div style="color: #ef4444; font-size: 0.8em;" title="${error || '检测失败'}">❌ 无画面</div>
+                                ${dateHtml}
+                            </td>`;
+                        } else {
+                            visualHtml = `<td style="padding: 10px; font-size: 0.8em; opacity: 0.5;">-</td>`;
+                        }
+                    }
+
+                    return `
+                    <tr onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''}">
+                        ${window.lastRenderShowActions ? `<td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>` : ''}
+                        <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo">${c.logo ? `<img src="${c.logo}" style="height:30px; border-radius:4px" onerror="this.style.display='none'">` : ''}</td>
+                        <td style="padding: 10px;" data-label="名称：">${c.name}</td>
+                        <td style="padding: 10px;" data-label="TVG："><span style="font-size: 0.8em; opacity: 0.6;">${c.tvg_id || '-'}</span></td>
+                        ${window.currentEPGUrl ? `
+                        <td id="epg_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="节目：">
+                            <span style="font-size: 0.85em; color: var(--text-loading);">⏳ 加载中...</span>
+                        </td>` : ''}
+                        <td style="padding: 10px;" data-label="分组：">${c.group || '默认'}</td>
+                        ${window.lastRenderShowActions ? `<td style="padding: 10px;" data-label="来源："><span style="font-size: 0.85em; opacity: 0.7;">${c.source || '未知'}</span></td>` : ''}
+                        ${window.lastRenderShowActions ? `<td style="padding: 10px;" data-label="状态：">${statusHtml}</td>` : ''}
+                        ${visualHtml.replace('<td ', '<td data-label="画面预览：" ')}
+                        ${window.lastRenderShowActions ? `
+                        <td style="padding: 10px;">
+                            <button class="btn btn-sm" 
+                                style="background: ${c.is_enabled !== false ? '#ef4444' : '#10b981'}; padding: 4px 8px; font-size: 0.8em;"
+                                onclick="toggleChannel(${c.id})">
+                                ${c.is_enabled !== false ? '禁用' : '启用'}
+                            </button>
+                        </td>` : ''}
+                    </tr>
+                `}).join('');
+            }
 
             if (renderOffset === 0) {
                 list.innerHTML = html;
@@ -1058,13 +1178,15 @@
             if (window.currentEPGUrl) {
                 batch.forEach((c, idx) => {
                     const isRefresh = !!window.forceRefreshEPG || (window.refreshSelectedOnly && window.selectedChannelIds.has(c.id));
-                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, `epg_${renderOffset}_${idx}`, c.logo, c.id, isRefresh);
+                    // 移动端使用不同的 cell ID 前缀
+                    const cellId = isMobileCardMode ? `mobile_epg_${renderOffset}_${idx}` : `epg_${renderOffset}_${idx}`;
+                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, isRefresh);
                 });
             }
 
             renderOffset = end;
 
-            // 更新“加载更多”按钮
+            // 更新"加载更多"按钮
             const btnContainer = document.getElementById('load_more_container');
             if (btnContainer) {
                 if (renderOffset >= filteredChannels.length) {
@@ -1073,6 +1195,33 @@
                     btnContainer.style.display = 'block';
                     const btn = btnContainer.querySelector('button');
                     if (btn) btn.innerText = `查看更多 (剩余 ${filteredChannels.length - renderOffset} 条)`;
+                }
+            }
+        }
+
+        // 移动端卡片点击处理
+        function handleMobileCardClick(event, id) {
+            // 如果点击的是按钮、复选框或图片，则不处理
+            if (event.target.closest('button') || event.target.closest('input') || event.target.closest('.mobile-channel-card__bg img')) {
+                return;
+            }
+            const checkbox = document.querySelector(`.mobile-channel-card[data-id="${id}"] .ch-checkbox`);
+            if (checkbox) {
+                const newState = !checkbox.checked;
+                checkbox.checked = newState;
+                toggleChannelSelection(id, newState);
+                updateMobileCardSelection(id, newState);
+            }
+        }
+
+        // 更新移动端卡片选中状态
+        function updateMobileCardSelection(id, isSelected) {
+            const card = document.querySelector(`.mobile-channel-card[data-id="${id}"]`);
+            if (card) {
+                if (isSelected) {
+                    card.classList.add('selected');
+                } else {
+                    card.classList.remove('selected');
                 }
             }
         }
@@ -2373,13 +2522,23 @@
                     const isChecked = window.selectedChannelIds.has(id);
                     cb.checked = isChecked;
 
-                    // 更新行样式
+                    // 更新桌面端行样式
                     const tr = cb.closest('tr');
                     if (tr) {
                         if (isChecked) {
                             tr.classList.add('card-selected');
                         } else {
                             tr.classList.remove('card-selected');
+                        }
+                    }
+
+                    // 更新移动端卡片样式
+                    const card = cb.closest('.mobile-channel-card');
+                    if (card) {
+                        if (isChecked) {
+                            card.classList.add('selected');
+                        } else {
+                            card.classList.remove('selected');
                         }
                     }
                 }
