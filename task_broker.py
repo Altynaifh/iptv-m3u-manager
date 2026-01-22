@@ -9,7 +9,10 @@ from taskiq import InMemoryBroker, TaskiqEvents, TaskiqState
 from sqlmodel import Session, select
 from database import engine
 from models import TaskRecord
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# 定义中国标准时区 (UTC+8)
+CST = timezone(timedelta(hours=8))
 
 # 使用 InMemoryBroker 保持单进程轻量化
 broker = InMemoryBroker()
@@ -60,7 +63,7 @@ class ConsoleLogStream(io.TextIOBase):
                         msg = {
                             "type": "console_log",
                             "line": s.strip(),
-                            "timestamp": datetime.now().strftime("%H:%M:%S")
+                            "timestamp": datetime.now(CST).strftime("%H:%M:%S")
                         }
                         loop.create_task(self.notifier.broadcast(msg))
                 except:
