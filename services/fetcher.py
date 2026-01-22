@@ -53,7 +53,15 @@ async def fetch_subscription_task(task_id: str, sub_id: int, url_str: str, ua: s
             
             # 4. 入库新台并恢复状态
             print(f"[Task] 正在将新频道入库并恢复状态...")
-            for item in all_channels:
+            for idx, item in enumerate(all_channels):
+                # 每 100 条频道核对一下任务状态，降低 DB 开销的同时保证响应灵敏度
+                if idx % 100 == 0:
+                    task = session.get(TaskRecord, task_id)
+                    if not task or task.status == "canceled":
+                        print(f"[Task] 入库中断: 任务 {task_id} 已由用户取消")
+                        await update_task_status(task_id, status="canceled", message="入库作业已由用户中止")
+                        return {"status": "canceled", "message": "入库已由用户中止"}
+
                 url = item.get("url")
                 state = channel_states.get(url, {})
                 channel = Channel(
@@ -71,6 +79,13 @@ async def fetch_subscription_task(task_id: str, sub_id: int, url_str: str, ua: s
             session.add(sub)
             session.commit()
             print(f"[Task] 数据库持久化完成")
+        
+        if task_id:
+            from database import engine
+            with Session(engine) as check_session:
+                task = check_session.get(TaskRecord, task_id)
+                if not task or task.status == "canceled":
+                    return {"status": "canceled"}
         
         await update_task_status(task_id, status="success", progress=100, message=f"同步完成，共抓取 {len(all_channels)} 个频道")
         print(f"[Task] 任务执行成功: {task_id}")
@@ -281,6 +296,7 @@ class IPTVFetcher:
                         task = db_session.get(TaskRecord, task_id)
                         if task and task.status == "canceled":
                             print(f"[Task] 任务 {task_id} 已由用户取消")
+                            await update_task_status(task_id, status="canceled", message="同步作业已由用户中止")
                             return all_channels, all_metadata
                             
                     progress = int((i / total_urls) * 100)

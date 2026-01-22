@@ -26,6 +26,9 @@ async def stop_task(task_id: str):
             session.add(task)
             session.commit()
             print(f"  └─ ✅ 已成功标记为中止状态")
+            # 立即触发广播，确保前端 UI 即刻响应
+            from task_broker import update_task_status
+            await update_task_status(task_id, status="canceled", message="用户手动中止")
             return {"status": "success", "message": "已发送中止信号"}
     print(f"  └─ ❌ 失败: 任务不存在或不可中止")
     return {"status": "error", "message": "任务不可取消或不存在"}

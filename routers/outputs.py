@@ -200,6 +200,15 @@ async def refresh_output(output_id: int, background_tasks: BackgroundTasks, sess
         results_info = []
         # 逐个刷新订阅
         for i, sub_id in enumerate(sub_ids):
+            # 每处理一个订阅前检查任务状态
+            from database import engine
+            with Session(engine) as check_session:
+                task = check_session.get(TaskRecord, task_id)
+                if not task or task.status == "canceled":
+                    print(f"[_do_refresh] 任务 {task_id} 已中止，停止处理后续订阅")
+                    await update_task_status(task_id, status="canceled", message="刷新作业已由用户中止")
+                    return
+
             try:
                 sub = session.get(Subscription, sub_id)
                 if sub:
@@ -229,10 +238,17 @@ async def refresh_output(output_id: int, background_tasks: BackgroundTasks, sess
             # 注意：此处直接复用 run_output_visual_check，但需要让它接管已有的 task_id
             await run_output_visual_check_v2(output_id, task_id=task_id, force_check=True)
         else:
-            await update_task_status(task_id, status="success", progress=100, message="刷新完成")
+            # 最终出口防御：再次核对数据库，严防状态回跳
+            from database import engine
+            with Session(engine) as check_session:
+                task = check_session.get(TaskRecord, task_id)
+                if task and task.status != "canceled":
+                    await update_task_status(task_id, status="success", progress=100, message="刷新完成")
+                else:
+                    print(f"[_do_refresh] 任务 {task_id} 已处于取消状态，跳过最终成功广播")
 
     # 为了不阻塞 FastAPI 响应，刷新逻辑也在后台跑（或者如果刷新不慢，也可以 await）
-    # 这里我们采用 await 方式以保证 results 正确返回前端 UI 立即更新，而深度检测由其内部异步逻辑接管
+    # 这里采用 await 方式以保证 results 正确返回前端 UI 立即更新，而深度检测由其内部异步逻辑接管
     background_tasks.add_task(_do_refresh)
 
     return {"message": "任务已提交", "task_id": task_id}
@@ -241,6 +257,7 @@ async def run_output_visual_check_v2(output_id: int, task_id: str, force_check: 
     """(优化版) 后台运行深度检测，接管已有 TaskID"""
     from database import engine
     from sqlmodel import Session
+    from task_broker import update_task_status
     
     with Session(engine) as session:
         out = session.get(OutputSource, output_id)
@@ -262,7 +279,12 @@ async def run_output_visual_check_v2(output_id: int, task_id: str, force_check: 
             if matched_channels:
                 from services.stream_checker import StreamChecker
                 check_source = 'manual' if force_check else 'auto'
-                await StreamChecker.run_batch_check(session, matched_channels, source=check_source, task_id=task_id)
+                check_result = await StreamChecker.run_batch_check(session, matched_channels, source=check_source, task_id=task_id)
+                
+                # 如果检测因中止而提前退出，严禁发送成功广播
+                if check_result is False:
+                    print(f"[run_output_visual_check_v2] 任务 {task_id} 已由用户中止，跳过成功广播")
+                    return
                 
                 # 再次同步聚合源状态
                 out = session.get(OutputSource, output_id)
@@ -270,6 +292,13 @@ async def run_output_visual_check_v2(output_id: int, task_id: str, force_check: 
                     out.last_update_status = "手动更新+深度检测完成"
                     session.add(out)
                     session.commit()
+                
+                # 最终出口防御：硬判状态再广播
+                with Session(engine) as check_session:
+                    task = check_session.get(TaskRecord, task_id)
+                    if task and task.status == "canceled":
+                        print(f"[run_output_visual_check_v2] 任务 {task_id} 已处于取消状态，跳过最终成功广播")
+                        return
                 
                 await update_task_status(task_id, status="success", progress=100, message="更新与检测全部完成")
             else:

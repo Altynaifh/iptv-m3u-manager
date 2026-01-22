@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timedelta
 from sqlmodel import Session, select
 from static_ffmpeg import run
-from task_broker import broker, update_task_status
+from task_broker import broker, update_task_status, notifier
 from models import TaskRecord
 
 @broker.task
@@ -32,7 +32,9 @@ async def check_channels_task(task_id: str, channel_ids: List[int], source: str 
                 await update_task_status(task_id, status="success", progress=100, message="没有有效的频道需要检测")
                 return
                 
-            await StreamChecker.run_batch_check(session, channels, concurrency=5, source=source, task_id=task_id)
+            if await StreamChecker.run_batch_check(session, channels, concurrency=5, source=source, task_id=task_id) is False:
+                # 如果是因为中止而退出的，不发送最后的 success 广播
+                return
             
         await update_task_status(task_id, status="success", progress=100, message="检测任务已完成")
     except Exception as e:
@@ -147,48 +149,90 @@ class StreamChecker:
     @classmethod
     async def run_batch_check(cls, session: Session, channels, concurrency: int = 5, source: str = 'manual', task_id: Optional[str] = None):
         """
-        分批执行多个频道的深度检测，并更新数据库
-        :param session: 数据库会话
-        :param channels: Channel 模型对象列表
-        :param concurrency: 并发数
-        :param source: 检测来源 (manual/auto/other)
-        :param task_id: 关联的任务 ID
+        [重构版] 分批执行多个频道的深度检测
         """
         if not channels:
             return
 
-        total = len(channels)
+        # 对频道按 URL 去重
+        unique_channels = []
+        seen_urls = set()
+        for ch in channels:
+            if ch.url not in seen_urls:
+                unique_channels.append(ch)
+                seen_urls.add(ch.url)
+        
+        total = len(unique_channels)
         sem = asyncio.Semaphore(concurrency)
+        finished_count = 0
+        last_reported_p = -1
+        
+        # 结果容器
+        results = []
 
-        async def _bounded_check(i, ch):
-            # 移除 _bounded_check 内部的高频数据库查询 (task.status == 'canceled')
-            # 改为依赖 update_task_status 本身的错误处理或由 update_task_status 定期同步
-            # 如果真的需要精确中止，建议在 update_task_status 中增加全局 cancellation 检查
+        local_aborted = False
+
+        async def _worker(i, ch):
+            nonlocal finished_count, last_reported_p, local_aborted
             
-            progress = int((i / total) * 100)
-            # 仅在进度显著变化(>2%)、开始或结束时更新，防止高频同步阻塞
-            last_progress = getattr(cls, f"_last_p_{task_id}", -1)
-            if progress == 0 or progress == 100 or (progress - last_progress) >= 2:
-                setattr(cls, f"_last_p_{task_id}", progress)
-                await update_task_status(task_id, progress=progress, message=f"正在检测 ({i+1}/{total}): {ch.name}")
+            # 1. 锁前检查：如果已熔断，直接秒速退出，不再排队
+            if local_aborted:
+                return {"status": "canceled", "ch_id": ch.id}
 
-            async with sem:
-                print(f"[Check] 正在检测 ({i+1}/{total}): {ch.name[:20]}")
-                res = await cls.check_stream_visual(ch.url)
-                if res['status']:
-                    print(f"  └─ ✅ 成功 (有效截图)")
-                else:
-                    print(f"  └─ ❌ 失败: {res.get('error', 'Unknown')}")
-                return {**res, "ch_id": ch.id}
+            try:
+                async with sem:
+                    # 2. 锁内检查：进入执行状态后的高频核实
+                    # 如果已经有其他协程触发了局部熔断，直接退出
+                    if local_aborted:
+                        return {"status": "canceled", "ch_id": ch.id}
 
-        tasks = [_bounded_check(i, ch) for i, ch in enumerate(channels)]
+                    # 每 2 个任务同步一次数据库状态（作为局部熔断的来源）
+                    if i % 2 == 0:
+                        from database import engine
+                        with Session(engine) as check_session:
+                            task = check_session.get(TaskRecord, task_id)
+                            if not task or task.status == "canceled":
+                                print(f"[Check] 任务 {task_id} 已中止，触发全局熔断")
+                                local_aborted = True # 标记局部熔断，让所有排队和运行中的协程看到
+                                await update_task_status(task_id, status="canceled", message="检测作业已由用户中止")
+                                return {"status": "canceled", "ch_id": ch.id}
+
+                    print(f"[Check] 正在检测 ({i+1}/{total}): {ch.name[:20]}")
+                    res = await cls.check_stream_visual(ch.url)
+                    
+                    # 完成一个，计数加一
+                    finished_count += 1
+                    # 重新计算进度：60% -> 98%
+                    progress_val = 60 + int((finished_count / total) * 38)
+                    
+                    # 仅在进度增加且显著时上报
+                    if not local_aborted and progress_val > last_reported_p and (progress_val - last_reported_p >= 2 or finished_count == total):
+                        last_reported_p = progress_val
+                        await update_task_status(task_id, progress=progress_val, message=f"正在检测 ({finished_count}/{total}): {ch.name}")
+                    
+                    if res['status']:
+                        print(f"  └─ ✅ 成功")
+                    else:
+                        print(f"  └─ ❌ 失败: {res.get('error', 'Unknown')}")
+                        
+                    return {**res, "ch_id": ch.id}
+            except Exception as e:
+                print(f"[Check] 异常: {ch.name} -> {e}")
+                return {"status": False, "error": str(e), "ch_id": ch.id}
+
+        # 使用 asyncio.gather 但受控于信号量，并加入对取消信号的全局响应
+        tasks = [_worker(i, ch) for i, ch in enumerate(unique_channels)]
         results = await asyncio.gather(*tasks)
 
-        # 批量写回数据库
+        # 如果已经触发了局部熔断，直接返回 False 告知上层
+        if local_aborted:
+            return False
+
+        # 批量写回数据库（过滤掉已取消的虚拟结果）
         from database import engine
         with Session(engine) as update_session:
             for res in results:
-                if res and res.get('ch_id'):
+                if res and res.get('ch_id') and res.get('status') != "canceled":
                     ch = update_session.get(cls._get_channel_model(), res['ch_id'])
                     if ch:
                         ch.check_status = res['status']
@@ -199,6 +243,7 @@ class StreamChecker:
                         ch.is_enabled = res['status']
                         update_session.add(ch)
             update_session.commit()
+        return True
             
         # 清理进度标记属性，防止内存泄漏或属性过多
         if hasattr(cls, f"_last_p_{task_id}"):

@@ -86,6 +86,12 @@ async def update_task_status(task_id: str, status: Optional[str] = None, progres
                 # print(f"[DB] DEBUG: Task {task_id} not found in DB yet.") # 频繁打印会刷屏，仅在失败时打印
                 return None
             
+            # 终端状态保护：如果已经是中止或失败，严禁跳回运行或成功状态
+            if task.status in ["canceled", "failure"]:
+                if status not in ["canceled", "failure"] and status is not None:
+                    # print(f"[DB] 拒绝状态回弹: {task_id} {task.status} -> {status}")
+                    return None # 拦截该次更新，保持当前的终端状态
+            
             if status: task.status = status
             if progress is not None: task.progress = progress
             if message: task.message = message
