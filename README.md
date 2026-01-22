@@ -10,10 +10,16 @@
 - **自动更新**：支持设置定时任务自动更新订阅源。
 
 ### 演示截图
-![界面演示](assets/demo.webp)
 
-#### 频道有效性检测
-![频道检测](assets/stream_check.png)
+#### PC 端演示
+- **PC端演示**
+  ![PC端演示](assets/demo.webp)
+#### 移动端演示
+![移动端演示](assets/mobile_UI.webp)
+
+- **频道有效性检测**
+  ![频道检测](assets/stream_check.png)
+
 
 ### 运行指南
 
