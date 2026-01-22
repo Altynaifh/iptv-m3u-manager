@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>IPTV M3U Manager</title>
     <link rel="stylesheet" href="/static/index.css">
     <style>
@@ -2196,6 +2196,9 @@
             document.getElementById('out_btn').innerText = '保存修改';
             document.getElementById('out_cancel_btn').style.display = 'block';
             document.getElementById('out_name').focus();
+
+            // 预加载预览数据，确保点击标签时能立即显示频道预览
+            updateRealtimePreview();
         }
 
         function cancelEditOutput() {
