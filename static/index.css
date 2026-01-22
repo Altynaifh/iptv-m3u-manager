@@ -1654,6 +1654,50 @@ textarea {
     color: var(--text-muted);
 }
 
+/* 移动端卡片复制链接按钮 - 预览图右下角 */
+.mobile-channel-card__copy-btn {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    z-index: 5;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.mobile-channel-card__copy-btn:hover {
+    background: rgba(99, 102, 241, 0.8);
+    transform: scale(1.1);
+}
+
+.mobile-channel-card__copy-btn:active {
+    transform: scale(0.95);
+}
+
+/* 浅色主题适配 */
+[data-theme="light"] .mobile-channel-card__copy-btn {
+    background: rgba(255, 255, 255, 0.8);
+    color: #333;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .mobile-channel-card__copy-btn:hover {
+    background: rgba(99, 102, 241, 0.9);
+    color: white;
+}
+
 /* 毛玻璃信息小卡片 - 左侧 55% 宽度 */
 .mobile-channel-card__info {
     position: relative;
