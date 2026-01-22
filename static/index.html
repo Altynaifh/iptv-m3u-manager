@@ -1035,6 +1035,8 @@
                             ${image
                             ? `<img src="${image}" onclick="event.stopPropagation(); showLightbox('${image}')" alt="预览">`
                             : '<span>📺</span>'}
+                            <button class="mobile-channel-card__copy-btn" onclick="event.stopPropagation(); copyChannelUrl('${c.url.replace(/'/g, "\\'")}')"
+                                    title="复制播放链接">📋</button>
                         </div>
                         <!-- 毛玻璃信息卡片 -->
                         <div class="mobile-channel-card__info">
@@ -1163,6 +1165,12 @@
                                 onclick="toggleChannel(${c.id})">
                                 ${c.is_enabled !== false ? '禁用' : '启用'}
                             </button>
+                            <button class="btn btn-sm" 
+                                style="background: #6366f1; padding: 4px 8px; font-size: 0.8em; margin-left: 4px;"
+                                onclick="event.stopPropagation(); copyChannelUrl('${c.url.replace(/'/g, "\\'")}')"
+                                title="复制播放链接">
+                                📋
+                            </button>
                         </td>` : ''}
                     </tr>
                 `}).join('');
@@ -1223,6 +1231,30 @@
                 } else {
                     card.classList.remove('selected');
                 }
+            }
+        }
+
+        // 复制频道播放链接到剪贴板
+        async function copyChannelUrl(url) {
+            try {
+                await navigator.clipboard.writeText(url);
+                showToast('链接已复制到剪贴板', 'success');
+            } catch (err) {
+                // 备用方案：使用传统方式复制
+                const textArea = document.createElement('textarea');
+                textArea.value = url;
+                textArea.style.position = 'fixed';
+                textArea.style.left = '-9999px';
+                document.body.appendChild(textArea);
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    showToast('链接已复制到剪贴板', 'success');
+                } catch (e) {
+                    showToast('复制失败，请手动复制', 'error');
+                    console.error('复制失败:', e);
+                }
+                document.body.removeChild(textArea);
             }
         }
 
