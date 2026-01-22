@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta
 import re
 
-from models import OutputSource, Subscription, Channel
+from models import OutputSource, Subscription, Channel, TaskRecord
 from database import get_session
 from services.generator import M3UGenerator
 from services.epg import fetch_epg_cached
