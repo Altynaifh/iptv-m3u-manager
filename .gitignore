@@ -64,3 +64,5 @@ TAG_DRAG_EDIT_FEATURE.md
 .idea/modules.xml
 .idea/vcs.xml
 openspec/specs/companion-app-requirements.md
+/_remote_update.sh
+/_remote_update.log
