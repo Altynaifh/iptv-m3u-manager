@@ -72,7 +72,8 @@ async def check_stream_visual(req: CheckRequest, session: Session = Depends(get_
     await check_channels_task.kiq(
         task_id=task_id,
         channel_ids=channel_ids,
-        source='manual'
+        source='manual',
+        auto_disable=req.auto_disable,
     )
     
     return {"status": "success", "task_id": task_id, "message": "已在后台启动深度检测任务"}

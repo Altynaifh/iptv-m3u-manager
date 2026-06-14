@@ -34,6 +34,11 @@ class Channel(SQLModel, table=True):
     check_image: Optional[str] = Field(default=None) # 频道截图 (Base64)
     check_error: Optional[str] = Field(default=None) # 深度检测失败原因 (如无画面)
     check_source: Optional[str] = Field(default=None) # 检测来源: manual / auto
+
+    # 视觉 AI 判定（拼图批处理）
+    ai_visual_status: Optional[str] = Field(default=None)
+    ai_visual_detail: Optional[str] = Field(default=None)
+    ai_visual_date: Optional[datetime] = Field(default=None)
     
     subscription: Subscription = Relationship(back_populates="channels")
 
@@ -53,7 +58,21 @@ class OutputSource(SQLModel, table=True):
     last_request_time: Optional[datetime] = None # 最近被请求的时间
     is_enabled: bool = Field(default=True) # 是否启用该聚合源
     auto_update_minutes: int = Field(default=0) # 自动同步频率 (分钟)
-    auto_visual_check: bool = Field(default=False) # 同步后自动执行深度检测
+    auto_visual_check: bool = Field(default=False) # 更新后自动截图检测 (FFmpeg)
+    auto_disable_on_check: bool = Field(default=True) # 截图检测后根据结果自动启用/禁用频道
+    auto_ai_vision_check: bool = Field(default=False)
+    auto_ai_organize: bool = Field(default=False)
+    enable_ai_vision: bool = Field(default=False) # UI 展开视觉 LLM 配置
+    enable_ai_organize: bool = Field(default=False)
+    layout_mode: str = Field(default="rules")  # rules | explicit
+    channel_layout: str = Field(default='{"groups":[]}')
+    layout_meta: str = Field(default="{}")
+
+class AppSettings(SQLModel, table=True):
+    """全站 LLM 配置（单行 id=1）"""
+    id: int = Field(default=1, primary_key=True)
+    llm_text_json: str = Field(default='{"base_url":"","api_key":"","model":""}')
+    llm_vision_json: str = Field(default='{"base_url":"","api_key":"","model":""}')
 
 class TaskRecord(SQLModel, table=True):
     """全局任务记录"""

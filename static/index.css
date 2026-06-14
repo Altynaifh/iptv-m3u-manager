@@ -2684,3 +2684,27 @@ body.ai-visual-popover-open .preview-ai-badge--interactive {
     z-index: 10061;
 }
 
+
+.ai-visual-popover-backdrop--passive {
+    pointer-events: none;
+}
+
+.ai-visual-popover--hover {
+    pointer-events: auto;
+}
+
+.preview-group-section--inactive-pool {
+    margin-top: 8px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--glass-border);
+}
+.preview-group-section__title--inactive-pool {
+    border-left-color: #64748b;
+    opacity: 0.92;
+}
+.preview-group-section__pool-hint {
+    font-size: 0.75em;
+    color: #94a3b8;
+    font-weight: normal;
+    margin-left: 6px;
+}

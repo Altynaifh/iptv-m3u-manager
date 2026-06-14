@@ -7,9 +7,12 @@ import json
 from datetime import datetime, timedelta
 
 from database import engine, create_engine, sqlite_url
-from models import SQLModel, Subscription, Channel, OutputSource, TaskRecord
-from routers import subscriptions, outputs, tools, channels, tasks
+from models import SQLModel, Subscription, Channel, OutputSource, TaskRecord, AppSettings
+from routers import subscriptions, outputs, tools, channels, tasks, settings
 from task_broker import broker, update_task_status
+import services.llm_tasks  # noqa: F401
+import services.output_postprocess  # noqa: F401
+import services.output_refresh  # noqa: F401
 import uuid
 
 app = FastAPI(title="IPTV M3U Manager")
@@ -25,6 +28,7 @@ app.include_router(outputs.router)
 app.include_router(tools.router)
 app.include_router(channels.router)
 app.include_router(tasks.router)
+app.include_router(settings.router)
 
 from sqlalchemy import text
 
@@ -161,6 +165,39 @@ def migrate_db():
             session.exec(text("ALTER TABLE outputsource ADD COLUMN excluded_channel_ids VARCHAR DEFAULT '[]'"))
             session.commit()
 
+        try:
+            session.exec(text("SELECT layout_mode FROM outputsource LIMIT 1"))
+        except:
+            print("正在迁移 OutputSource: layout_mode, channel_layout, layout_meta")
+            session.exec(text("ALTER TABLE outputsource ADD COLUMN layout_mode VARCHAR DEFAULT 'rules'"))
+            session.exec(text('ALTER TABLE outputsource ADD COLUMN channel_layout VARCHAR DEFAULT \'{"groups":[]}\''))
+            session.exec(text("ALTER TABLE outputsource ADD COLUMN layout_meta VARCHAR DEFAULT '{}'"))
+            session.commit()
+
+        try:
+            session.exec(text("SELECT ai_visual_status FROM channel LIMIT 1"))
+        except:
+            print("正在迁移 Channel: ai_visual_*")
+            session.exec(text("ALTER TABLE channel ADD COLUMN ai_visual_status VARCHAR"))
+            session.exec(text("ALTER TABLE channel ADD COLUMN ai_visual_detail VARCHAR"))
+            session.exec(text("ALTER TABLE channel ADD COLUMN ai_visual_date DATETIME"))
+            session.commit()
+
+
+        for col, sql in [
+           ("auto_ai_vision_check", "ALTER TABLE outputsource ADD COLUMN auto_ai_vision_check BOOLEAN DEFAULT 0"),
+           ("auto_ai_organize", "ALTER TABLE outputsource ADD COLUMN auto_ai_organize BOOLEAN DEFAULT 0"),
+           ("enable_ai_vision", "ALTER TABLE outputsource ADD COLUMN enable_ai_vision BOOLEAN DEFAULT 0"),
+           ("enable_ai_organize", "ALTER TABLE outputsource ADD COLUMN enable_ai_organize BOOLEAN DEFAULT 0"),
+            ("auto_disable_on_check", "ALTER TABLE outputsource ADD COLUMN auto_disable_on_check BOOLEAN DEFAULT 1"),
+        ]:
+            try:
+                session.exec(text(f"SELECT {col} FROM outputsource LIMIT 1"))
+            except:
+                print(f"正在迁移 OutputSource: {col}")
+                session.exec(text(sql))
+                session.commit()
+
 async def auto_update_task():
     """后台自动同步订阅"""
     while True:
@@ -220,54 +257,36 @@ async def auto_update_task():
                                     await fetch_epg_cached(out.epg_url, refresh=True)
                                 
                                 out.last_updated = now
-                                out.last_update_status = "自动更新成功"
                                 session.add(out)
                                 session.commit()
                                 print(f"[自动更新] 聚合源 {out.id} 同步完成。")
 
-                                # 4. 自动化深度检测 (如果开启)
-                                if out.auto_visual_check:
-                                    print(f"[自动同步] 聚合源 {out.id} 开启了同步后深度检测，正在启动...")
-                                    
-                                    from services.generator import M3UGenerator
-                                    from models import Channel
-                                    
-                                    # 1. 获取该聚合源关联的所有原始频道对象（带具体属性用于过滤）
-                                    raw_channels = []
-                                    for sid in sub_ids:
-                                        chs = session.exec(select(Channel).where(Channel.subscription_id == sid)).all()
-                                        raw_channels.extend(chs)
-                                    
-                                    # 2. 应用聚合源的过滤逻辑（关键词+正则），这才能保证检测的是正确的频道
-                                    try:
-                                        keywords = json.loads(out.keywords)
-                                    except:
-                                        keywords = []
-                                    matched_channels = M3UGenerator.filter_channels(raw_channels, out.filter_regex, keywords)
-                                    
-                                    matched_ids = [c.id for c in matched_channels]
-
-                                    if matched_ids:
-                                        from services.stream_checker import check_channels_task
-                                        task_id = f"auto-check-{out.id}-{int(now.timestamp())}"
-                                        task_record = TaskRecord(
-                                            id=task_id,
-                                            name=f"自动深度检测: {out.name}",
-                                            status="pending",
-                                            is_shown=False
-                                        )
-                                        session.add(task_record)
-                                        session.commit()
-                                        
-                                        await check_channels_task.kiq(
-                                            task_id=task_id,
-                                            channel_ids=matched_ids,
-                                            source='auto'
-                                        )
-                                        print(f"[自动同步] 聚合源 {out.id} 已派发深度检测任务 ({len(matched_ids)} 个频道)。")
+                                if out.auto_visual_check or out.auto_ai_vision_check or out.auto_ai_organize:
+                                    from services.output_postprocess import output_postprocess_task
+                                    task_id = f"auto-post-{out.id}-{int(now.timestamp())}"
+                                    session.add(TaskRecord(id=task_id, name=f"自动后处理: {out.name}", status="pending", is_shown=False))
+                                    session.commit()
+                                    await output_postprocess_task.kiq(
+                                        task_id=task_id,
+                                        output_id=out.id,
+                                        source='auto',
+                                        force_check=False,
+                                    )
+                                else:
+                                    from services.update_status_report import format_output_update_status
+                                    out.last_update_status = format_output_update_status(
+                                        "auto",
+                                        sync=True,
+                                        screenshot_skipped=True,
+                                        ai_vision_skipped=True,
+                                        ai_organize_skipped=True,
+                                    )
+                                    session.add(out)
+                                    session.commit()
                             except Exception as e:
                                 print(f"[自动更新] 聚合源 {out.id} 刷新失败: {e}")
-                                out.last_update_status = f"自动更新失败: {str(e)}"
+                                from services.update_status_report import format_output_update_status
+                                out.last_update_status = format_output_update_status("auto", sync=False, error=str(e))
                                 session.add(out)
                                 session.commit()
         except Exception as outer_e:

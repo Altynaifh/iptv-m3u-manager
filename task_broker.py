@@ -137,6 +137,23 @@ async def update_task_status(task_id: str, status: Optional[str] = None, progres
     except Exception as e:
         print(f"[WS] DEBUG: update_task_status 广播出错: {e}")
 
+
+
+async def push_console_log(line: str):
+    """向任务中心 WebSocket 推送一行控制台日志。"""
+    text = (line or "").strip()
+    if not text:
+        return
+    print(text)
+    if notifier.active_connections:
+        await notifier.broadcast(
+            {
+                "type": "console_log",
+                "line": text,
+                "timestamp": datetime.now(CST).strftime("%H:%M:%S"),
+            }
+        )
+
 @broker.on_event(TaskiqEvents.WORKER_STARTUP)
 async def startup(state: TaskiqState):
     print("Taskiq Worker 已启动")

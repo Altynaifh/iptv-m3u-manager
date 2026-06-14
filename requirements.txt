@@ -9,3 +9,4 @@ taskiq-aiohttp
 static-ffmpeg
 python-dateutil
 zhconv
+Pillow

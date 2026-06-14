@@ -14,7 +14,7 @@ from task_broker import broker, update_task_status, notifier
 from models import TaskRecord
 
 @broker.task
-async def check_channels_task(task_id: str, channel_ids: List[int], source: str = 'manual'):
+async def check_channels_task(task_id: str, channel_ids: List[int], source: str = 'manual', auto_disable: bool = True):
     try:
         await update_task_status(task_id, status="running", progress=0, message=f"准备检测 {len(channel_ids)} 个路径...")
         print(f"[Task] 收到深度检测请求: {len(channel_ids)} 个频道 (来源: {source})")
@@ -32,7 +32,7 @@ async def check_channels_task(task_id: str, channel_ids: List[int], source: str 
                 await update_task_status(task_id, status="success", progress=100, message="没有有效的频道需要检测")
                 return
                 
-            if await StreamChecker.run_batch_check(session, channels, concurrency=5, source=source, task_id=task_id) is False:
+            if await StreamChecker.run_batch_check(session, channels, concurrency=5, source=source, task_id=task_id, auto_disable=auto_disable) is False:
                 # 如果是因为中止而退出的，不发送最后的 success 广播
                 return
             
@@ -45,97 +45,153 @@ async def check_channels_task(task_id: str, channel_ids: List[int], source: str 
 
 class StreamChecker:
     _ffmpeg_path = None
+    _CAPTURE_VF_FALLBACKS = ("scale=480:-2", "scale=320:-2", None)
 
     @classmethod
-    def get_ffmpeg_path(cls):
-        """获取并验证 FFmpeg 路径"""
-        if cls._ffmpeg_path:
-            return cls._ffmpeg_path
+    def _candidate_ffmpeg_paths(cls):
+        """按优先级收集可用的 FFmpeg 可执行文件路径。"""
+        candidates = []
 
-        # 1. 优先尝试系统路径中的 ffmpeg
+        env_ffmpeg = os.environ.get("FFMPEG_PATH") or os.environ.get("FFMPEG_BINARY")
+        if env_ffmpeg:
+            candidates.append(env_ffmpeg)
+
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        for rel_path in (
+            os.path.join(project_root, "bin", "ffmpeg.exe"),
+            os.path.join(project_root, "bin", "ffmpeg"),
+        ):
+            candidates.append(rel_path)
+
         sys_ffmpeg = shutil.which("ffmpeg")
         if sys_ffmpeg:
-            try:
-                # 简单验证是否能跑
-                subprocess.run([sys_ffmpeg, "-version"], capture_output=True, timeout=2)
-                cls._ffmpeg_path = sys_ffmpeg
-                print(f"DEBUG: 使用系统 FFmpeg: {sys_ffmpeg}")
-                return cls._ffmpeg_path
-            except Exception as e:
-                print(f"DEBUG: 系统 FFmpeg ({sys_ffmpeg}) 运行失败: {e}")
+            candidates.append(sys_ffmpeg)
 
-        # 2. 尝试 static-ffmpeg 下载的二进制
         try:
             static_ffmpeg = run.get_or_fetch_platform_executables_else_raise()[0]
-            try:
-                subprocess.run([static_ffmpeg, "-version"], capture_output=True, timeout=2)
-                cls._ffmpeg_path = static_ffmpeg
-                print(f"DEBUG: 使用 static-ffmpeg 二进制: {static_ffmpeg}")
-                return cls._ffmpeg_path
-            except Exception as e:
-                print(f"DEBUG: static-ffmpeg 二进制 ({static_ffmpeg}) 运行失败: {e}")
+            candidates.append(static_ffmpeg)
         except Exception as e:
             print(f"DEBUG: 获取 static-ffmpeg 二进制失败: {e}")
 
-        # 最后兜底
+        candidates.append("ffmpeg")
+
+        seen = set()
+        ordered = []
+        for candidate in candidates:
+            normalized = os.path.abspath(candidate) if os.path.sep in candidate else candidate
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            ordered.append(candidate)
+        return ordered
+
+    @classmethod
+    def get_ffmpeg_path(cls):
+        """获取并验证 FFmpeg 路径。"""
+        if cls._ffmpeg_path:
+            return cls._ffmpeg_path
+
+        for ffmpeg_path in cls._candidate_ffmpeg_paths():
+            if os.path.sep in ffmpeg_path and not os.path.isfile(ffmpeg_path):
+                continue
+            try:
+                subprocess.run([ffmpeg_path, "-version"], capture_output=True, timeout=2)
+                cls._ffmpeg_path = ffmpeg_path
+                print(f"DEBUG: 使用 FFmpeg: {ffmpeg_path}")
+                return cls._ffmpeg_path
+            except Exception as e:
+                print(f"DEBUG: FFmpeg ({ffmpeg_path}) 运行失败: {e}")
+
         cls._ffmpeg_path = "ffmpeg"
         print(f"DEBUG: 未找到有效 FFmpeg，兜底使用命令: {cls._ffmpeg_path}")
         return cls._ffmpeg_path
 
     @classmethod
-    async def check_stream_visual(cls, url: str) -> dict:
-        ffmpeg_exe = cls.get_ffmpeg_path()
-        temp_filename = os.path.join(tempfile.gettempdir(), f"capture_{uuid.uuid4()}.jpg")
-        
-        # 使用 -user_agent 参数代替 -headers，并在 -i 前增加 -t 限制探测时长
+    def _build_capture_cmd(cls, ffmpeg_exe: str, url: str, output_path: str, vf_filter: Optional[str]) -> List[str]:
+        """构造截图命令，优先在输入前限制探测时长。"""
         cmd = [
             ffmpeg_exe,
             "-y",
             "-hide_banner",
             "-loglevel", "error",
-            "-t", "5",          # 输入探测阶段限时 5 秒
+            "-t", "8",
             "-user_agent", "AptvPlayer/1.4.1",
             "-i", url,
-            "-an", "-sn",       # 禁用音频和字幕
+            "-an", "-sn",
             "-frames:v", "1",
-            "-vf", "scale=320:-1",
-            "-f", "image2",
-            "-c:v", "mjpeg",
-            temp_filename 
         ]
+        if vf_filter:
+            cmd.extend(["-vf", vf_filter])
+        cmd.extend(["-f", "image2", "-c:v", "mjpeg", output_path])
+        return cmd
 
-        print(f"DEBUG: 执行截图命令: {' '.join(cmd)}")
+    @classmethod
+    def _normalize_ffmpeg_error(cls, returncode: int, stderr: bytes) -> str:
+        err_msg = stderr.decode("utf-8", errors="ignore") if stderr else "FFmpeg produced no image."
+        if returncode == -11 or returncode == 139:
+            return f"FFmpeg 进程崩溃 (SIGSEGV, RC={returncode})。LXC 容器建议安装系统官方软件包。"
+        return err_msg
+
+    @classmethod
+    def _should_retry_with_fallback(cls, returncode: int, stderr: bytes) -> bool:
+        if returncode in (-11, 139):
+            return True
+        err_msg = stderr.decode("utf-8", errors="ignore").lower() if stderr else ""
+        retry_markers = (
+            "scale",
+            "vf",
+            "width not divisible",
+            "height not divisible",
+            "invalid argument",
+            "error reinitializing filters",
+            "error while processing the decoded frame",
+        )
+        return any(marker in err_msg for marker in retry_markers)
+
+    @classmethod
+    async def check_stream_visual(cls, url: str) -> dict:
+        ffmpeg_exe = cls.get_ffmpeg_path()
+        temp_filename = os.path.join(tempfile.gettempdir(), f"capture_{uuid.uuid4()}.jpg")
+        last_error = "FFmpeg produced no image."
 
         try:
-            def run_ffmpeg():
-                # env 使用 os.environ.copy() 确保在 LXC 环境下的变量继承
-                return subprocess.run(
-                    cmd, 
-                    capture_output=True, 
-                    timeout=15,
-                    env=os.environ.copy()
-                )
+            for vf_filter in cls._CAPTURE_VF_FALLBACKS:
+                if os.path.exists(temp_filename):
+                    try:
+                        os.remove(temp_filename)
+                    except OSError:
+                        pass
 
-            result = await asyncio.to_thread(run_ffmpeg)
-            
-            if result.returncode == 0 and os.path.exists(temp_filename) and os.path.getsize(temp_filename) > 0:
-                with open(temp_filename, "rb") as f:
-                    img_data = f.read()
-                
-                b64 = base64.b64encode(img_data).decode('utf-8')
-                return {"url": url, "status": True, "image": f"data:image/jpeg;base64,{b64}"}
-            else:
-                err_msg = result.stderr.decode('utf-8', errors='ignore') if result.stderr else "FFmpeg produced no image."
-                
-                if result.returncode == -11 or result.returncode == 139:
-                    err_msg = f"FFmpeg 进程崩溃 (SIGSEGV, RC={result.returncode})。LXC 容器建议安装系统官方软件包。"
-                
-                print(f"DEBUG: [{url}] 检测失败 (RC={result.returncode}): {err_msg[:200]}")
-                return {"url": url, "status": False, "error": err_msg[:100]}
+                cmd = cls._build_capture_cmd(ffmpeg_exe, url, temp_filename, vf_filter)
+                vf_label = vf_filter or "no-scale"
+                print(f"DEBUG: 执行截图命令[{vf_label}]: {' '.join(cmd)}")
 
-        except subprocess.TimeoutExpired:
-            print(f"DEBUG: [{url}] 检测超时")
-            return {"url": url, "status": False, "error": "Detection Timeout"}
+                try:
+                    result = await asyncio.to_thread(
+                        subprocess.run,
+                        cmd,
+                        capture_output=True,
+                        timeout=20,
+                        env=os.environ.copy(),
+                    )
+                except subprocess.TimeoutExpired:
+                    print(f"DEBUG: [{url}] 截图超时 (vf={vf_label})")
+                    last_error = "Detection Timeout"
+                    continue
+
+                if result.returncode == 0 and os.path.exists(temp_filename) and os.path.getsize(temp_filename) > 0:
+                    with open(temp_filename, "rb") as f:
+                        img_data = f.read()
+                    b64 = base64.b64encode(img_data).decode("utf-8")
+                    return {"url": url, "status": True, "image": f"data:image/jpeg;base64,{b64}"}
+
+                last_error = cls._normalize_ffmpeg_error(result.returncode, result.stderr)
+                print(f"DEBUG: [{url}] 截图失败 (vf={vf_label}, RC={result.returncode}): {last_error[:200]}")
+
+                if not cls._should_retry_with_fallback(result.returncode, result.stderr):
+                    break
+
+            return {"url": url, "status": False, "error": last_error[:100]}
         except Exception as e:
             print(f"DEBUG: 运行异常: {e}")
             return {"url": url, "status": False, "error": str(e)}
@@ -143,11 +199,11 @@ class StreamChecker:
             if os.path.exists(temp_filename):
                 try:
                     os.remove(temp_filename)
-                except:
+                except OSError:
                     pass
 
     @classmethod
-    async def run_batch_check(cls, session: Session, channels, concurrency: int = 5, source: str = 'manual', task_id: Optional[str] = None):
+    async def run_batch_check(cls, session: Session, channels, concurrency: int = 5, source: str = 'manual', task_id: Optional[str] = None, auto_disable: bool = True):
         """
         [重构版] 分批执行多个频道的深度检测
         """
@@ -240,7 +296,8 @@ class StreamChecker:
                         ch.check_image = res.get('image')
                         ch.check_error = res.get('error') if not res['status'] else None
                         ch.check_source = source
-                        ch.is_enabled = res['status']
+                        if auto_disable:
+                            ch.is_enabled = res['status']
                         update_session.add(ch)
             update_session.commit()
         return True
