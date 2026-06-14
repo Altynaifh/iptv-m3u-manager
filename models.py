@@ -64,6 +64,7 @@ class OutputSource(SQLModel, table=True):
     auto_ai_organize: bool = Field(default=False)
     enable_ai_vision: bool = Field(default=False) # UI 展开视觉 LLM 配置
     enable_ai_organize: bool = Field(default=False)
+    ai_organize_prompt: str = Field(default="")  # 用户自定义 AI 排序/分组前置提示词
     layout_mode: str = Field(default="rules")  # rules | explicit
     channel_layout: str = Field(default='{"groups":[]}')
     layout_meta: str = Field(default="{}")
@@ -73,6 +74,8 @@ class AppSettings(SQLModel, table=True):
     id: int = Field(default=1, primary_key=True)
     llm_text_json: str = Field(default='{"base_url":"","api_key":"","model":""}')
     llm_vision_json: str = Field(default='{"base_url":"","api_key":"","model":""}')
+    access_password_enabled: bool = Field(default=False)
+    access_password_hash: str = Field(default="")
 
 class TaskRecord(SQLModel, table=True):
     """全局任务记录"""

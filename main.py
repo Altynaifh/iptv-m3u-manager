@@ -1,5 +1,6 @@
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, Request
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 import asyncio
 import os
@@ -8,7 +9,8 @@ from datetime import datetime, timedelta
 
 from database import engine, create_engine, sqlite_url
 from models import SQLModel, Subscription, Channel, OutputSource, TaskRecord, AppSettings
-from routers import subscriptions, outputs, tools, channels, tasks, settings
+from routers import subscriptions, outputs, tools, channels, tasks, settings, auth
+from services.access_auth import is_protection_enabled, is_request_authenticated
 from task_broker import broker, update_task_status
 import services.llm_tasks  # noqa: F401
 import services.output_postprocess  # noqa: F401
@@ -16,6 +18,22 @@ import services.output_refresh  # noqa: F401
 import uuid
 
 app = FastAPI(title="IPTV M3U Manager")
+
+_PUBLIC_PATHS = {"/"}
+_PUBLIC_PREFIXES = ("/static/", "/m3u/", "/api/auth/login", "/api/auth/status")
+
+
+@app.middleware("http")
+async def access_password_guard(request: Request, call_next):
+    path = request.url.path
+    if path in _PUBLIC_PATHS or any(path.startswith(prefix) for prefix in _PUBLIC_PREFIXES):
+        return await call_next(request)
+    with Session(engine) as session:
+        if not is_protection_enabled(session):
+            return await call_next(request)
+    if is_request_authenticated(request):
+        return await call_next(request)
+    return JSONResponse(status_code=401, content={"detail": "未授权，请先登录"})
 
 # 静态文件路径
 if not os.path.exists("./static"):
@@ -29,6 +47,7 @@ app.include_router(tools.router)
 app.include_router(channels.router)
 app.include_router(tasks.router)
 app.include_router(settings.router)
+app.include_router(auth.router)
 
 from sqlalchemy import text
 
@@ -184,8 +203,17 @@ def migrate_db():
             session.commit()
 
 
+        try:
+            session.exec(text("SELECT access_password_enabled FROM appsettings LIMIT 1"))
+        except:
+            print("正在迁移 AppSettings: access_password_*")
+            session.exec(text("ALTER TABLE appsettings ADD COLUMN access_password_enabled BOOLEAN DEFAULT 0"))
+            session.exec(text("ALTER TABLE appsettings ADD COLUMN access_password_hash VARCHAR DEFAULT ''"))
+            session.commit()
+
         for col, sql in [
-           ("auto_ai_vision_check", "ALTER TABLE outputsource ADD COLUMN auto_ai_vision_check BOOLEAN DEFAULT 0"),
+          ("auto_ai_vision_check", "ALTER TABLE outputsource ADD COLUMN auto_ai_vision_check BOOLEAN DEFAULT 0"),
+           ("ai_organize_prompt", "ALTER TABLE outputsource ADD COLUMN ai_organize_prompt VARCHAR DEFAULT ''"),
            ("auto_ai_organize", "ALTER TABLE outputsource ADD COLUMN auto_ai_organize BOOLEAN DEFAULT 0"),
            ("enable_ai_vision", "ALTER TABLE outputsource ADD COLUMN enable_ai_vision BOOLEAN DEFAULT 0"),
            ("enable_ai_organize", "ALTER TABLE outputsource ADD COLUMN enable_ai_organize BOOLEAN DEFAULT 0"),

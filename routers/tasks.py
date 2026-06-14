@@ -2,6 +2,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from sqlmodel import Session, select
 from database import engine
 from models import TaskRecord
+from services.access_auth import is_protection_enabled, verify_session_token, AUTH_COOKIE
 from task_broker import notifier, broker
 from typing import List
 
@@ -53,6 +54,11 @@ def cleanup_tasks():
 @router.websocket("/ws")
 async def tasks_websocket(websocket: WebSocket):
     """全局任务进度推送通道"""
+    with Session(engine) as session:
+        if is_protection_enabled(session):
+            if not verify_session_token(websocket.cookies.get(AUTH_COOKIE)):
+                await websocket.close(code=4401, reason="未授权")
+                return
     await notifier.connect(websocket)
     print(f"[WS] 任务通道已建立新连接 (当前活跃: {len(notifier.active_connections)})")
     try:

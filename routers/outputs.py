@@ -151,6 +151,7 @@ def update_output(output_id: int, output_data: OutputSource, session: Session = 
     output.auto_ai_organize = getattr(output_data, 'auto_ai_organize', False) or False
     output.enable_ai_vision = getattr(output_data, 'enable_ai_vision', False) or False
     output.enable_ai_organize = getattr(output_data, 'enable_ai_organize', False) or False
+    output.ai_organize_prompt = getattr(output_data, 'ai_organize_prompt', '') or ''
     output.excluded_channel_ids = output_data.excluded_channel_ids
     output.layout_mode = output_data.layout_mode or 'rules'
     output.channel_layout = output_data.channel_layout or '{"groups":[]}'
@@ -505,6 +506,7 @@ async def llm_organize_output(output_id: int, data: dict, session: Session = Dep
             "filter_regex": data.get("filter_regex") or out.filter_regex,
             "layout_mode": data.get("layout_mode") or out.layout_mode,
             "channel_layout": data.get("channel_layout") or out.channel_layout,
+            "ai_organize_prompt": (data.get("ai_organize_prompt") or "").strip() if data.get("use_draft") else (out.ai_organize_prompt or ""),
         }
     task_id = str(uuid.uuid4())
     task_record = TaskRecord(

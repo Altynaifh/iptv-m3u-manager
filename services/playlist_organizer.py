@@ -44,6 +44,24 @@ ORGANIZE_SYSTEM = """你是中国 IPTV 节目表编排助手。输入是候选�
 规则：每个 channel_id 必须且最多出现一次；输入列表中的频道须全部写入某一组；title 必须使用上述标准分组名之一。"""
 
 
+def _build_organize_system(custom_prompt: str | None) -> str:
+    prompt = (custom_prompt or "").strip()
+    if not prompt:
+        return ORGANIZE_SYSTEM
+    return (
+        ORGANIZE_SYSTEM
+        + "\n\n【用户自定义要求】\n"
+        + prompt
+        + "\n\n【合并规则】\n"
+        + "1. 上文系统默认规则全部保留，作为基础编排规范。\n"
+        + "2. 用户自定义要求仅覆盖其明确提到的分组、顺序或拆组行为。\n"
+        + "3. 若用户要求与系统默认规则冲突，以用户要求为准。\n"
+        + "4. 用户未提及的频道归类、组间顺序、组内排序，仍按系统默认规则执行。\n"
+        + "5. 用户可新增非标准分组名（如单独「翡翠台」组）；未被用户点名的频道仍优先归入系统默认分组。\n"
+        + "6. 输出仍为合法 JSON；每个 channel_id 唯一且覆盖全部输入频道。"
+    )
+
+
 def _build_channel_payload(channels: List[Channel], sub_map: Dict[int, str]) -> List[dict]:
     out = []
     for c in channels:
@@ -74,7 +92,7 @@ def _sort_groups_by_standard_order(layout: Dict[str, Any]) -> Dict[str, Any]:
     return {"groups": ordered}
 
 
-def validate_layout(parsed: Any, allowed_ids: Set[int]) -> Dict[str, Any]:
+def validate_layout(parsed: Any, allowed_ids: Set[int], *, preserve_group_order: bool = False) -> Dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("布局根节点必须是对象")
     groups = parsed.get("groups")
@@ -108,6 +126,8 @@ def validate_layout(parsed: Any, allowed_ids: Set[int]) -> Dict[str, Any]:
     if not clean_groups:
         raise ValueError("校验后无有效分组")
     layout = {"groups": clean_groups}
+    if preserve_group_order:
+        return layout
     return _sort_groups_by_standard_order(layout)
 
 
@@ -131,16 +151,25 @@ class PlaylistOrganizer:
         if not allowed:
             raise ValueError("没有可整理的频道（请先配置关键字/分组筛选）")
 
+        custom_prompt = ""
+        if draft and isinstance(draft, dict):
+            custom_prompt = (draft.get("ai_organize_prompt") or "").strip()
+        if not custom_prompt:
+            custom_prompt = (getattr(out, "ai_organize_prompt", "") or "").strip()
+
         payload = {
             "channels": _build_channel_payload(channels, sub_map),
             "locale": "zh-CN",
             "ignore_fields": ["source_group"],
             "group_order": STANDARD_GROUP_ORDER,
         }
+        if custom_prompt:
+            payload["user_custom_instructions"] = custom_prompt
         user = json.dumps(payload, ensure_ascii=False)
-        raw = await client.chat_text(ORGANIZE_SYSTEM, user)
+        system_prompt = _build_organize_system(custom_prompt)
+        raw = await client.chat_text(system_prompt, user)
         parsed = _extract_json_object(raw)
-        layout = validate_layout(parsed, allowed)
+        layout = validate_layout(parsed, allowed, preserve_group_order=bool(custom_prompt))
 
         out.layout_mode = "explicit"
         out.channel_layout = json.dumps(layout, ensure_ascii=False)
@@ -149,7 +178,8 @@ class PlaylistOrganizer:
                 "organized_at": datetime.utcnow().isoformat(),
                 "model": text["model"],
                 "channel_count": sum(len(g["channel_ids"]) for g in layout["groups"]),
-                "prompt_version": "standard-cn-groups-v1",
+                "prompt_version": "standard-cn-groups-v1+custom" if custom_prompt else "standard-cn-groups-v1",
+                "custom_prompt": custom_prompt or None,
             },
             ensure_ascii=False,
         )

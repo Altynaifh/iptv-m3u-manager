@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>IPTV M3U Manager</title>
-    <link rel="stylesheet" href="/static/index.css?v=20260614aipop3">
+    <link rel="stylesheet" href="/static/index.css?v=20260614access1">
     <style>
         /* 弹窗通知样式 */
         #toast-container {
@@ -70,6 +70,17 @@
 </head>
 
 <body>
+    <div id="auth_gate" class="auth-gate" hidden>
+        <div class="auth-gate__card glass-card">
+            <h2>🔒 访问验证</h2>
+            <p class="auth-gate__hint">管理页已启用密码保护，请输入密码后继续。</p>
+            <input type="password" id="auth_login_password" class="auth-gate__input" placeholder="访问密码"
+                autocomplete="current-password" onkeydown="if(event.key==='Enter')submitAccessLogin()">
+            <button type="button" class="btn auth-gate__submit" onclick="submitAccessLogin()">进入管理页</button>
+            <p id="auth_login_error" class="auth-gate__error"></p>
+        </div>
+    </div>
+
     <div class="container">
         <header>
             <h1>📺 IPTV M3U Manager</h1>
@@ -169,6 +180,12 @@
                         <button type="button" class="btn btn-sm llm-key-toggle" data-target="llm_text_key" onclick="toggleLlmKeyVisibility(this)" title="显示/隐藏 API Key">显示</button>
                     </div>
                     <input id="llm_text_model" placeholder="模型 ID" style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);">
+                </div>
+                <div id="llm_organize_prompt_block" style="display:none;margin-bottom:12px;">
+                    <label style="font-size:0.85em;opacity:0.9;">AI 排序前置提示词（可选）</label>
+                    <textarea id="out_ai_organize_prompt" rows="4" placeholder="例如：把港澳台里的翡翠台单独拆成「翡翠台」分组，排在「港澳台」分组前面。" aria-label="AI 排序前置提示词"
+                        style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);resize:vertical;min-height:88px;"></textarea>
+                    <p style="margin:0;font-size:0.78em;opacity:0.65;">保存聚合源后，手动或自动执行 AI 排序时会传给文本 LLM，用于自定义分组与顺序。</p>
                 </div>
                 <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:center;">
                     <button type="button" class="btn btn-sm" onclick="saveLlmSettings()">保存 LLM 配置</button>
@@ -336,43 +353,47 @@
                     <button type="button" id="preview_group_tab_ai" class="preview-group-mode-tab" role="tab" aria-selected="false" onclick="setPreviewGroupDisplayMode('ai')">AI分组</button>
                 </div>
                 <!-- 工具栏 -->
-                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                    <div style="display: flex; gap: 5px; flex-grow: 1;">
-                        <input type="text" id="channel_search" placeholder="🔍 搜索频道名称..."
-                            oninput="debounceSearchChannels()" aria-label="频道名称搜索"
-                            style="width: 100%; padding: 0 12px; font-size: 0.9em; min-width: 150px; height: 36px;">
+                <div class="preview-toolbar-actions">
+                    <div class="preview-toolbar-main-row">
+                        <div class="preview-toolbar-search">
+                            <input type="text" id="channel_search" placeholder="🔍 搜索频道名称..."
+                                oninput="debounceSearchChannels()" aria-label="频道名称搜索"
+                                style="width: 100%; padding: 0 12px; font-size: 0.9em; min-width: 150px; height: 36px;">
+                        </div>
+
+                        <button id="check_btn" class="btn btn-sm toolbar-btn" onclick="checkPageConnectivity()"
+                            style="background: #8b5cf6; display: none;">Ping 检测</button>
+                        <button id="check_visual_btn" class="btn btn-sm toolbar-btn" onclick="checkVisualConnectivity()"
+                            style="background: #ec4899; display: none;">截图检测</button>
+                        <button id="check_ai_vision_btn" class="btn btn-sm toolbar-btn" onclick="checkPreviewAiVision()"
+                            style="background: #7c3aed; display: none;">AI 视觉检测</button>
+                        <button id="check_ai_organize_btn" class="btn btn-sm toolbar-btn" onclick="checkPreviewAiOrganize()"
+                            style="background: #0ea5e9; display: none;">AI 排序</button>
+                        <button id="refresh_epg_btn" class="btn btn-sm toolbar-btn" onclick="refreshEPG()"
+                            style="background: #10b981; display: none;">🔄 刷新节目表</button>
+
+                        <div class="preview-toolbar-select-group">
+                            <button class="btn btn-sm toolbar-btn btn-primary" onclick="toggleSelectAll(true)"
+                                id="sel_all_btn" style="display: none;">全选</button>
+                            <button class="btn btn-sm toolbar-btn btn-primary" onclick="invertSelection()" id="sel_inv_btn"
+                                style="display: none;">反选</button>
+                            <button class="btn btn-sm toolbar-btn btn-success-soft" onclick="selectByStatus(true)"
+                                style="display: none;" id="sel_enabled_btn">全选启用</button>
+                            <button class="btn btn-sm toolbar-btn btn-danger-soft" onclick="selectByStatus(false)"
+                                style="display: none;" id="sel_disabled_btn">全选禁用</button>
+                        </div>
                     </div>
 
-
-
-                    <button id="check_btn" class="btn btn-sm toolbar-btn" onclick="checkPageConnectivity()"
-                        style="background: #8b5cf6; display: none;">Ping 检测</button>
-                    <button id="check_visual_btn" class="btn btn-sm toolbar-btn" onclick="checkVisualConnectivity()"
-                        style="background: #ec4899; display: none;">截图检测</button>
-                    <button id="check_ai_vision_btn" class="btn btn-sm toolbar-btn" onclick="checkPreviewAiVision()"
-                        style="background: #7c3aed; display: none;">AI 视觉检测</button>
-                    <button id="check_ai_organize_btn" class="btn btn-sm toolbar-btn" onclick="checkPreviewAiOrganize()"
-                        style="background: #0ea5e9; display: none;">AI 排序</button>
-                    <button id="refresh_epg_btn" class="btn btn-sm toolbar-btn" onclick="refreshEPG()"
-                        style="background: #10b981; display: none;">🔄 刷新节目表</button>
-
-                    <!-- 批量选择和操作 -->
-                    <div style="display: flex; gap: 10px;">
-                        <button class="btn btn-sm toolbar-btn btn-primary" onclick="toggleSelectAll(true)"
-                            id="sel_all_btn" style="display: none;">全选</button>
-                        <button class="btn btn-sm toolbar-btn btn-primary" onclick="invertSelection()" id="sel_inv_btn"
-                            style="display: none;">反选</button>
-                        <button class="btn btn-sm toolbar-btn btn-success-soft" onclick="selectByStatus(true)"
-                            style="display: none;" id="sel_enabled_btn">全选启用</button>
-                        <button class="btn btn-sm toolbar-btn btn-danger-soft" onclick="selectByStatus(false)"
-                            style="display: none;" id="sel_disabled_btn">全选禁用</button>
+                    <div class="preview-batch-action-row">
+                        <button class="btn btn-sm toolbar-btn" onclick="batchSetStatus(true)"
+                            style="background: #059669; display: none;" id="batch_enable_btn">启用选中</button>
+                        <button class="btn btn-sm toolbar-btn" onclick="batchSetStatus(false)"
+                            style="background: #b91c1c; display: none;" id="batch_disable_btn">禁用选中</button>
+                        <button class="btn btn-sm toolbar-btn preview-aggregate-batch-btn" onclick="batchPreviewAggregateExclude(true)"
+                            style="display: none;" id="batch_exclude_btn">剔除选中</button>
+                        <button class="btn btn-sm toolbar-btn preview-aggregate-batch-btn" onclick="batchPreviewAggregateExclude(false)"
+                            style="display: none;" id="batch_restore_btn">恢复选中</button>
                     </div>
-
-
-                    <button class="btn btn-sm toolbar-btn" onclick="batchSetStatus(true)"
-                        style="background: #059669; display: none;" id="batch_enable_btn">启用选中</button>
-                    <button class="btn btn-sm toolbar-btn" onclick="batchSetStatus(false)"
-                        style="background: #b91c1c; display: none;" id="batch_disable_btn">禁用选中</button>
                 </div>
             </div>
 
@@ -437,6 +458,25 @@
         <div id="task_list_container" class="task-list-container">
             <div class="empty-task-state">暂无任务记录</div>
         </div>
+        <div class="task-panel-access" id="task_access_section">
+            <div class="task-panel-access__head">
+                <span>🔒 访问密码</span>
+                <span id="access_status_badge" class="task-panel-access__badge">未启用</span>
+            </div>
+            <label class="task-panel-access__row">
+                <input type="checkbox" id="access_enabled_toggle" onchange="syncAccessSettingsForm()">
+                <span>启用密码保护管理页</span>
+            </label>
+            <input type="password" id="access_new_password" class="task-panel-access__input" placeholder="新密码（启用或修改时填写）"
+                autocomplete="new-password">
+            <input type="password" id="access_current_password" class="task-panel-access__input" placeholder="当前密码（已启用时必填）"
+                autocomplete="current-password">
+            <div class="task-panel-access__actions">
+                <button type="button" class="btn btn-sm" style="flex:1;background:var(--primary);" onclick="saveAccessSettings()">保存配置</button>
+                <button type="button" class="btn btn-sm btn-outline" id="access_logout_btn" style="flex:1;display:none;" onclick="logoutAccess()">退出登录</button>
+            </div>
+            <p class="task-panel-access__note">M3U 导出链接（/m3u/xxx）不受密码影响，播放器可正常订阅。</p>
+        </div>
         <div class="task-panel-footer">
             <button class="btn btn-sm btn-outline" style="flex: 1;" onclick="taskCenter.loadTasks()">🔄 刷新列表</button>
             <button class="btn btn-sm btn-danger-outline" style="flex: 1;" onclick="taskCenter.cleanupTasks()">🧹
@@ -487,6 +527,177 @@
         initTheme();
 
         // ==========================================
+        // 访问密码 / 登录门禁
+        // ==========================================
+        window.accessAuth = {
+            state: { protection_enabled: false, authenticated: true },
+            appStarted: false,
+
+            async refreshStatus() {
+                const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
+                if (!res.ok) throw new Error('无法获取鉴权状态');
+                this.state = await res.json();
+                return this.state;
+            },
+
+            showGate(message) {
+                document.body.classList.add('auth-locked');
+                const gate = document.getElementById('auth_gate');
+                const err = document.getElementById('auth_login_error');
+                if (gate) gate.hidden = false;
+                if (err) err.textContent = message || '';
+                const input = document.getElementById('auth_login_password');
+                if (input) {
+                    input.value = '';
+                    setTimeout(() => input.focus(), 50);
+                }
+            },
+
+            hideGate() {
+                document.body.classList.remove('auth-locked');
+                const gate = document.getElementById('auth_gate');
+                if (gate) gate.hidden = true;
+                const err = document.getElementById('auth_login_error');
+                if (err) err.textContent = '';
+            },
+
+            async ensureAppStarted() {
+                if (this.appStarted) return;
+                this.appStarted = true;
+                if (typeof startMainApp === 'function') startMainApp();
+            },
+        };
+
+        (function installAuthFetchGuard() {
+            const nativeFetch = window.fetch.bind(window);
+            window.fetch = async function (input, init) {
+                init = init || {};
+                if (!init.credentials) init.credentials = 'same-origin';
+                const res = await nativeFetch(input, init);
+                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                if (res.status === 401 && !url.includes('/api/auth/')) {
+                    if (window.accessAuth) {
+                        window.accessAuth.state.authenticated = false;
+                        window.accessAuth.showGate('会话已过期，请重新登录');
+                    }
+                }
+                return res;
+            };
+        })();
+
+        async function submitAccessLogin() {
+            const pwd = (document.getElementById('auth_login_password')?.value || '').trim();
+            const errEl = document.getElementById('auth_login_error');
+            if (!pwd) {
+                if (errEl) errEl.textContent = '请输入密码';
+                return;
+            }
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: pwd }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    if (errEl) errEl.textContent = data.detail || '密码错误';
+                    return;
+                }
+                await accessAuth.refreshStatus();
+                accessAuth.hideGate();
+                await accessAuth.ensureAppStarted();
+                if (typeof loadAccessSettingsPanel === 'function') loadAccessSettingsPanel();
+                showToast('登录成功', 'success');
+            } catch (e) {
+                if (errEl) errEl.textContent = '登录失败，请稍后重试';
+            }
+        }
+
+        async function loadAccessSettingsPanel() {
+            try {
+                const res = await fetch('/api/settings/access', { credentials: 'same-origin' });
+                if (!res.ok) return;
+                const data = await res.json();
+                const toggle = document.getElementById('access_enabled_toggle');
+                const badge = document.getElementById('access_status_badge');
+                const logoutBtn = document.getElementById('access_logout_btn');
+                if (toggle) toggle.checked = !!data.enabled;
+                if (badge) {
+                    badge.textContent = data.enabled ? '已启用' : '未启用';
+                    badge.classList.toggle('is-on', !!data.enabled);
+                }
+                if (logoutBtn) {
+                    logoutBtn.style.display = data.enabled ? 'inline-flex' : 'none';
+                }
+                syncAccessSettingsForm();
+            } catch (e) {
+                console.warn('loadAccessSettingsPanel failed', e);
+            }
+        }
+
+        function syncAccessSettingsForm() {
+            const enabled = !!document.getElementById('access_enabled_toggle')?.checked;
+            const cur = document.getElementById('access_current_password');
+            if (cur) cur.placeholder = enabled ? '当前密码（修改或关闭保护时必填）' : '当前密码（已启用时必填）';
+        }
+
+        async function saveAccessSettings() {
+            const enabled = !!document.getElementById('access_enabled_toggle')?.checked;
+            const password = (document.getElementById('access_new_password')?.value || '').trim();
+            const current_password = (document.getElementById('access_current_password')?.value || '').trim();
+            if (enabled && !password && !accessAuth.state.protection_enabled) {
+                showToast('请先设置新密码', 'error');
+                return;
+            }
+            try {
+                const res = await fetch('/api/settings/access', {
+                    method: 'PUT',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled, password: password || null, current_password: current_password || null }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    showToast(data.detail || '保存失败', 'error');
+                    return;
+                }
+                document.getElementById('access_new_password').value = '';
+                document.getElementById('access_current_password').value = '';
+                await accessAuth.refreshStatus();
+                await loadAccessSettingsPanel();
+                showToast(enabled ? '密码保护已启用' : '密码保护已关闭', 'success');
+            } catch (e) {
+                showToast('保存失败', 'error');
+            }
+        }
+
+        async function logoutAccess() {
+            await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+            await accessAuth.refreshStatus();
+            if (accessAuth.state.protection_enabled) {
+                accessAuth.showGate();
+            }
+            showToast('已退出登录', 'info');
+        }
+
+        async function bootAccessGate() {
+            try {
+                await accessAuth.refreshStatus();
+            } catch (e) {
+                console.error('auth status failed', e);
+                return;
+            }
+            if (accessAuth.state.protection_enabled && !accessAuth.state.authenticated) {
+                accessAuth.showGate();
+                return;
+            }
+            accessAuth.hideGate();
+            await accessAuth.ensureAppStarted();
+            loadAccessSettingsPanel();
+        }
+
+        // ==========================================
         // 核心任务中心控制引擎 (NAS Style)
         // ==========================================
         class GlobalTaskCenter {
@@ -512,6 +723,7 @@
                     panel.classList.add('active');
                     if (typeof hideAiVisualPopover === 'function') hideAiVisualPopover();
                     this.loadTasks(); // 展开时刷新
+                    if (typeof loadAccessSettingsPanel === 'function') loadAccessSettingsPanel();
                 } else {
                     panel.classList.remove('active');
                 }
@@ -722,8 +934,15 @@
         const taskCenter = new GlobalTaskCenter();
         const FLOATING_UI_POS_KEY = 'iptv_floating_ui_positions_v1';
 
-        document.addEventListener('DOMContentLoaded', () => {
+        function startMainApp() {
             taskCenter.init();
+            if (typeof fetchSubs === 'function') fetchSubs();
+            if (typeof fetchOutputs === 'function') fetchOutputs();
+            if (typeof bootLoadLlmSettings === 'function') bootLoadLlmSettings();
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            bootAccessGate();
             const dragMargin = 10;
             const consolePanel = document.getElementById('console_panel');
             const taskPanel = document.getElementById('task_panel');
@@ -1154,6 +1373,8 @@
             const selDisBtn = document.getElementById('sel_disabled_btn');
             const batchEnBtn = document.getElementById('batch_enable_btn');
             const batchDisBtn = document.getElementById('batch_disable_btn');
+            const batchExcludeBtn = document.getElementById('batch_exclude_btn');
+            const batchRestoreBtn = document.getElementById('batch_restore_btn');
             const batchSep = document.getElementById('batch_sep');
 
             const displayStyle = showCheckBtn ? 'block' : 'none';
@@ -1174,6 +1395,7 @@
             if (batchEnBtn) batchEnBtn.style.display = displayStyle;
             if (batchDisBtn) batchDisBtn.style.display = displayStyle;
             if (batchSep) batchSep.style.display = displayStyle;
+            updateAggregateBatchExcludeButtons();
 
             title.innerText = titleText;
             list.innerHTML = '正在加载...';
@@ -1191,6 +1413,7 @@
                 else groupTabs.classList.remove('is-visible');
             }
             if (!showCheckBtn) {
+                endAggregatePreviewSession();
                 window._previewGroupPayload = null;
                 window._previewGroupDisplayMode = 'manual';
             }
@@ -1226,6 +1449,7 @@
 
             prepareModal(`预览聚合: ${name}`, true, out);
             window.currentPreviewOutputId = out ? out.id : null;
+            beginAggregatePreviewSession();
             setCurrentOutputAutoDisableFlag(out);
 
             if (!out) {
@@ -1262,6 +1486,7 @@
                 window.lastRenderShowActions = true;
                 window._previewGroupPayload = data;
                 updatePreviewGroupModeTabs(data);
+                window._previewAggregateExcludedIds = new Set((excludedIds || []).map(id => Number(id)));
                 applyPreviewGroupDisplay();
             } catch (err) {
                 document.getElementById('channel_list').innerHTML = '预览加载失败: ' + err.message;
@@ -1306,7 +1531,7 @@
                         const collapsed = window._previewGroupCollapsed && window._previewGroupCollapsed.has(secKey);
                         const poolCls = sec.isInactivePool ? ' preview-group-section--inactive-pool' : '';
                         return `<section class="preview-group-section preview-group-section--mobile${poolCls}${collapsed ? ' is-collapsed' : ''}" data-group-title="${title.replace(/"/g, '&quot;')}">
-                            ${buildPreviewGroupHeaderHtml(title, chs.length, secKey, sec)}
+                            ${buildPreviewGroupHeaderHtml(title, chs.length, secKey, { ...sec, sectionIndex: si, mobile: true })}
                             <div class="preview-group-section__body"${collapsed ? ' hidden' : ''}>
                             <div class="preview-group-section__cards">${cards || '<div class="preview-group-section__empty">该组暂无频道</div>'}</div>
                             </div>
@@ -1321,12 +1546,12 @@
                         const collapsed = window._previewGroupCollapsed && window._previewGroupCollapsed.has(secKey);
                         const poolCls = sec.isInactivePool ? ' preview-group-section--inactive-pool' : '';
                         return `<section class="preview-group-section${poolCls}${collapsed ? ' is-collapsed' : ''}" data-group-title="${title.replace(/"/g, '&quot;')}">
-                            ${buildPreviewGroupHeaderHtml(title, chs.length, secKey, sec)}
+                            ${buildPreviewGroupHeaderHtml(title, chs.length, secKey, { ...sec, sectionIndex: si })}
                             <div class="preview-group-section__body"${collapsed ? ' hidden' : ''}>
                             <table class="channel-table-container" style="width: 100%; border-collapse: collapse;">
                                 <thead>
                                     <tr style="text-align: left; border-bottom: 2px solid var(--primary);">
-                                        <th style="padding: 10px; width: 30px;"><input type="checkbox" onclick="toggleSelectAllInSection(this, ${si})"></th>
+                                        <th style="padding: 10px; width: 30px;"><input type="checkbox" class="preview-group-section__thead-select" data-section-index="${si}" onclick="event.stopPropagation(); togglePreviewGroupSectionSelect(${si});" title="全选本组 / 取消全选"></th>
                                         <th style="padding: 10px; width: 60px;">Logo</th>
                                         <th style="padding: 10px;">名称</th>
                                         <th style="padding: 10px;">tvg-id</th>
@@ -1346,6 +1571,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 }
                 renderOffset = filteredChannels.length;
                 updatePreviewStats();
+                syncPreviewGroupSectionCheckboxes();
                 if (window.currentEPGUrl) {
                     let epgIdx = 0;
                     groupSections.forEach(sec => {
@@ -1428,14 +1654,57 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             return !!(c && (c.visualImage || c.check_image));
         }
 
+        /** 预览会话内固定分组布局，避免禁用后立即掉进「未启用」折叠区 */
+        function isAggregatePreviewSessionActive() {
+            const modal = document.getElementById('channel_modal');
+            const visible = modal && modal.style.display === 'flex';
+            return !!(visible && window.currentPreviewOutputId && window._previewGroupPayload);
+        }
+
+        function beginAggregatePreviewSession() {
+            window._aggregatePreviewSessionActive = true;
+            window._aggregatePreviewDeferredInactiveIds = new Set();
+        }
+
+        function endAggregatePreviewSession() {
+            window._aggregatePreviewSessionActive = false;
+            window._aggregatePreviewDeferredInactiveIds = new Set();
+        }
+
+        function rememberDeferredInactiveChannel(channelId) {
+            if (!window._aggregatePreviewDeferredInactiveIds) {
+                window._aggregatePreviewDeferredInactiveIds = new Set();
+            }
+            window._aggregatePreviewDeferredInactiveIds.add(Number(channelId));
+        }
+
+        function forgetDeferredInactiveChannel(channelId) {
+            if (!window._aggregatePreviewDeferredInactiveIds) return;
+            window._aggregatePreviewDeferredInactiveIds.delete(Number(channelId));
+        }
+
+        function isDeferredInactiveChannel(channelId) {
+            return !!(window._aggregatePreviewDeferredInactiveIds
+                && window._aggregatePreviewDeferredInactiveIds.has(Number(channelId)));
+        }
+
+        function shouldDeferInactivePoolDuringPreview() {
+            return isAggregatePreviewSessionActive() || window._aggregatePreviewSessionActive === true;
+        }
+
         /** AI 分组内排序：启用在上；有图未启用与启用同组并排在组内底部；无图未启用不进组 */
         function partitionAiGroupChannelsForDisplay(channels) {
             const main = [];
             const noImageDisabled = [];
+            const deferInactivePool = shouldDeferInactivePoolDuringPreview();
             (channels || []).forEach(c => {
                 const disabled = c.is_enabled === false;
                 if (disabled && !channelHasPreviewImage(c)) {
-                    noImageDisabled.push(c);
+                    if (deferInactivePool || isDeferredInactiveChannel(c.id)) {
+                        main.push(c);
+                    } else {
+                        noImageDisabled.push(c);
+                    }
                 } else {
                     main.push(c);
                 }
@@ -1451,13 +1720,14 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         function reshapeAiPreviewGroupSections(aiGroups) {
             const groups = aiGroups || [];
             const pooledDisabled = [];
+            const deferInactivePool = shouldDeferInactivePoolDuringPreview();
             const reshaped = groups.map(g => {
                 const part = partitionAiGroupChannelsForDisplay(g.channels || []);
                 pooledDisabled.push(...part.noImageDisabled);
                 return { title: g.title || '未命名', channels: part.main };
             }).filter(g => (g.channels || []).length > 0 || groups.length === 1);
 
-            if (pooledDisabled.length > 0) {
+            if (!deferInactivePool && pooledDisabled.length > 0) {
                 reshaped.push({ title: '未启用', channels: pooledDisabled, isInactivePool: true });
                 if (!window._previewGroupCollapsed) window._previewGroupCollapsed = new Set();
                 const poolKey = previewGroupSectionKey('未启用', reshaped.length - 1);
@@ -1491,13 +1761,24 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 : '';
             const collapsed = window._previewGroupCollapsed && window._previewGroupCollapsed.has(sectionKey);
             const keyEsc = String(sectionKey).replace(/'/g, "\'");
-            return `<button type="button" class="preview-group-section__title preview-group-section__title--toggle${isPool ? ' preview-group-section__title--inactive-pool' : ''}" onclick="togglePreviewGroupCollapse('${keyEsc}')" aria-expanded="${collapsed ? 'false' : 'true'}">
-                <span class="preview-group-section__chevron" aria-hidden="true">${collapsed ? '▶' : '▼'}</span>
-                <span class="preview-group-section__title-text" title="${safe}">${safe}${aiOnTitle}${poolHint}</span>
-                <span class="preview-group-section__meta">
-                    <span class="preview-group-section__count">${count} 个频道</span>
-                </span>
-            </button>`;
+            const sectionIndex = sectionOpts && sectionOpts.sectionIndex != null ? sectionOpts.sectionIndex : -1;
+            const showSectionSelect = window.lastRenderShowActions && sectionIndex >= 0 && !!sectionOpts.mobile;
+            const selectHtml = showSectionSelect
+                ? `<label class="preview-group-section__select" data-section-index="${sectionIndex}" onclick="event.preventDefault(); event.stopPropagation(); togglePreviewGroupSectionSelect(${sectionIndex});" title="全选本组 / 取消全选">
+                    <input type="checkbox" class="preview-group-section__select-input" tabindex="-1" readonly>
+                    <span class="preview-group-section__select-box" aria-hidden="true"></span>
+                   </label>`
+                : '';
+            return `<div class="preview-group-section__head">
+                ${selectHtml}
+                <button type="button" class="preview-group-section__title preview-group-section__title--toggle${isPool ? ' preview-group-section__title--inactive-pool' : ''}" onclick="togglePreviewGroupCollapse('${keyEsc}')" aria-expanded="${collapsed ? 'false' : 'true'}">
+                    <span class="preview-group-section__chevron" aria-hidden="true">${collapsed ? '▶' : '▼'}</span>
+                    <span class="preview-group-section__title-text" title="${safe}">${safe}${aiOnTitle}${poolHint}</span>
+                    <span class="preview-group-section__meta">
+                        <span class="preview-group-section__count">${count} 个频道</span>
+                    </span>
+                </button>
+            </div>`;
         }
 
 
@@ -1833,6 +2114,166 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             return `<img class="mobile-channel-card__logo" src="${safe}" alt="" onerror="this.remove()">`;
         }
 
+        function ensurePreviewAggregateExcludedSet() {
+            if (!window._previewAggregateExcludedIds) window._previewAggregateExcludedIds = new Set();
+            return window._previewAggregateExcludedIds;
+        }
+
+        function isPreviewAggregateExcluded(channelId) {
+            return ensurePreviewAggregateExcludedSet().has(Number(channelId));
+        }
+
+        function buildPreviewAggregateExcludeButtonHtml(channelId, options = {}) {
+            if (!window.currentPreviewOutputId) return '';
+            const excluded = isPreviewAggregateExcluded(channelId);
+            const btnText = excluded ? '恢复' : '剔除';
+            const mobile = !!options.mobile;
+            if (mobile) {
+                const cls = excluded
+                    ? 'mobile-channel-card__toggle-btn mobile-channel-card__toggle-btn--enable'
+                    : 'mobile-channel-card__toggle-btn mobile-channel-card__toggle-btn--exclude';
+                return `<button class="${cls}" onclick="event.stopPropagation(); togglePreviewAggregateExclude(${channelId})" title="从当前聚合表纳入/剔除">${btnText}</button>`;
+            }
+            const cls = excluded
+                ? 'preview-table-actions__btn preview-table-actions__btn--restore'
+                : 'preview-table-actions__btn preview-table-actions__btn--exclude';
+            return `<button class="btn btn-sm ${cls}"
+                onclick="event.stopPropagation(); togglePreviewAggregateExclude(${channelId})" title="从当前聚合表纳入/剔除">${btnText}</button>`;
+        }
+
+        function buildPreviewTableActionsHtml(c) {
+            const isDisabled = c.is_enabled === false;
+            const toggleClass = isDisabled
+                ? 'preview-table-actions__btn preview-table-actions__btn--enable'
+                : 'preview-table-actions__btn preview-table-actions__btn--disable';
+            const toggleText = isDisabled ? '启用' : '禁用';
+            const copyUrl = (c.url || '').replace(/'/g, "\\'");
+            return `<div class="preview-table-actions">
+                <button class="btn btn-sm ${toggleClass}" onclick="toggleChannel(${c.id})">${toggleText}</button>
+                ${buildPreviewAggregateExcludeButtonHtml(c.id)}
+                <button class="btn btn-sm preview-table-actions__btn preview-table-actions__btn--copy"
+                    onclick="event.stopPropagation(); copyChannelUrl('${copyUrl}')" title="复制播放链接">复制</button>
+            </div>`;
+        }
+
+        function getSelectedAggregatePreviewChannels() {
+            const pool = (typeof flattenAggregatePreviewChannels === 'function' && window.currentPreviewOutputId)
+                ? flattenAggregatePreviewChannels() : filteredChannels;
+            if (!window.selectedChannelIds || window.selectedChannelIds.size === 0) return [];
+            return pool.filter(c => window.selectedChannelIds.has(c.id));
+        }
+
+        function getAggregateBatchExcludeAction() {
+            const selected = getSelectedAggregatePreviewChannels();
+            if (!selected.length) return 'exclude';
+            const set = ensurePreviewAggregateExcludedSet();
+            const allExcluded = selected.every(c => set.has(Number(c.id)));
+            return allExcluded ? 'restore' : 'exclude';
+        }
+
+        function updateAggregateBatchExcludeButtons() {
+            const show = !!(window.lastRenderShowActions && window.currentPreviewOutputId);
+            const excludeBtn = document.getElementById('batch_exclude_btn');
+            const restoreBtn = document.getElementById('batch_restore_btn');
+            if (!show) {
+                if (excludeBtn) excludeBtn.style.display = 'none';
+                if (restoreBtn) restoreBtn.style.display = 'none';
+                return;
+            }
+            const action = getAggregateBatchExcludeAction();
+            if (excludeBtn) {
+                excludeBtn.style.display = action === 'exclude' ? 'flex' : 'none';
+                excludeBtn.classList.toggle('preview-aggregate-batch-btn--exclude', action === 'exclude');
+            }
+            if (restoreBtn) {
+                restoreBtn.style.display = action === 'restore' ? 'flex' : 'none';
+                restoreBtn.classList.toggle('preview-aggregate-batch-btn--restore', action === 'restore');
+            }
+        }
+
+        async function batchPreviewAggregateExclude(exclude) {
+            if (!window.currentPreviewOutputId) {
+                showToast('仅聚合预览支持批量剔除', 'error');
+                return;
+            }
+            const selected = getSelectedAggregatePreviewChannels();
+            if (!selected.length) {
+                alert('请先勾选需要操作的频道！');
+                return;
+            }
+            const set = ensurePreviewAggregateExcludedSet();
+            const targets = exclude
+                ? selected.filter(c => !set.has(Number(c.id)))
+                : selected.filter(c => set.has(Number(c.id)));
+            if (!targets.length) {
+                showToast(exclude ? '选中频道均已剔除' : '选中频道均未剔除', 'info');
+                return;
+            }
+            if (exclude) {
+                const previewNames = targets.slice(0, 5).map(c => c.name || `#${c.id}`).join('、');
+                const more = targets.length > 5 ? ` 等 ${targets.length} 个` : '';
+                if (!confirm(`确定将选中的 ${targets.length} 个频道从当前聚合表剔除吗？\n\n${previewNames}${more}\n\n剔除后不会出现在导出的 M3U 中，可随时点「恢复」重新纳入。`)) {
+                    return;
+                }
+                targets.forEach(c => set.add(Number(c.id)));
+                showToast(`已批量剔除 ${targets.length} 个频道`, 'info');
+            } else {
+                targets.forEach(c => set.delete(Number(c.id)));
+                showToast(`已批量恢复 ${targets.length} 个频道`, 'success');
+            }
+            applyPreviewGroupDisplay({ preserveView: true });
+            updatePreviewStats();
+            updateAggregateBatchExcludeButtons();
+            syncPreviewGroupSectionCheckboxes();
+            await savePreviewAggregateExclusions();
+        }
+
+        async function savePreviewAggregateExclusions() {
+            const oid = window.currentPreviewOutputId;
+            if (!oid) return false;
+            const out = (typeof allOutputs !== 'undefined' && allOutputs) ? allOutputs.find(o => o.id === oid) : null;
+            if (!out) return false;
+            const excluded = Array.from(ensurePreviewAggregateExcludedSet());
+            const payload = {
+                ...out,
+                excluded_channel_ids: JSON.stringify(excluded),
+            };
+            const res = await fetch(`/outputs/${oid}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                showToast('保存剔除结果失败: ' + (err.detail || '未知错误'), 'error');
+                return false;
+            }
+            const updated = await res.json();
+            const idx = allOutputs.findIndex(o => o.id === oid);
+            if (idx >= 0) allOutputs[idx] = updated;
+            return true;
+        }
+
+        async function togglePreviewAggregateExclude(channelId) {
+            const id = Number(channelId);
+            const set = ensurePreviewAggregateExcludedSet();
+            if (set.has(id)) {
+                set.delete(id);
+                showToast('频道已恢复纳入聚合表', 'success');
+            } else {
+                const ch = (typeof flattenAggregatePreviewChannels === 'function' ? flattenAggregatePreviewChannels() : []).find(c => Number(c.id) === id);
+                const label = ch && ch.name ? ch.name : `频道 #${id}`;
+                if (!confirm(`确定将「${label}」从当前聚合表剔除吗？\n\n剔除后该频道不会出现在导出的 M3U 中，可随时点「恢复」重新纳入。`)) {
+                    return;
+                }
+                set.add(id);
+                showToast('频道已从聚合表剔除', 'info');
+            }
+            applyPreviewGroupDisplay({ preserveView: true });
+            updatePreviewStats();
+            await savePreviewAggregateExclusions();
+        }
+
         function buildMobileAggregateCardHtml(c, epgCellId) {
             const image = c.visualImage || c.check_image;
             const isSelected = window.selectedChannelIds.has(c.id);
@@ -1852,7 +2293,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 checkTimeHtml = `<div class="mobile-channel-card__check-time">上次检测: ${timeStr} (${hhmm}) ${autoTag}</div>`;
             }
             return `
-                    <div class="mobile-channel-card ${isDisabled ? 'disabled' : ''} ${isSelected ? 'selected' : ''}"
+                    <div class="mobile-channel-card ${isDisabled ? 'disabled' : ''} ${isSelected ? 'selected' : ''} ${isPreviewAggregateExcluded(c.id) ? 'preview-aggregate-excluded' : ''}"
                          data-id="${c.id}" onclick="handleMobileCardClick(event, ${c.id})">
                         ${mobileCardLogoHtml(c.logo)}
                         <div class="mobile-channel-card__bg ${!image ? 'mobile-channel-card__bg--empty' : ''}">
@@ -1869,6 +2310,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                             <div class="mobile-channel-card__actions">
                                 <label class="mobile-channel-card__checkbox"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${isSelected ? 'checked' : ''} onchange="event.stopPropagation(); toggleChannelSelection(${c.id}, this.checked); updateMobileCardSelection(${c.id}, this.checked);"></label>
                                 <button class="mobile-channel-card__toggle-btn ${isDisabled ? 'mobile-channel-card__toggle-btn--enable' : 'mobile-channel-card__toggle-btn--disable'}" onclick="event.stopPropagation(); toggleChannel(${c.id})">${isDisabled ? '启用' : '禁用'}</button>
+                                ${buildPreviewAggregateExcludeButtonHtml(c.id, { mobile: true })}
                             </div>
                         </div>
                     </div>`;
@@ -1883,7 +2325,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             }
             const epgCellId = `epg_grp_${rowIndex}`;
             return `
-                    <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''}">
+                    <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
                         <td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>
                         <td style="padding: 10px;"><span class="channel-logo-slot channel-logo-slot--table">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span></td>
                         <td style="padding: 10px;">${c.name}</td>
@@ -1893,22 +2335,74 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         <td style="padding: 10px;"><span style="font-size: 0.85em; opacity: 0.7;">${c.source || '未知'}</span></td>
                         <td style="padding: 10px;">${statusHtml}</td>
                         ${visualHtml.replace('<td ', '<td data-label="画面预览：" ')}
-                        <td style="padding: 10px;">
-                            <button class="btn btn-sm" style="background: ${c.is_enabled !== false ? '#ef4444' : '#10b981'}; padding: 4px 8px; font-size: 0.8em;" onclick="toggleChannel(${c.id})">${c.is_enabled !== false ? '禁用' : '启用'}</button>
-                            <button class="btn btn-sm" style="background: #6366f1; padding: 4px 8px; font-size: 0.8em; margin-left: 4px;" onclick="event.stopPropagation(); copyChannelUrl('${(c.url || '').replace(/'/g, "\'")}')" title="复制播放链接">📋</button>
-                        </td>
+                        <td style="padding: 10px;">${buildPreviewTableActionsHtml(c)}</td>
                     </tr>`;
         }
 
         function toggleSelectAllInSection(master, sectionIndex) {
+            togglePreviewGroupSectionSelect(sectionIndex);
+        }
+
+        function togglePreviewGroupSectionSelect(sectionIndex, options = {}) {
             const sections = getActivePreviewGroupSections();
             const sec = sections[sectionIndex];
             if (!sec) return;
-            (sec.channels || []).forEach(c => {
-                if (master.checked) window.selectedChannelIds.add(c.id);
-                else window.selectedChannelIds.delete(c.id);
+            const ids = (sec.channels || []).map(c => c.id).filter(id => id != null);
+            if (!ids.length) return;
+            const selectedCount = ids.filter(id => window.selectedChannelIds.has(id)).length;
+            const allSelected = selectedCount === ids.length;
+            if (allSelected) {
+                ids.forEach(id => window.selectedChannelIds.delete(id));
+            } else {
+                ids.forEach(id => window.selectedChannelIds.add(id));
+            }
+            // 与顶部全选一致：只更新现有 DOM，避免整表重绘导致选中动画丢失
+            updateSelectionUI();
+            syncPreviewGroupSectionCheckboxes();
+            updateAggregateBatchExcludeButtons();
+        }
+
+        function getPreviewGroupSectionSelectState(sec) {
+            const chs = (sec && sec.channels) || [];
+            if (!chs.length) return { checked: false, indeterminate: false };
+            const selectedCount = chs.filter(c => window.selectedChannelIds.has(c.id)).length;
+            const allSelected = selectedCount === chs.length;
+            const partialSelected = selectedCount > 0 && selectedCount < chs.length;
+            return { checked: allSelected, indeterminate: partialSelected };
+        }
+
+        function applyPreviewGroupSectionSelectState(label, sec) {
+            const input = label ? label.querySelector('.preview-group-section__select-input') : null;
+            if (!label || !input || !sec) return;
+            const state = getPreviewGroupSectionSelectState(sec);
+            input.checked = state.checked;
+            input.indeterminate = state.indeterminate;
+            label.classList.remove('is-checked', 'is-partial');
+            if (state.checked) label.classList.add('is-checked');
+            else if (state.indeterminate) label.classList.add('is-partial');
+        }
+
+        function applyPreviewGroupSectionTheadSelectState(input, sec) {
+            if (!input || !sec) return;
+            const state = getPreviewGroupSectionSelectState(sec);
+            input.checked = state.checked;
+            input.indeterminate = state.indeterminate;
+        }
+
+        function syncPreviewGroupSectionCheckboxes() {
+            const sections = getActivePreviewGroupSections();
+            document.querySelectorAll('.preview-group-section__select').forEach(label => {
+                const idxRaw = label.getAttribute('data-section-index');
+                const idx = idxRaw != null ? Number(idxRaw) : NaN;
+                const sec = Number.isFinite(idx) ? sections[idx] : null;
+                applyPreviewGroupSectionSelectState(label, sec);
             });
-            applyPreviewGroupDisplay();
+            document.querySelectorAll('.preview-group-section__thead-select').forEach(input => {
+                const idxRaw = input.getAttribute('data-section-index');
+                const idx = idxRaw != null ? Number(idxRaw) : NaN;
+                const sec = Number.isFinite(idx) ? sections[idx] : null;
+                applyPreviewGroupSectionTheadSelectState(input, sec);
+            });
         }
 
         function renderNextBatch() {
@@ -2066,7 +2560,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     }
 
                     return `
-                    <tr onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''}">
+                    <tr onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
                         ${window.lastRenderShowActions ? `<td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>` : ''}
                         <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo"><span class="channel-logo-slot channel-logo-slot--table">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span></td>
                         <td style="padding: 10px;" data-label="名称：">${c.name}</td>
@@ -2080,19 +2574,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         ${window.lastRenderShowActions ? `<td style="padding: 10px;" data-label="状态：">${statusHtml}</td>` : ''}
                         ${visualHtml.replace('<td ', '<td data-label="画面预览：" ')}
                         ${window.lastRenderShowActions ? `
-                        <td style="padding: 10px;">
-                            <button class="btn btn-sm" 
-                                style="background: ${c.is_enabled !== false ? '#ef4444' : '#10b981'}; padding: 4px 8px; font-size: 0.8em;"
-                                onclick="toggleChannel(${c.id})">
-                                ${c.is_enabled !== false ? '禁用' : '启用'}
-                            </button>
-                            <button class="btn btn-sm" 
-                                style="background: #6366f1; padding: 4px 8px; font-size: 0.8em; margin-left: 4px;"
-                                onclick="event.stopPropagation(); copyChannelUrl('${c.url.replace(/'/g, "\\'")}')"
-                                title="复制播放链接">
-                                📋
-                            </button>
-                        </td>` : ''}
+                        <td style="padding: 10px;">${buildPreviewTableActionsHtml(c)}</td>` : ''}
                     </tr>
                 `}).join('');
             }
@@ -2711,33 +3193,40 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             filteredChannels.forEach(c => { if (c.id === channelId) c.is_enabled = isEnabled; });
         }
 
+        function patchAggregateEnablementControls(channelId) {
+            const item = currentChannels.find(c => c.id === channelId)
+                || filteredChannels.find(c => c.id === channelId)
+                || (typeof flattenAggregatePreviewChannels === 'function' ? flattenAggregatePreviewChannels().find(c => c.id === channelId) : null);
+            if (!item) return;
+            const enable = item.is_enabled !== false;
+            const toggleBtns = document.querySelectorAll(`button[onclick*="toggleChannel(${channelId})"]`);
+            toggleBtns.forEach(btn => {
+                btn.innerText = enable ? '禁用' : '启用';
+                btn.classList.toggle('mobile-channel-card__toggle-btn--enable', !enable);
+                btn.classList.toggle('mobile-channel-card__toggle-btn--disable', enable);
+                if (!btn.classList.contains('mobile-channel-card__toggle-btn')) {
+                    btn.style.background = enable ? '#ef4444' : '#10b981';
+                }
+                const tr = btn.closest('tr');
+                if (tr) {
+                    tr.style.opacity = enable ? '1' : '0.5';
+                    tr.style.background = enable ? 'transparent' : 'rgba(0,0,0,0.2)';
+                }
+                const card = btn.closest('.mobile-channel-card');
+                if (card) {
+                    card.classList.toggle('disabled', !enable);
+                }
+            });
+        }
+
         function refreshAggregateEnablementUI(channelIds) {
             const ids = Array.isArray(channelIds) ? channelIds : [channelIds];
             if (window.currentPreviewOutputId && window._previewGroupPayload) {
-                applyPreviewGroupDisplay({ preserveView: true });
-                updatePreviewGroupColumnHeader();
+                ids.forEach(id => patchAggregateEnablementControls(id));
                 updatePreviewStats();
                 return;
             }
-            ids.forEach(id => {
-                const item = currentChannels.find(c => c.id === id);
-                if (!item) return;
-                const enable = item.is_enabled !== false;
-                const toggleBtns = document.querySelectorAll(`button[onclick*="toggleChannel(${id})"]`);
-                toggleBtns.forEach(btn => {
-                    btn.innerText = enable ? '禁用' : '启用';
-                    btn.style.background = enable ? '#ef4444' : '#10b981';
-                    const tr = btn.closest('tr');
-                    if (tr) {
-                        tr.style.opacity = enable ? '1' : '0.5';
-                        tr.style.background = enable ? 'transparent' : 'rgba(0,0,0,0.2)';
-                    }
-                    const card = btn.closest('.mobile-channel-card');
-                    if (card) {
-                        card.classList.toggle('mobile-channel-card--disabled', !enable);
-                    }
-                });
-            });
+            ids.forEach(id => patchAggregateEnablementControls(id));
             updatePreviewStats();
         }
 
@@ -2749,6 +3238,11 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
                 // 更新本地数据
                 syncChannelEnabledInPreviewPayload(id, updated.is_enabled);
+                if (updated.is_enabled === false) {
+                    rememberDeferredInactiveChannel(id);
+                } else {
+                    forgetDeferredInactiveChannel(id);
+                }
                 refreshAggregateEnablementUI(id);
                 if (typeof fetchOutputs === 'function') fetchOutputs();
             } catch (err) {
@@ -4857,6 +5351,9 @@ function removeTag(val) {
             const modal = document.getElementById('channel_modal');
             modal.style.setProperty('display', 'none', 'important');
             document.body.style.overflow = '';
+            endAggregatePreviewSession();
+            window.currentPreviewOutputId = null;
+            window._previewGroupPayload = null;
         }
 
         function handleModalScroll(el) {
@@ -5067,6 +5564,8 @@ function removeTag(val) {
             document.getElementById('out_auto_ai_organize').checked = out.auto_ai_organize || false;
             document.getElementById('out_enable_ai_vision').checked = !!out.enable_ai_vision;
             document.getElementById('out_enable_ai_organize').checked = !!out.enable_ai_organize;
+            const promptEl = document.getElementById('out_ai_organize_prompt');
+            if (promptEl) promptEl.value = out.ai_organize_prompt || '';
             toggleLlmConfigPanels();
             syncLayoutGlobalsFromOutput(out);
             loadLlmSettings(true);
@@ -5143,6 +5642,8 @@ function removeTag(val) {
             document.getElementById('out_auto_ai_organize').checked = false;
             document.getElementById('out_enable_ai_vision').checked = false;
             document.getElementById('out_enable_ai_organize').checked = false;
+            const promptEl = document.getElementById('out_ai_organize_prompt');
+            if (promptEl) promptEl.value = '';
             toggleLlmConfigPanels();
             syncLayoutGlobalsFromOutput(null);
 
@@ -5194,6 +5695,7 @@ function removeTag(val) {
                 auto_ai_organize: document.getElementById('out_auto_ai_organize').checked,
                 enable_ai_vision: document.getElementById('out_enable_ai_vision').checked,
                 enable_ai_organize: document.getElementById('out_enable_ai_organize').checked,
+                ai_organize_prompt: (document.getElementById('out_ai_organize_prompt')?.value || '').trim(),
                 layout_mode: document.getElementById('edit_output_id').value ? (window._currentLayoutMode || 'rules') : 'rules',
                 channel_layout: window._currentChannelLayout || '{"groups":[]}',
                 layout_meta: window._currentLayoutMeta || '{}'
@@ -5463,6 +5965,8 @@ function removeTag(val) {
             });
 
             updatePreviewStats();
+            syncPreviewGroupSectionCheckboxes();
+            updateAggregateBatchExcludeButtons();
         }
 
 
@@ -5540,6 +6044,8 @@ function removeTag(val) {
                 }
             });
             updatePreviewStats();
+            updateAggregateBatchExcludeButtons();
+            syncPreviewGroupSectionCheckboxes();
         }
 
         function selectByStatus(enabled) {
@@ -5551,6 +6057,8 @@ function removeTag(val) {
                 }
             });
             updateSelectionUI();
+            updateAggregateBatchExcludeButtons();
+            syncPreviewGroupSectionCheckboxes();
         }
 
         async function batchSetStatus(enable) {
@@ -5604,7 +6112,11 @@ function removeTag(val) {
                 const c = currentChannels.find(ch => ch.id === id);
                 if (c && (c.is_enabled !== false) === enable) changedIds.push(id);
             });
-            changedIds.forEach(id => syncChannelEnabledInPreviewPayload(id, enable));
+            changedIds.forEach(id => {
+                syncChannelEnabledInPreviewPayload(id, enable);
+                if (enable) forgetDeferredInactiveChannel(id);
+                else rememberDeferredInactiveChannel(id);
+            });
             refreshAggregateEnablementUI(changedIds.length ? changedIds : Array.from(window.selectedChannelIds));
             updateSelectionUI();
             if (typeof fetchOutputs === 'function') fetchOutputs();
@@ -5627,12 +6139,16 @@ function removeTag(val) {
 
             const statsEl = document.getElementById('preview_stats');
             if (statsEl) {
+                const excludedCount = (window._previewAggregateExcludedIds && window.currentPreviewOutputId)
+                    ? statsPool.filter(c => isPreviewAggregateExcluded(c.id)).length : 0;
                 let html = `共 ${total} 个频道 / 已启用 ${enabledCount} 个`;
+                if (excludedCount > 0) html += ` / 已剔除 ${excludedCount} 个`;
                 if (window.lastRenderShowActions) {
                     html += ` <span style="margin-left:10px; opacity:0.6;">(已选 ${selected} 个)</span>`;
                 }
                 statsEl.innerHTML = html;
             }
+            updateAggregateBatchExcludeButtons();
 
             // 更新大复选框状态
             const master = document.getElementById('master_checkbox');
@@ -5690,8 +6206,6 @@ function removeTag(val) {
         }
         setInterval(updateCountdowns, 1000);
 
-        fetchSubs();
-        fetchOutputs();
     </script>
     <!-- 图片预览 Lightbox -->
     <div id="lightbox" class="lightbox" onclick="closeLightbox()">
@@ -5721,7 +6235,8 @@ function removeTag(val) {
                 subscription_ids: selectedSubs,
                 keywords: getMergedFilterKeywords(),
                 excluded_channel_ids: Array.from(computeSaveExcludedIds()),
-                filter_regex: document.getElementById('out_regex').value || '.*'
+                filter_regex: document.getElementById('out_regex').value || '.*',
+                ai_organize_prompt: (document.getElementById('out_ai_organize_prompt')?.value || '').trim()
             };
         }
 
@@ -5868,6 +6383,7 @@ function removeTag(val) {
             }
             renderBaseTable(document.getElementById('channel_list'), true);
             updatePreviewGroupColumnHeader();
+            syncPreviewGroupSectionCheckboxes();
             if (preserveView) restoreAggregatePreviewViewState(priorViewState);
         }
 
@@ -6003,8 +6519,10 @@ function removeTag(val) {
             const o = document.getElementById('out_enable_ai_organize')?.checked;
             const vb = document.getElementById('llm_vision_config_block');
             const tb = document.getElementById('llm_text_config_block');
+            const pb = document.getElementById('llm_organize_prompt_block');
             if (vb) vb.style.display = v ? 'block' : 'none';
             if (tb) tb.style.display = o ? 'block' : 'none';
+            if (pb) pb.style.display = o ? 'block' : 'none';
         }
 
         window.currentPreviewOutputId = null;
@@ -6039,11 +6557,6 @@ function removeTag(val) {
 
         function bootLoadLlmSettings() {
             if (typeof loadLlmSettings === 'function') loadLlmSettings(true);
-        }
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', bootLoadLlmSettings);
-        } else {
-            bootLoadLlmSettings();
         }
 
         async function checkPreviewAiOrganize() {
