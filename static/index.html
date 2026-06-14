@@ -5543,11 +5543,41 @@ function removeTag(val) {
         let allOutputs = [];
 
         window._outLastScrollY = 0;
-        function prepareEditOutput(id) {
+
+        function coerceOutputBool(val, defaultVal = false) {
+            if (val === true || val === 1 || val === '1' || val === 'true') return true;
+            if (val === false || val === 0 || val === '0' || val === 'false') return false;
+            return defaultVal;
+        }
+
+        function applyOutputAutoCheckToggles(out) {
+            if (!out) return;
+            const shot = document.getElementById('out_auto_screenshot');
+            const disable = document.getElementById('out_auto_disable_on_check');
+            const aiVision = document.getElementById('out_auto_ai_vision');
+            const aiOrganize = document.getElementById('out_auto_ai_organize');
+            if (shot) shot.checked = coerceOutputBool(out.auto_visual_check, false);
+            if (disable) disable.checked = coerceOutputBool(out.auto_disable_on_check, true);
+            if (aiVision) aiVision.checked = coerceOutputBool(out.auto_ai_vision_check, false);
+            if (aiOrganize) aiOrganize.checked = coerceOutputBool(out.auto_ai_organize, false);
+        }
+
+        async function prepareEditOutput(id) {
             window._outLastScrollY = window.scrollY; // 记录位置
             document.getElementById('outputs').scrollIntoView({ behavior: 'smooth' });
 
-            const out = allOutputs.find(o => o.id === id);
+            let out = allOutputs.find(o => o.id == id);
+            try {
+                const res = await fetch(`/outputs/${id}`, { credentials: 'same-origin' });
+                if (res.ok) {
+                    const fresh = await res.json();
+                    out = { ...(out || {}), ...fresh };
+                    const idx = allOutputs.findIndex(o => o.id == id);
+                    if (idx >= 0) allOutputs[idx] = { ...allOutputs[idx], ...fresh };
+                }
+            } catch (e) {
+                console.warn('拉取聚合配置失败，使用缓存', e);
+            }
             if (!out) return;
 
             document.getElementById('edit_output_id').value = out.id;
@@ -5555,13 +5585,10 @@ function removeTag(val) {
             document.getElementById('out_slug').value = out.slug;
             document.getElementById('out_regex').value = out.filter_regex;
             document.getElementById('out_epg').value = out.epg_url || '';
-            document.getElementById('out_include_suffix').checked = out.include_source_suffix !== false;
-            document.getElementById('out_is_enabled').checked = out.is_enabled !== false;
+            document.getElementById('out_include_suffix').checked = coerceOutputBool(out.include_source_suffix, true);
+            document.getElementById('out_is_enabled').checked = coerceOutputBool(out.is_enabled, true);
             document.getElementById('out_auto_update').value = out.auto_update_minutes || 0;
-            document.getElementById('out_auto_screenshot').checked = out.auto_visual_check || false;
-            document.getElementById('out_auto_disable_on_check').checked = out.auto_disable_on_check !== false;
-            document.getElementById('out_auto_ai_vision').checked = out.auto_ai_vision_check || false;
-            document.getElementById('out_auto_ai_organize').checked = out.auto_ai_organize || false;
+            applyOutputAutoCheckToggles(out);
             document.getElementById('out_enable_ai_vision').checked = !!out.enable_ai_vision;
             document.getElementById('out_enable_ai_organize').checked = !!out.enable_ai_organize;
             const promptEl = document.getElementById('out_ai_organize_prompt');

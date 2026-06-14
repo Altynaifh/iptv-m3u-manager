@@ -5060,6 +5060,7 @@ function removeTag(val) {
             document.getElementById('out_is_enabled').checked = out.is_enabled !== false;
             document.getElementById('out_auto_update').value = out.auto_update_minutes || 0;
             document.getElementById('out_auto_screenshot').checked = out.auto_visual_check || false;
+            document.getElementById('out_auto_disable_on_check').checked = out.auto_disable_on_check !== false;
             document.getElementById('out_auto_ai_vision').checked = out.auto_ai_vision_check || false;
             document.getElementById('out_auto_ai_organize').checked = out.auto_ai_organize || false;
             document.getElementById('out_enable_ai_vision').checked = !!out.enable_ai_vision;

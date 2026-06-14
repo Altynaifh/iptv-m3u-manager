@@ -113,6 +113,15 @@ def list_outputs(session: Session = Depends(get_session)):
         
     return results
 
+@router.get("/outputs/{output_id}")
+def get_output(output_id: int, session: Session = Depends(get_session)):
+    """获取单个聚合源完整配置（编辑回读）"""
+    out = session.get(OutputSource, output_id)
+    if not out:
+        raise HTTPException(status_code=404, detail="输出源不存在")
+    return out.model_dump()
+
+
 @router.delete("/outputs/{output_id}")
 def delete_output(output_id: int, session: Session = Depends(get_session)):
     """删除聚合源"""
