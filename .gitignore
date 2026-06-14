@@ -22,6 +22,8 @@ tools/ffmpeg-4.4-win64/
 /_rb.txt
 /_status_sample.txt
 /_push_log.txt
+/_push_out.txt
+/_push_err.txt
 /_patch_*.py
 /_preview_snip*.txt
 /output_resolver.py
