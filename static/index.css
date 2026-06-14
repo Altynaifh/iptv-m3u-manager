@@ -2708,3 +2708,13 @@ body.ai-visual-popover-open .preview-ai-badge--interactive {
     font-weight: normal;
     margin-left: 6px;
 }
+.output-filter-tag{display:inline-flex;align-items:center;gap:5px;padding:2px 8px 2px 4px;border-radius:6px;font-size:.72em;line-height:1.35;border:1px solid transparent}
+.output-filter-tag__kind{flex-shrink:0;font-size:.85em;font-weight:600;padding:1px 5px;border-radius:4px}
+.output-filter-tag--name{background:rgba(99,102,241,.12);color:#c7d2fe;border-color:rgba(99,102,241,.28)}
+.output-filter-tag--name .output-filter-tag__kind{background:rgba(99,102,241,.22);color:#e0e7ff}
+.output-filter-tag--group{background:rgba(20,184,166,.1);color:#99f6e4;border-color:rgba(45,212,191,.28)}
+.output-filter-tag--group .output-filter-tag__kind{background:rgba(20,184,166,.2);color:#ccfbf1}
+.output-filter-tag__sep{opacity:.45;font-size:.9em}
+.output-filter-tag__target{opacity:.82;font-weight:400}
+.output-filter-tag__value{font-weight:500}
+

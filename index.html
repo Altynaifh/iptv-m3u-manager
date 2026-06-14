@@ -5248,6 +5248,23 @@ function removeTag(val) {
             }
         }
 
+
+        function buildOutputFilterTagChip(k) {
+            const item = typeof k === 'string'
+                ? { value: k, match_by: 'name', group: '' }
+                : { value: k.value, group: k.group || '', match_by: k.match_by || 'name' };
+            const val = String(item.value || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+            const target = String(item.group || '').trim().replace(/</g, '&lt;').replace(/"/g, '&quot;');
+            const isGroup = (item.match_by || 'name').toLowerCase() === 'source_group';
+            const kind = isGroup ? '分组' : '名称';
+            const kindTitle = isGroup ? '来源分组筛选' : '名称关键字筛选';
+            const cls = isGroup ? 'output-filter-tag output-filter-tag--group' : 'output-filter-tag output-filter-tag--name';
+            const body = target
+                ? `<span class="output-filter-tag__value">${val}</span><span class="output-filter-tag__sep">→</span><span class="output-filter-tag__target">${target}</span>`
+                : `<span class="output-filter-tag__value">${val}</span>`;
+            return `<span class="${cls}" title="${kindTitle}：${val}"><span class="output-filter-tag__kind" aria-hidden="true">${kind}</span>${body}</span>`;
+        }
+
         async function fetchOutputs(isSilence = false) {
             try {
                 const res = await fetch('/outputs/');
@@ -5290,10 +5307,7 @@ function removeTag(val) {
                     let keywordsArr = [];
                     try { keywordsArr = JSON.parse(o.keywords || "[]"); } catch (e) { }
 
-                    const tagsHtml = keywordsArr.map(k => {
-                        const val = typeof k === 'string' ? k : k.value;
-                        return `<span style="background: rgba(99,102,241,0.15); color: #a5b4fc; padding: 1px 6px; border-radius: 4px; font-size: 0.75em; border: 1px solid rgba(99,102,241,0.2);">${val}</span>`;
-                    }).join(' ');
+                    const tagsHtml = keywordsArr.map(k => buildOutputFilterTagChip(k)).join('');
 
                     return `
                     <div class="output-item-card ${o.is_enabled === false ? 'disabled-card' : ''}" data-id="${o.id}">
