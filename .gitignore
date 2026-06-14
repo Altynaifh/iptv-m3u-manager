@@ -16,6 +16,15 @@ epg_cache/
 repo_cache/
 # Bundled FFmpeg (install via scripts/install-ffmpeg-4.4.ps1)
 tools/ffmpeg-4.4-win64/
+# Local scratch / patch artifacts (do not commit)
+/_avail.txt
+/_pg.txt
+/_rb.txt
+/_status_sample.txt
+/_push_log.txt
+/_patch_*.py
+/_preview_snip*.txt
+/output_resolver.py
 
 # OS Files
 .DS_Store
