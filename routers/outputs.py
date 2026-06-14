@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Response, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Response
 from sqlmodel import Session, select
 from typing import List, Dict, Any
 import json
@@ -11,6 +11,8 @@ from services.generator import M3UGenerator
 from services.epg import fetch_epg_cached
 from services.stream_checker import StreamChecker
 from routers.subscriptions import process_subscription_refresh
+from services.output_resolver import export_m3u_channels, filter_candidates, preview_export_groups, aggregate_channels
+import uuid
 
 router = APIRouter(tags=["outputs"])
 
@@ -95,10 +97,9 @@ def list_outputs(session: Session = Depends(get_session)):
         except:
             excluded_ids = []
             
-        filtered = M3UGenerator.filter_channels(channels, out.filter_regex, keywords, excluded_ids)
-        
-        total = len(filtered)
-        enabled = len([c for c in filtered if c.is_enabled])
+        members = aggregate_channels(session, out)
+        total = len(members)
+        enabled = len([c for c in members if c.is_enabled])
         disabled = total - enabled
         
         # 转为字典并添加统计
@@ -145,12 +146,31 @@ def update_output(output_id: int, output_data: OutputSource, session: Session = 
     output.is_enabled = output_data.is_enabled
     output.auto_update_minutes = output_data.auto_update_minutes
     output.auto_visual_check = output_data.auto_visual_check
+    output.auto_ai_vision_check = getattr(output_data, 'auto_ai_vision_check', False) or False
+    output.auto_disable_on_check = getattr(output_data, 'auto_disable_on_check', True)
+    output.auto_ai_organize = getattr(output_data, 'auto_ai_organize', False) or False
+    output.enable_ai_vision = getattr(output_data, 'enable_ai_vision', False) or False
+    output.enable_ai_organize = getattr(output_data, 'enable_ai_organize', False) or False
     output.excluded_channel_ids = output_data.excluded_channel_ids
+    output.layout_mode = output_data.layout_mode or 'rules'
+    output.channel_layout = output_data.channel_layout or '{"groups":[]}'
+    output.layout_meta = output_data.layout_meta or '{}'
     
     session.add(output)
     session.commit()
     session.refresh(output)
     return output
+
+
+
+@router.get("/outputs/{output_id}/export-preview")
+def export_preview_output(output_id: int, session: Session = Depends(get_session)):
+    """聚合列表预览：按导出分组（手动 / AI explicit）返回频道。"""
+    out = session.get(OutputSource, output_id)
+    if not out:
+        raise HTTPException(status_code=404, detail="输出源不存在")
+    return preview_export_groups(session, out, None)
+
 
 @router.post("/outputs/preview")
 def preview_output(data: dict, session: Session = Depends(get_session)):
@@ -202,111 +222,84 @@ def preview_output(data: dict, session: Session = Depends(get_session)):
             for c in channels 
         ]
     else:
-        # 逐个关键字匹配看看
         channels = M3UGenerator.propagate_logos(channels)
-        for k_obj in keywords:
-            k_val = k_obj.get("value", "")
-            k_group = k_obj.get("group", "")
-            if not k_val: continue
-            
-            # 关键字筛选逻辑
-            matches = M3UGenerator.filter_channels(channels, None, [k_obj])
-            
+        for k_obj, matches in M3UGenerator.build_rule_preview_buckets(channels, keywords):
             display_key = M3UGenerator.rule_display_key(k_obj)
             results[display_key] = [
-                {**c.model_dump(), "source": sub_map.get(c.subscription_id, "Unknown")} 
-                for c in matches 
+                {**c.model_dump(), "source": sub_map.get(c.subscription_id, "Unknown")}
+                for c in matches
             ]
             
     return results
 
 
 @router.post("/outputs/{output_id}/refresh")
-async def refresh_output(output_id: int, background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
-    """手动刷新关联订阅和 EPG"""
+async def refresh_output(output_id: int, session: Session = Depends(get_session)):
+    """手动刷新：提交 Taskiq 任务后立即返回。"""
     out = session.get(OutputSource, output_id)
     if not out:
         raise HTTPException(status_code=404, detail="输出源不存在")
 
-    import uuid
-    from models import TaskRecord
-    from task_broker import update_task_status
-    
+    from services.output_refresh import refresh_output_task
+
     task_id = str(uuid.uuid4())
     task_record = TaskRecord(
         id=task_id,
         name=f"刷新聚合: {out.name}",
-        status="running",
-        progress=10,
-        message="正在刷新关联订阅..."
+        status="pending",
+        progress=0,
+        message="任务排队中...",
     )
     session.add(task_record)
     session.commit()
 
-    # 初始广播
-    background_tasks.add_task(update_task_status, task_id, status="running", progress=10, message="开始刷新关联订阅...")
-
-    async def _do_refresh():
-        try:
-            sub_ids = json.loads(out.subscription_ids)
-        except:
-            sub_ids = []
-            
-        results_info = []
-        # 逐个刷新订阅
-        for i, sub_id in enumerate(sub_ids):
-            # 每处理一个订阅前检查任务状态
-            from database import engine
-            with Session(engine) as check_session:
-                task = check_session.get(TaskRecord, task_id)
-                if not task or task.status == "canceled":
-                    print(f"[_do_refresh] 任务 {task_id} 已中止，停止处理后续订阅")
-                    await update_task_status(task_id, status="canceled", message="刷新作业已由用户中止")
-                    return
-
-            try:
-                sub = session.get(Subscription, sub_id)
-                if sub:
-                   await process_subscription_refresh(session, sub)
-                   results_info.append(f"Sub {sub_id}: Success")
-                   # 更新进度（分摊到前 50%）
-                   p = 10 + int((i+1)/len(sub_ids) * 40) if sub_ids else 50
-                   await update_task_status(task_id, progress=p, message=f"已同步订阅: {sub.name or sub_id}")
-            except Exception as e:
-                results_info.append(f"Sub {sub_id}: Failed")
-
-        # 刷新聚合 EPG
-        if out.epg_url:
-            await update_task_status(task_id, progress=50, message="正在更新 EPG...")
-            try:
-                await fetch_epg_cached(out.epg_url, refresh=True)
-            except: pass
-                
-        out.last_updated = datetime.utcnow()
-        out.last_update_status = "手动更新成功"
-        session.add(out)
-        session.commit()
-
-        # 如果开启了自动深度检测
-        if out.auto_visual_check:
-            await update_task_status(task_id, progress=60, message="准备深度检测...")
-            # 注意：此处直接复用 run_output_visual_check，但需要让它接管已有的 task_id
-            await run_output_visual_check_v2(output_id, task_id=task_id, force_check=True)
-        else:
-            # 最终出口防御：再次核对数据库，严防状态回跳
-            from database import engine
-            with Session(engine) as check_session:
-                task = check_session.get(TaskRecord, task_id)
-                if task and task.status != "canceled":
-                    await update_task_status(task_id, status="success", progress=100, message="刷新完成")
-                else:
-                    print(f"[_do_refresh] 任务 {task_id} 已处于取消状态，跳过最终成功广播")
-
-    # 为了不阻塞 FastAPI 响应，刷新逻辑也在后台跑（或者如果刷新不慢，也可以 await）
-    # 这里采用 await 方式以保证 results 正确返回前端 UI 立即更新，而深度检测由其内部异步逻辑接管
-    background_tasks.add_task(_do_refresh)
+    await refresh_output_task.kiq(task_id=task_id, output_id=output_id)
 
     return {"message": "任务已提交", "task_id": task_id}
+
+
+
+async def run_output_ai_visual_check(output_id: int, task_id: str):
+    """聚合刷新后：AI 画面检测（四宫格）。"""
+    from database import engine
+    from sqlmodel import Session
+    from task_broker import push_console_log, update_task_status
+    from services.output_resolver import filter_candidates
+    from services.visual_ai_checker import VisualAiChecker
+
+    try:
+        with Session(engine) as session:
+            out = session.get(OutputSource, output_id)
+            if not out:
+                return
+            from services.output_resolver import organize_candidates
+            channels = organize_candidates(session, out, None)
+            if not channels:
+                await update_task_status(task_id, status="success", progress=100, message="无启用频道需 AI 画面检测")
+                return
+
+            async def _progress(done, total, msg):
+                p = 55 + int((done / max(total, 1)) * 40)
+                await update_task_status(task_id, progress=p, message=msg)
+
+            stats = await VisualAiChecker.run_batch(session, channels, capture_missing=True, progress_cb=_progress)
+            out = session.get(OutputSource, output_id)
+            if out:
+                out.last_update_status = "手动更新+AI画面检测完成"
+                session.add(out)
+                session.commit()
+            summary = (
+                f"[AI视觉] 自动链 聚合 id={output_id}：禁用 {stats.get('disabled', 0)}，"
+                f"启用 {stats.get('enabled', 0)}，更新 {stats.get('updated', 0)}"
+            )
+            print(summary)
+            await push_console_log(summary)
+            await update_task_status(task_id, status="success", progress=100, message=f"AI 画面检测完成 {stats}")
+    except Exception as e:
+        err_line = f"[AI视觉] 自动链 聚合 id={output_id} 失败：{str(e)[:500]}"
+        print(err_line)
+        await push_console_log(err_line)
+        await update_task_status(task_id, status="failure", message=str(e)[:500])
 
 async def run_output_visual_check_v2(output_id: int, task_id: str, force_check: bool = False):
     """(优化版) 后台运行深度检测，接管已有 TaskID"""
@@ -334,7 +327,8 @@ async def run_output_visual_check_v2(output_id: int, task_id: str, force_check: 
             if matched_channels:
                 from services.stream_checker import StreamChecker
                 check_source = 'manual' if force_check else 'auto'
-                check_result = await StreamChecker.run_batch_check(session, matched_channels, source=check_source, task_id=task_id)
+                auto_disable = getattr(out, 'auto_disable_on_check', True)
+                check_result = await StreamChecker.run_batch_check(session, matched_channels, source=check_source, task_id=task_id, auto_disable=auto_disable)
                 
                 # 如果检测因中止而提前退出，严禁发送成功广播
                 if check_result is False:
@@ -412,7 +406,8 @@ async def run_output_visual_check(output_id: int, force_check: bool = False):
                 check_source = 'manual' if force_check else 'auto'
                 
                 # 传入 task_id 以便更新进度
-                await StreamChecker.run_batch_check(session, pending_channels, source=check_source, task_id=task_id)
+                auto_disable = getattr(out, 'auto_disable_on_check', True)
+                await StreamChecker.run_batch_check(session, pending_channels, source=check_source, task_id=task_id, auto_disable=auto_disable)
                 
                 # 重新获取对象并更新状态
                 out = session.get(OutputSource, output_id)
@@ -478,7 +473,89 @@ async def get_m3u_output(slug: str, session: Session = Depends(get_session)):
     except:
         excluded_ids = []
         
-    # 过滤、生成 M3U 
-    filtered = M3UGenerator.filter_channels(channels, out.filter_regex, keywords, excluded_ids)
+    filtered = export_m3u_channels(session, out)
     m3u_content = M3UGenerator.generate_m3u(filtered, sub_map, out.epg_url, out.include_source_suffix)
     return Response(content=m3u_content, media_type="application/x-mpegurl; charset=utf-8")
+
+@router.post("/outputs/{output_id}/layout-mode")
+def set_layout_mode(output_id: int, data: dict, session: Session = Depends(get_session)):
+    out = session.get(OutputSource, output_id)
+    if not out:
+        raise HTTPException(status_code=404, detail="输出源不存在")
+    mode = (data.get("layout_mode") or "rules").strip()
+    if mode not in ("rules", "explicit"):
+        raise HTTPException(status_code=400, detail="layout_mode 无效")
+    out.layout_mode = mode
+    session.add(out)
+    session.commit()
+    return {"layout_mode": out.layout_mode}
+
+
+@router.post("/outputs/{output_id}/llm-organize")
+async def llm_organize_output(output_id: int, data: dict, session: Session = Depends(get_session)):
+    out = session.get(OutputSource, output_id)
+    if not out:
+        raise HTTPException(status_code=404, detail="输出源不存在")
+    draft = None
+    if data.get("use_draft"):
+        draft = {
+            "subscription_ids": data.get("subscription_ids") or [],
+            "keywords": data.get("keywords") or [],
+            "excluded_channel_ids": data.get("excluded_channel_ids") or [],
+            "filter_regex": data.get("filter_regex") or out.filter_regex,
+            "layout_mode": data.get("layout_mode") or out.layout_mode,
+            "channel_layout": data.get("channel_layout") or out.channel_layout,
+        }
+    task_id = str(uuid.uuid4())
+    task_record = TaskRecord(
+        id=task_id,
+        name=f"AI 整理节目表: {out.name}",
+        status="pending",
+        message="排队中...",
+    )
+    session.add(task_record)
+    session.commit()
+    from services.llm_tasks import llm_organize_task
+    import json as _json
+    await llm_organize_task.kiq(
+        task_id=task_id,
+        output_id=output_id,
+        draft_json=_json.dumps(draft, ensure_ascii=False) if draft else None,
+    )
+    return {"task_id": task_id, "message": "已提交 AI 整理任务"}
+
+
+@router.post("/outputs/{output_id}/ai-visual-check")
+async def ai_visual_check_output(output_id: int, data: dict, session: Session = Depends(get_session)):
+    out = session.get(OutputSource, output_id)
+    if not out:
+        raise HTTPException(status_code=404, detail="输出源不存在")
+    draft = None
+    if data.get("use_draft"):
+        draft = {
+            "subscription_ids": data.get("subscription_ids") or [],
+            "keywords": data.get("keywords") or [],
+            "excluded_channel_ids": data.get("excluded_channel_ids") or [],
+            "filter_regex": data.get("filter_regex") or out.filter_regex,
+        }
+    channel_ids = data.get("channel_ids")
+    capture_missing = data.get("capture_missing", True)
+    task_id = str(uuid.uuid4())
+    task_record = TaskRecord(
+        id=task_id,
+        name=f"AI 画面检测: {out.name}",
+        status="pending",
+        message="排队中...",
+    )
+    session.add(task_record)
+    session.commit()
+    from services.llm_tasks import ai_visual_check_task
+    import json as _json
+    await ai_visual_check_task.kiq(
+        task_id=task_id,
+        output_id=output_id,
+        channel_ids=channel_ids,
+        capture_missing=capture_missing,
+        draft_json=_json.dumps(draft, ensure_ascii=False) if draft else None,
+    )
+    return {"task_id": task_id, "message": "已提交 AI 画面检测任务"}

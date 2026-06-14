@@ -1,5 +1,6 @@
 import re
-from typing import List, Dict
+from typing import Dict, List, Optional, Tuple
+
 from models import Channel
 
 class M3UGenerator:
@@ -29,45 +30,69 @@ class M3UGenerator:
         return f"{base} → {k_group}" if k_group else base
 
     @staticmethod
+    def build_rule_preview_bucket(channels: List[Channel], k_obj: dict) -> List[Channel]:
+        """单条规则预览桶：仅在本规则内按 URL 去重，与 /outputs/preview 一致。"""
+        k_val = (k_obj.get("value") or "").strip()
+        if not k_val:
+            return []
+        target_group = (k_obj.get("group") or "").strip()
+        seen_urls = set()
+        bucket: List[Channel] = []
+        for c in channels:
+            if c.url in seen_urls:
+                continue
+            if not M3UGenerator._keyword_matches_channel(c, k_obj):
+                continue
+            c_copy = c.model_copy()
+            if target_group:
+                c_copy.group = target_group
+            bucket.append(c_copy)
+            seen_urls.add(c.url)
+        return bucket
+
+    @staticmethod
+    def build_rule_preview_buckets(
+        channels: List[Channel], keywords: List[dict]
+    ) -> List[Tuple[dict, List[Channel]]]:
+        """按规则顺序生成预览桶列表。"""
+        out: List[Tuple[dict, List[Channel]]] = []
+        for k_obj in keywords or []:
+            k_val = (k_obj.get("value") or "").strip()
+            if not k_val:
+                continue
+            out.append((k_obj, M3UGenerator.build_rule_preview_bucket(channels, k_obj)))
+        return out
+
+    @staticmethod
+    def merge_members_from_preview_buckets(
+        rule_buckets: List[Tuple[dict, List[Channel]]],
+        excluded_ids: Optional[List[int]] = None,
+    ) -> List[Channel]:
+        """
+        从预览桶合并聚合成员：仅桶内 ID 可入选，排除列表与前端保存口径一致。
+        跨规则再按 URL 去重（规则顺序优先）。
+        """
+        excluded_set = set(excluded_ids) if excluded_ids else set()
+        seen_urls = set()
+        merged: List[Channel] = []
+        for _k_obj, bucket in rule_buckets:
+            for c in bucket:
+                if c.id in excluded_set:
+                    continue
+                if c.url in seen_urls:
+                    continue
+                merged.append(c)
+                seen_urls.add(c.url)
+        return merged
+
+    @staticmethod
     def filter_channels(channels: List[Channel], regex_pattern: str, keywords: List[dict] = None, excluded_ids: List[int] = None) -> List[Channel]:
         """根据关键字和正则筛选频道，并排除指定 ID 的频道"""
-        # 转换排除列表为集合，便于快速查找
-        excluded_set = set(excluded_ids) if excluded_ids else set()
-        
-        filtered = []
-        
-        # 关键字筛选
+        filtered: List[Channel] = []
+
         if keywords:
-            # 使用 Set 避免同一个频道匹配多个关键字时出现重复
-            seen_ids = set()
-            seen_urls = set() # 增加 URL 去重，防止不同订阅源中的相同频道
-            
-            for k_obj in keywords:
-                k_val = k_obj.get("value", "").lower()
-                target_group = k_obj.get("group", "").strip()
-                if not k_val:
-                    continue
-                    
-                for c in channels:
-                    if c.id in seen_ids:
-                        continue
-                    if c.url in seen_urls:
-                        continue
-                    # 跳过聚合表级别排除的频道
-                    if c.id in excluded_set:
-                        continue
-                        
-                    if M3UGenerator._keyword_matches_channel(c, k_obj):
-                        # 命中关键字
-                        c_copy = c.model_copy()
-                        
-                        # 如果指定了新分组，则覆盖原分组
-                        if target_group:
-                            c_copy.group = target_group
-                            
-                        filtered.append(c_copy)
-                        seen_ids.add(c.id)
-                        seen_urls.add(c.url)
+            rule_buckets = M3UGenerator.build_rule_preview_buckets(channels, keywords)
+            filtered = M3UGenerator.merge_members_from_preview_buckets(rule_buckets, excluded_ids)
         else:
             # 没关键字就按 URL 去重
             seen_urls = set()
@@ -108,7 +133,10 @@ class M3UGenerator:
             if not c.logo:
                 key = c.tvg_id if c.tvg_id else c.name
                 if key and key in id_logo_map:
-                    c.logo = id_logo_map[key]
+                    try:
+                        c.logo = id_logo_map[key]
+                    except Exception:
+                        pass
                     
         return channels
 
