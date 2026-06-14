@@ -2945,6 +2945,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             renderGroupTags();
             clearTimeout(window.previewDebounceTimer);
             window.previewDebounceTimer = setTimeout(updateRealtimePreview, 300);
+            refreshGlobalStats();
         }
 
 
@@ -4317,6 +4318,27 @@ function removeTag(val) {
             return excluded;
         }
 
+
+        function syncExcludedNameFromSaved(excludedIdsArray) {
+            excludedChannelIds = new Set();
+            if (!lastPreviewData || !keywords.length) return;
+            const excluded = new Set((excludedIdsArray || []).map(id => Number(id)));
+            keywords.forEach(k => {
+                const key = ruleDisplayKey({ ...k, match_by: 'name' });
+                (lastPreviewData[key] || []).forEach(c => {
+                    if (c.id != null && excluded.has(Number(c.id))) {
+                        excludedChannelIds.add(c.id);
+                    }
+                });
+            });
+        }
+
+        function applySavedAggregateSelectionFromPreview(excludedIdsArray) {
+            syncExcludedNameFromSaved(excludedIdsArray);
+            syncIncludedGroupFromSaved(excludedIdsArray);
+            refreshGlobalStats();
+        }
+
         function syncIncludedGroupFromSaved(excludedIdsArray) {
             includedGroupChannelIds = new Set();
             if (!lastPreviewData || !groupKeywords.length) return;
@@ -4816,8 +4838,11 @@ function removeTag(val) {
                 // 全局统计计算
                 refreshGlobalStats();
 
-                if (document.getElementById('edit_output_id').value && groupKeywords.length) {
-                    // 编辑态首次预览后保持已保存的选用关系
+                if (window._pendingSyncGroupIncludedFrom) {
+                    applySavedAggregateSelectionFromPreview(window._pendingSyncGroupIncludedFrom);
+                    window._pendingSyncGroupIncludedFrom = null;
+                } else if (document.getElementById('edit_output_id').value) {
+                    applySavedAggregateSelectionFromPreview([]);
                 }
                 renderSelectedPreview();
 
@@ -5071,6 +5096,7 @@ function removeTag(val) {
             renderTags();
             renderGroupTags(false);
             activeKeyword = null; // 修改时不自动选中标签
+            activeGroupKeyword = null;
 
             // 还原选中的订阅
             const subIds = JSON.parse(out.subscription_ids || "[]");
@@ -5079,17 +5105,14 @@ function removeTag(val) {
             });
 
             // 还原排除列表
-            excludedChannelIds = new Set();
             let savedExcludedArr = [];
             try {
                 savedExcludedArr = JSON.parse(out.excluded_channel_ids || "[]");
-                excludedChannelIds = new Set();
-                includedGroupChannelIds = new Set();
             } catch (e) {
                 savedExcludedArr = [];
-                excludedChannelIds = new Set();
-                includedGroupChannelIds = new Set();
             }
+            excludedChannelIds = new Set();
+            includedGroupChannelIds = new Set();
             window._pendingSyncGroupIncludedFrom = savedExcludedArr;
 
             // 换 UI
