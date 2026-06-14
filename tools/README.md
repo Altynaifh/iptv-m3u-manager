@@ -1,8 +1,14 @@
 # 本机 FFmpeg 4.4（截图检测）
 
-目录已包含（或应包含）：
+首次克隆仓库后，在项目根目录执行：
 
-`C:\Users\xianyu\Downloads\iptv-m3u-manager\tools\ffmpeg-4.4-win64\bin\ffmpeg.exe`
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-ffmpeg-4.4.ps1
+```
+
+安装完成后，二进制位于（该目录已加入 .gitignore，不随 Git 提交）：
+
+`tools/ffmpeg-4.4-win64/bin/ffmpeg.exe`
 
 版本：**4.4.1-essentials**（对齐 Docker 内 **4.4.2**）
 

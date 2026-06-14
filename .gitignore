@@ -14,6 +14,8 @@ __pycache__/
 # Project Cache Directories
 epg_cache/
 repo_cache/
+# Bundled FFmpeg (install via scripts/install-ffmpeg-4.4.ps1)
+tools/ffmpeg-4.4-win64/
 
 # OS Files
 .DS_Store
