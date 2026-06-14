@@ -301,10 +301,6 @@
                 </div>
             </div>
 
-                <div id="aggregate_draft_summary_stats"
-                    style="margin: 4px 0 14px; font-size: 0.86em; background: var(--input-bg); padding: 6px 12px; border-radius: 8px; border: 1px solid var(--glass-border); display: none; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: var(--text-muted);">
-                </div>
-
             <input type="hidden" id="edit_output_id">
             <div style="display: flex; gap: 10px; margin-bottom: 16px;">
                 <button id="out_btn" class="btn" style="width: 100%;" onclick="saveOutput()">生成专属 M3U 聚合
@@ -4393,44 +4389,6 @@ function removeTag(val) {
             renderPreviewGroup(kObj, lastPreviewData[displayKey] || []);
         }
 
-
-        function countIncludedInAggregateFromSets() {
-            const { nameIds, groupIds } = collectPreviewBuckets();
-            const output = new Set();
-            nameIds.forEach(id => {
-                if (!excludedChannelIds.has(id)) output.add(id);
-            });
-            includedGroupChannelIds.forEach(id => {
-                if (groupIds.has(id)) output.add(id);
-            });
-            return output.size;
-        }
-
-        function computeDraftAggregateMemberCount() {
-            const { allIds } = collectPreviewBuckets();
-            return allIds.size;
-        }
-
-        function updateAggregateDraftSummaryCard() {
-            const editId = document.getElementById('edit_output_id')?.value;
-            if (!editId || !lastPreviewData) return;
-            const cards = document.querySelectorAll('.output-item-card');
-            let card = null;
-            cards.forEach(c => {
-                const btn = c.querySelector(`button[onclick*="prepareEditOutput(${editId})"]`);
-                if (btn) card = c;
-            });
-            if (!card) return;
-            const hit = computeDraftAggregateMemberCount();
-            const included = countIncludedInAggregateFromSets();
-            const statLine = card.querySelector('.output-card-channel-stats');
-            if (statLine) {
-                statLine.innerHTML = `<span style="color: #cbd5e1;">📊 频道: <strong>${hit}</strong> 命中</span>` +
-                    `<span style="color: #38bdf8;">🎯 <strong>${included}</strong> 实际入选</span>` +
-                    `<span style="opacity: 0.65; font-size: 0.92em;">（编辑预览，保存后同步卡片总计）</span>`;
-            }
-        }
-
         function renderFilterBarStats(elId, included, excluded, visible) {
             const el = document.getElementById(elId);
             if (!el) return;
@@ -4444,11 +4402,9 @@ function removeTag(val) {
         }
 
         function refreshGlobalStats() {
-            const summaryEl = document.getElementById('aggregate_draft_summary_stats');
             if (!lastPreviewData) {
                 renderFilterBarStats('global_preview_stats', 0, 0, false);
                 renderFilterBarStats('group_global_preview_stats', 0, 0, false);
-                if (summaryEl) { summaryEl.style.display = 'none'; summaryEl.innerHTML = ''; }
                 return;
             }
             const { nameIds, groupIds } = collectPreviewBuckets();
@@ -4463,26 +4419,6 @@ function removeTag(val) {
             const hasGroupRules = groupKeywords.length > 0;
             renderFilterBarStats('global_preview_stats', nameIncluded, nameExcluded, hasNameRules);
             renderFilterBarStats('group_global_preview_stats', groupIncluded, groupExcluded, hasGroupRules);
-
-            const hitUnion = computeDraftAggregateMemberCount();
-            const includedUnion = countIncludedInAggregateFromSets();
-            const hasAnyRule = hasNameRules || hasGroupRules;
-            if (summaryEl && hasAnyRule) {
-                summaryEl.style.display = 'flex';
-                let hint = '';
-                if (nameIncluded + groupIncluded !== includedUnion) {
-                    hint = ' <span style="opacity:0.75;">（名称入选与分组入选有重叠，不可把两栏数字直接相加）</span>';
-                }
-                summaryEl.innerHTML =
-                    `规则命中（去重）: <strong style="color:var(--text)">${hitUnion}</strong>` +
-                    ` | 实际入选（保存口径）: <strong style="color:#38bdf8;">${includedUnion}</strong>` +
-                    ` | 名称栏 ${nameIncluded}+${nameExcluded} · 分组栏 ${groupIncluded}+${groupExcluded}` +
-                    hint;
-            } else if (summaryEl) {
-                summaryEl.style.display = 'none';
-                summaryEl.innerHTML = '';
-            }
-            updateAggregateDraftSummaryCard();
         }
 
 
