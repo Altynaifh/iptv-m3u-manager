@@ -258,10 +258,6 @@
                             更新节目源后自动截图检测
                         </label>
                         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;">
-                            <input type="checkbox" id="out_auto_disable_on_check" checked style="width:16px;height:16px;">
-                            根据结果自动启用/禁用
-                        </label>
-                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;">
                             <input type="checkbox" id="out_auto_ai_vision" style="width:16px;height:16px;">
                             自动 AI 视觉检测
                         </label>
@@ -345,6 +341,14 @@
 
 
 
+                    <div id="check_options_container"
+                        style="display: none; align-items: center; gap: 5px; margin-right: 5px;">
+                        <label
+                            style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text); opacity: 0.9;">
+                            <input type="checkbox" id="auto_disable_check" style="width: 16px; height: 16px;">
+                            <span style="font-size: 0.9em;">根据结果自动启用/禁用</span>
+                        </label>
+                    </div>
                     <button id="check_btn" class="btn btn-sm toolbar-btn" onclick="checkPageConnectivity()"
                         style="background: #8b5cf6; display: none;">Ping 检测</button>
                     <button id="check_visual_btn" class="btn btn-sm toolbar-btn" onclick="checkVisualConnectivity()"
@@ -1145,6 +1149,7 @@
             const checkVisualBtn = document.getElementById('check_visual_btn');
             const checkAiVisionBtn = document.getElementById('check_ai_vision_btn');
             const checkAiOrganizeBtn = document.getElementById('check_ai_organize_btn');
+            const checkOptions = document.getElementById('check_options_container');
             const refreshBtn = document.getElementById('refresh_epg_btn');
 
             // 批量按钮
@@ -1165,6 +1170,7 @@
             if (checkAiOrganizeBtn) {
                 checkAiOrganizeBtn.style.display = (showCheckBtn && previewOutput && previewOutput.enable_ai_organize) ? 'block' : 'none';
             }
+            if (checkOptions) checkOptions.style.display = showCheckBtn ? 'flex' : 'none';
             if (refreshBtn) refreshBtn.style.display = displayStyle;
 
             if (selAllBtn) selAllBtn.style.display = displayStyle;
@@ -1226,7 +1232,6 @@
 
             prepareModal(`预览聚合: ${name}`, true, out);
             window.currentPreviewOutputId = out ? out.id : null;
-            setCurrentOutputAutoDisableFlag(out);
 
             if (!out) {
                 document.getElementById('channel_list').innerHTML = '无法找到聚合配置，请刷新页面重试';
@@ -1330,9 +1335,9 @@
                                         <th style="padding: 10px; width: 60px;">Logo</th>
                                         <th style="padding: 10px;">名称</th>
                                         <th style="padding: 10px;">tvg-id</th>
-${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
-<th style="padding: 10px;" class="preview-col-source-group">分组</th>
-<th style="padding: 10px;">来源</th>
+                                        ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
+                                        <th style="padding: 10px;" class="preview-col-source-group">分组</th>
+                                        <th style="padding: 10px;">来源</th>
                                         <th style="padding: 10px; width: 100px;">可用性</th>
                                         <th style="padding: 10px; width: 80px;">预览</th>
                                         <th style="padding: 10px; width: 80px;">操作</th>
@@ -2513,18 +2518,11 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         let _aggregatePreviewRefreshInFlight = false;
         let _aggregatePreviewRefreshPending = false;
 
-        window._currentOutputAutoDisableOnCheck = true;
-
-        function setCurrentOutputAutoDisableFlag(out) {
-            window._currentOutputAutoDisableOnCheck = out && out.auto_disable_on_check !== false;
-        }
-
         async function reloadCurrentAggregatePreview() {
             const oid = window.currentPreviewOutputId;
             if (!oid) return;
             const out = (typeof allOutputs !== 'undefined' && allOutputs) ? allOutputs.find(o => o.id === oid) : null;
             if (!out) return;
-            setCurrentOutputAutoDisableFlag(out);
             const viewState = captureAggregatePreviewViewState();
             const savedMode = window._previewGroupDisplayMode;
             try {
@@ -2660,7 +2658,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const confirmMsg = `即将提交 ${count} 个频道的截图检测到后台任务。\n每个频道约 3-5 秒，进度请在任务中心查看。\n\n确定要继续吗？`;
             if (!confirm(confirmMsg)) return;
 
-            const autoDisable = (window._currentOutputAutoDisableOnCheck !== false);
+            const autoDisable = document.getElementById('auto_disable_check')?.checked ?? false;
             const items = targets.map(c => ({ id: c.id, url: c.url }));
 
             const originalText = btn ? btn.innerText : '';
@@ -5037,7 +5035,6 @@ function removeTag(val) {
             document.getElementById('out_is_enabled').checked = out.is_enabled !== false;
             document.getElementById('out_auto_update').value = out.auto_update_minutes || 0;
             document.getElementById('out_auto_screenshot').checked = out.auto_visual_check || false;
-            document.getElementById('out_auto_disable_on_check').checked = out.auto_disable_on_check !== false;
             document.getElementById('out_auto_ai_vision').checked = out.auto_ai_vision_check || false;
             document.getElementById('out_auto_ai_organize').checked = out.auto_ai_organize || false;
             document.getElementById('out_enable_ai_vision').checked = !!out.enable_ai_vision;
@@ -5115,7 +5112,6 @@ function removeTag(val) {
             document.getElementById('out_is_enabled').checked = true; // 默认启用
             document.getElementById('out_auto_update').value = 0; // 默认不自动更新
             document.getElementById('out_auto_screenshot').checked = false;
-            document.getElementById('out_auto_disable_on_check').checked = true;
             document.getElementById('out_auto_ai_vision').checked = false;
             document.getElementById('out_auto_ai_organize').checked = false;
             document.getElementById('out_enable_ai_vision').checked = false;
@@ -5166,7 +5162,6 @@ function removeTag(val) {
                 is_enabled: document.getElementById('out_is_enabled').checked,
                 auto_update_minutes: parseInt(document.getElementById('out_auto_update').value),
                 auto_visual_check: document.getElementById('out_auto_screenshot').checked,
-                auto_disable_on_check: document.getElementById('out_auto_disable_on_check').checked,
                 auto_ai_vision_check: document.getElementById('out_auto_ai_vision').checked,
                 auto_ai_organize: document.getElementById('out_auto_ai_organize').checked,
                 enable_ai_vision: document.getElementById('out_enable_ai_vision').checked,
@@ -5747,7 +5742,6 @@ function removeTag(val) {
                 tabAi.setAttribute('aria-selected', mode === 'ai' ? 'true' : 'false');
             }
             applyPreviewGroupDisplay();
-            updatePreviewGroupColumnHeader();
         }
 
         function updatePreviewGroupModeTabs(payload) {
