@@ -6,6 +6,29 @@ class M3UGenerator:
     """M3U 生成器"""
     
     @staticmethod
+    def _keyword_matches_channel(c: Channel, k_obj: dict) -> bool:
+        """单条规则是否命中频道：按名称或来源分组（group-title）"""
+        k_val = (k_obj.get("value") or "").lower()
+        if not k_val:
+            return False
+        match_by = (k_obj.get("match_by") or "name").lower()
+        if match_by == "source_group":
+            haystack = (c.group or "").lower()
+        else:
+            haystack = (c.name or "").lower()
+        return k_val in haystack
+
+    @staticmethod
+    def rule_display_key(k_obj: dict) -> str:
+        """预览分组标题，与前端展示一致"""
+        k_val = k_obj.get("value", "")
+        k_group = (k_obj.get("group") or "").strip()
+        match_by = (k_obj.get("match_by") or "name").lower()
+        prefix = "[分组] " if match_by == "source_group" else ""
+        base = f"{prefix}{k_val}"
+        return f"{base} → {k_group}" if k_group else base
+
+    @staticmethod
     def filter_channels(channels: List[Channel], regex_pattern: str, keywords: List[dict] = None, excluded_ids: List[int] = None) -> List[Channel]:
         """根据关键字和正则筛选频道，并排除指定 ID 的频道"""
         # 转换排除列表为集合，便于快速查找
@@ -34,7 +57,7 @@ class M3UGenerator:
                     if c.id in excluded_set:
                         continue
                         
-                    if k_val in c.name.lower():
+                    if M3UGenerator._keyword_matches_channel(c, k_obj):
                         # 命中关键字
                         c_copy = c.model_copy()
                         

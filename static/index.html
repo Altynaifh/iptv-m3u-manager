@@ -227,16 +227,29 @@
                     <label
                         style="display: block; margin-bottom: 8px; opacity: 0.9; font-size: 0.95em; font-weight: 500;">关键字筛选
                         (回车查看下方预览)</label>
-                    <div id="tag_container" class="tag-container">
-                        <div style="display: flex; flex-grow: 1; align-items: center; gap: 5px;">
+                    <div id="tag_container" class="tag-container tag-container--stacked">
+                        <div class="tag-input-row" style="display: flex; width: 100%; margin-bottom: 8px; order: -1;">
                             <input type="text" id="tag_input" placeholder="关键字" aria-label="关键字筛选输入"
-                                style="background: transparent; border: none; outline: none; flex-grow: 2; padding: 0;">
+                                style="background: transparent; border: none; outline: none; flex: 1; padding: 4px 0; min-width: 0;">
                         </div>
                     </div>
                     <div id="global_preview_stats"
                         style="margin-top: -8px; margin-bottom: 12px; font-size: 0.82em; background: var(--input-bg); padding: 4px 10px; border-radius: 6px; border-left: 3px solid var(--primary); display: none; align-items: center; gap: 5px; color: var(--text-muted);">
                     </div>
                     <div id="preview_window" class="preview-float"></div>
+                </div>
+
+                <div class="form-group" style="position: relative; margin-top: 12px;">
+                    <label
+                        style="display: block; margin-bottom: 8px; opacity: 0.9; font-size: 0.95em; font-weight: 500;">来源分组筛选
+                        <span style="opacity:0.65;font-weight:400;">（匹配订阅内 group-title，回车添加）</span></label>
+                    <div id="group_tag_container" class="tag-container tag-container--stacked">
+                        <div class="tag-input-row group-tag-input-row" style="display: flex; width: 100%; margin-bottom: 8px; order: -1;">
+                            <input type="text" id="group_tag_input" placeholder="来源分组关键字" aria-label="来源分组筛选输入"
+                                style="background: transparent; border: none; outline: none; flex: 1; padding: 4px 0; min-width: 0;">
+                        </div>
+                    </div>
+                    <div id="group_preview_window" class="preview-float" style="display: none;"></div>
                 </div>
             </div>
 
@@ -1035,7 +1048,7 @@
                     <div class="mobile-channel-card ${isDisabled ? 'disabled' : ''} ${isSelected ? 'selected' : ''}" 
                          data-id="${c.id}" onclick="handleMobileCardClick(event, ${c.id})">
                         <!-- Logo 放在大卡片右上角 -->
-                        ${c.logo ? `<img class="mobile-channel-card__logo" src="${c.logo}" onerror="this.style.display='none'" alt="Logo">` : ''}
+                        <span class="channel-logo-slot channel-logo-slot--card">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span>
                         <!-- 背景预览图 -->
                         <div class="mobile-channel-card__bg ${!image ? 'mobile-channel-card__bg--empty' : ''}">
                             ${image
@@ -1153,7 +1166,7 @@
                     return `
                     <tr onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''}">
                         ${window.lastRenderShowActions ? `<td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>` : ''}
-                        <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo">${c.logo ? `<img src="${c.logo}" style="height:30px; border-radius:4px" onerror="this.style.display='none'">` : ''}</td>
+                        <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo"><span class="channel-logo-slot channel-logo-slot--table">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span></td>
                         <td style="padding: 10px;" data-label="名称：">${c.name}</td>
                         <td style="padding: 10px;" data-label="TVG："><span style="font-size: 0.8em; opacity: 0.6;">${c.tvg_id || '-'}</span></td>
                         ${window.currentEPGUrl ? `
@@ -1728,6 +1741,98 @@
         // 预期格式: { value: 'k', group: 'g' }
         let keywords = [];
 
+        function getMergedFilterKeywords() {
+            const nameRules = keywords.map(k => ({ ...k, match_by: k.match_by || 'name' }));
+            const groupRules = groupKeywords.map(k => ({ ...k, match_by: 'source_group' }));
+            return [...nameRules, ...groupRules];
+        }
+
+        function ruleDisplayKey(kObj) {
+            const matchBy = (kObj.match_by || 'name').toLowerCase();
+            const prefix = matchBy === 'source_group' ? '[分组] ' : '';
+            const base = prefix + (kObj.value || '');
+            const g = (kObj.group || '').trim();
+            return g ? `${base} → ${g}` : base;
+        }
+
+        let groupKeywords = [];
+        let activeGroupKeyword = null;
+
+        function handleGroupTagInput(e) {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            const input = document.getElementById('group_tag_input');
+            const val = (input.value || '').trim();
+            if (!val) return;
+            if (groupKeywords.some(k => k.value === val)) {
+                input.value = '';
+                return;
+            }
+            groupKeywords.push({ value: val, group: '', match_by: 'source_group' });
+            activeGroupKeyword = val;
+            activeKeyword = null;
+            input.value = '';
+            renderGroupTags();
+            clearTimeout(window.previewDebounceTimer);
+            window.previewDebounceTimer = setTimeout(updateRealtimePreview, 300);
+        }
+
+        function renderGroupTags(shouldFocus = true) {
+            const container = document.getElementById('group_tag_container');
+            const input = document.getElementById('group_tag_input');
+
+            container.classList.remove('editing-mode');
+            container.querySelectorAll('.tag-editor-overlay').forEach(el => el.remove());
+            container.querySelectorAll('.tag').forEach(el => el.remove());
+
+            const tagsHtml = groupKeywords.map((k, index) => {
+                const isActive = k.value === activeGroupKeyword ? 'active-tag' : '';
+                const inner = k.group ? `${k.value} <span style="opacity:0.6; font-size:0.9em">→ ${k.group}</span>` : k.value;
+                const display = `<span class="tag-prefix" style="opacity:0.55;font-size:0.85em;margin-right:4px;">[分组]</span>${inner}`;
+                return `
+                    <span class="tag ${isActive}"
+                          data-tag-index="${index}"
+                          data-tag-value="${k.value.replace(/"/g, '&quot;')}">
+                        <span class="tag-content">${display}</span>
+                        <span class="tag-remove">&times;</span>
+                    </span>
+                `;
+            }).join('');
+
+            const inputRow = container.querySelector('.group-tag-input-row') || container.querySelector('.tag-input-row');
+            if (inputRow) {
+                inputRow.insertAdjacentHTML('beforebegin', tagsHtml);
+                const inp = inputRow.querySelector('#group_tag_input') || document.getElementById('group_tag_input');
+                if (inp) inp.value = input ? input.value : '';
+            }
+
+            const inp = document.getElementById('group_tag_input');
+            if (inp) {
+                inp.onkeydown = handleGroupTagInput;
+                if (shouldFocus) inp.focus();
+            }
+            initGroupTagInteractions();
+        }
+
+        function selectGroupKeyword(val) {
+            activeGroupKeyword = val;
+            activeKeyword = null;
+            renderTags(false);
+            renderGroupTags(false);
+            renderSelectedPreview();
+        }
+
+        function removeGroupTag(val) {
+            groupKeywords = groupKeywords.filter(k => k.value !== val);
+            if (activeGroupKeyword === val) {
+                activeGroupKeyword = groupKeywords.length ? groupKeywords[groupKeywords.length - 1].value : null;
+            }
+            renderGroupTags();
+            clearTimeout(window.previewDebounceTimer);
+            window.previewDebounceTimer = setTimeout(updateRealtimePreview, 300);
+        }
+
+
         document.getElementById('tag_input').addEventListener('keydown', handleTagInput);
 
         function handleTagInput(e) {
@@ -1763,7 +1868,8 @@
         // 预览全局状态
         let lastPreviewData = {};
         let activeKeyword = null; // 存的是字符串
-        let excludedChannelIds = new Set(); // 聚合表级别排除的频道 ID
+        let excludedChannelIds = new Set(); // 关键字预览：默认入选，点此排除
+        let includedGroupChannelIds = new Set(); // 来源分组预览：默认不入选，点此选用
 
         function renderTags(shouldFocus = true) {
             const container = document.getElementById('tag_container');
@@ -1788,12 +1894,15 @@
                 `;
             }).join('');
 
-            container.innerHTML = tagsHtml + `
-                <div style="display: flex; flex-grow: 1; align-items: center; gap: 5px;">
-                    <input type="text" id="tag_input" placeholder="关键字" value="${input.value}"
-                        style="background: transparent; border: none; outline: none; flex-grow: 2; padding: 0;">
-                </div>
-            `;
+            const inputRow = container.querySelector('.tag-input-row');
+            container.querySelectorAll('.tag').forEach(el => el.remove());
+            if (inputRow) {
+                inputRow.insertAdjacentHTML('beforebegin', tagsHtml);
+                const inp = inputRow.querySelector('#tag_input') || document.getElementById('tag_input');
+                if (inp) inp.value = input.value;
+            } else {
+                container.innerHTML = tagsHtml + container.innerHTML;
+            }
 
             document.getElementById('tag_input').addEventListener('keydown', handleTagInput);
             if (shouldFocus) {
@@ -2395,6 +2504,606 @@
             }
         };
 
+
+        const GroupTagDragManager = {
+            isDragging: false,
+            draggedEl: null,
+            draggedIndex: null,
+            originalTag: null,
+            startX: 0,
+            startY: 0,
+            offsetX: 0,
+            offsetY: 0,
+            longPressTimer: null,
+            LONG_PRESS_DELAY: 350,
+            lastClickTime: 0,
+            lastClickTag: null,
+            DOUBLE_CLICK_DELAY: 300,
+            mobileDoubleTapDelay: 400,
+            targetIndex: null,
+            boundMove: null,
+            boundUp: null,
+            pendingSingleClick: null,
+
+            init() {
+                const container = document.getElementById('group_tag_container');
+                const tags = container.querySelectorAll('.tag');
+
+                tags.forEach((tag) => {
+                    const index = parseInt(tag.dataset.tagIndex);
+                    tag.addEventListener('mousedown', (e) => this.onPointerDown(e, tag, index, 'mouse'));
+                    tag.addEventListener('touchstart', (e) => this.onPointerDown(e, tag, index, 'touch'), { passive: false });
+
+                    // 阻止右键菜单（移动端长按菜单）
+                    tag.addEventListener('contextmenu', (e) => {
+                        e.preventDefault();
+                        return false;
+                    });
+
+                    const removeBtn = tag.querySelector('.tag-remove');
+                    if (removeBtn) {
+                        removeBtn.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            removeGroupTag(tag.dataset.tagValue);
+                        });
+                        removeBtn.addEventListener('touchend', (e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            removeGroupTag(tag.dataset.tagValue);
+                        });
+                    }
+                });
+
+                // 全局拖拽状态清理
+                this.setupGlobalCleanup();
+            },
+
+            setupGlobalCleanup() {
+                // 页面可见性变化时清理拖拽状态（切换标签页时）
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden && this.isDragging) {
+                        this.forceCleanupDrag();
+                    }
+                });
+
+                // 全局鼠标松开监听（防止事件丢失）
+                document.addEventListener('mouseup', (e) => {
+                    if (this.isDragging) {
+                        this.endDrag();
+                    }
+                }, { capture: true });
+
+                // 触摸结束监听（防止移动端事件丢失）
+                document.addEventListener('touchend', (e) => {
+                    if (this.isDragging && this.pointerType === 'touch') {
+                        this.endDrag();
+                    }
+                }, { capture: true });
+            },
+
+            forceCleanupDrag() {
+                if (this.isDragging) {
+                    // 取消拖拽，恢复原状
+                    if (this.draggedEl && this.draggedEl.parentNode) {
+                        this.draggedEl.remove();
+                    }
+                    const container = document.getElementById('group_tag_container');
+                    container.querySelectorAll('.tag').forEach(t => {
+                        t.classList.remove('tag-shift-left', 'tag-shift-right');
+                        t.style.transform = '';
+                        t.style.transition = '';
+                        t.style.visibility = '';
+                        t.removeAttribute('data-dragging');
+                    });
+                    container.classList.remove('dragging-active');
+                    this.targetIndex = null;
+                }
+
+                // 清理所有定时器
+                if (this.longPressTimer) {
+                    clearTimeout(this.longPressTimer);
+                    this.longPressTimer = null;
+                }
+                if (this.pendingSingleClick) {
+                    clearTimeout(this.pendingSingleClick);
+                    this.pendingSingleClick = null;
+                }
+
+                // 清理所有事件监听器
+                if (this.boundMove) {
+                    document.removeEventListener('mousemove', this.boundMove);
+                    document.removeEventListener('touchmove', this.boundMove);
+                    this.boundMove = null;
+                }
+                if (this.boundUp) {
+                    document.removeEventListener('mouseup', this.boundUp);
+                    document.removeEventListener('touchend', this.boundUp);
+                    document.removeEventListener('touchcancel', this.boundUp);
+                    this.boundUp = null;
+                }
+
+                // 重置所有状态
+                this.isDragging = false;
+                this.draggedEl = null;
+                this.draggedIndex = null;
+                this.originalTag = null;
+                this.pendingDrag = false;
+                this.pendingTag = null;
+                this.hasMoved = false;
+            },
+
+            getPointerPos(e, type) {
+                if (type === 'touch' && e.touches && e.touches.length > 0) {
+                    return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                }
+                if (type === 'touch' && e.changedTouches && e.changedTouches.length > 0) {
+                    return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+                }
+                return { x: e.clientX, y: e.clientY };
+            },
+
+            onPointerDown(e, tag, index, type) {
+                if (e.target.classList.contains('tag-remove')) return;
+
+                const pos = this.getPointerPos(e, type);
+                this.startX = pos.x;
+                this.startY = pos.y;
+                this.pendingTag = tag;
+                this.pendingIndex = index;
+                this.pointerType = type;
+                this.hasMoved = false;
+
+                this.boundMove = (ev) => this.onPointerMove(ev, type);
+                this.boundUp = (ev) => this.onPointerUp(ev, type);
+
+                if (type === 'touch') {
+                    // 阻止默认行为（文本选择、长按菜单等）
+                    e.preventDefault();
+
+                    document.addEventListener('touchmove', this.boundMove, { passive: false });
+                    document.addEventListener('touchend', this.boundUp);
+                    document.addEventListener('touchcancel', this.boundUp);
+
+                    this.longPressTimer = setTimeout(() => {
+                        if (!this.isDragging && !this.hasMoved) {
+                            this.startDrag(tag, index, pos);
+                            if (navigator.vibrate) navigator.vibrate(30);
+                        }
+                    }, this.LONG_PRESS_DELAY);
+                } else {
+                    document.addEventListener('mousemove', this.boundMove);
+                    document.addEventListener('mouseup', this.boundUp);
+                    this.pendingDrag = true;
+                }
+            },
+
+            onPointerMove(e, type) {
+                const pos = this.getPointerPos(e, type);
+                const dx = Math.abs(pos.x - this.startX);
+                const dy = Math.abs(pos.y - this.startY);
+
+                if (dx > 5 || dy > 5) {
+                    this.hasMoved = true;
+                }
+
+                if (this.longPressTimer) {
+                    if (dx > 10 || dy > 10) {
+                        clearTimeout(this.longPressTimer);
+                        this.longPressTimer = null;
+                    }
+                }
+
+                // PC端: 移动超过阈值才开始拖拽
+                if (this.pendingDrag && !this.isDragging && this.pendingTag) {
+                    if (dx > 8 || dy > 8) {
+                        this.startDrag(this.pendingTag, this.pendingIndex, { x: this.startX, y: this.startY });
+                        this.pendingDrag = false;
+                    }
+                }
+
+                if (this.isDragging && this.draggedEl) {
+                    if (type === 'touch') e.preventDefault();
+                    this.draggedEl.style.left = (pos.x - this.offsetX) + 'px';
+                    this.draggedEl.style.top = (pos.y - this.offsetY) + 'px';
+                    this.updateDropTarget(pos);
+                }
+            },
+
+            onPointerUp(e, type) {
+                clearTimeout(this.longPressTimer);
+                this.longPressTimer = null;
+
+                if (type === 'touch') {
+                    document.removeEventListener('touchmove', this.boundMove);
+                    document.removeEventListener('touchend', this.boundUp);
+                    document.removeEventListener('touchcancel', this.boundUp);
+                } else {
+                    document.removeEventListener('mousemove', this.boundMove);
+                    document.removeEventListener('mouseup', this.boundUp);
+                }
+
+                if (this.isDragging) {
+                    this.endDrag();
+                } else if (this.pendingTag && !this.hasMoved) {
+                    if (type === 'touch') {
+                        this.handleMobileTap(this.pendingTag);
+                    } else {
+                        this.handleClick(this.pendingTag);
+                    }
+                }
+
+                this.pendingDrag = false;
+                this.pendingTag = null;
+                this.hasMoved = false;
+            },
+
+            handleMobileTap(tag) {
+                // 拖拽中忽略点击
+                if (this.isDragging) return;
+                // 拖拽中的标签忽略点击
+                if (tag.getAttribute('data-dragging') === 'true') return;
+
+                const tagValue = tag.dataset.tagValue;
+                const now = Date.now();
+
+                if (now - this.lastClickTime < this.mobileDoubleTapDelay && this.lastClickTag === tagValue) {
+                    clearTimeout(this.pendingSingleClick);
+                    this.pendingSingleClick = null;
+                    this.enterEditMode(tag, tagValue);
+                    this.lastClickTime = 0;
+                    this.lastClickTag = null;
+                    return;
+                }
+
+                this.lastClickTime = now;
+                this.lastClickTag = tagValue;
+
+                if (this.pendingSingleClick) {
+                    clearTimeout(this.pendingSingleClick);
+                }
+
+                this.pendingSingleClick = setTimeout(() => {
+                    if (this.lastClickTag === tagValue) {
+                        selectGroupKeyword(tagValue);
+                    }
+                    this.pendingSingleClick = null;
+                    this.lastClickTime = 0;
+                    this.lastClickTag = null;
+                }, this.mobileDoubleTapDelay);
+            },
+
+            handleClick(tag) {
+                const container = document.getElementById('group_tag_container');
+                if (container.classList.contains('editing-mode')) return;
+
+                const tagValue = tag.dataset.tagValue;
+                const now = Date.now();
+
+                if (now - this.lastClickTime < this.DOUBLE_CLICK_DELAY && this.lastClickTag === tagValue) {
+                    this.enterEditMode(tag, tagValue);
+                    this.lastClickTime = 0;
+                    this.lastClickTag = null;
+                } else {
+                    this.lastClickTime = now;
+                    this.lastClickTag = tagValue;
+                    selectGroupKeyword(tagValue);
+                }
+            },
+
+            startDrag(tag, index, pos) {
+                // 防止重复开始拖拽
+                if (this.isDragging) return;
+
+                // 清理之前的状态
+                if (this.draggedEl && this.draggedEl.parentNode) {
+                    this.draggedEl.remove();
+                }
+
+                this.isDragging = true;
+                this.draggedIndex = index;
+                this.originalTag = tag;
+                this.pendingDrag = false;
+
+                const rect = tag.getBoundingClientRect();
+                this.offsetX = pos.x - rect.left;
+                this.offsetY = pos.y - rect.top;
+
+                // 获取原标签的计算样式（包括 hover 状态）
+                const computedStyle = window.getComputedStyle(tag);
+                const backgroundColor = computedStyle.backgroundColor;
+                const filter = computedStyle.filter;
+                const boxShadow = computedStyle.boxShadow;
+
+                // 先隐藏原标签（在克隆之前），避免出现两个标签
+                tag.style.visibility = 'hidden';
+                tag.setAttribute('data-dragging', 'true');
+
+                // 创建拖拽元素，保持原标签的外观
+                this.draggedEl = tag.cloneNode(true);
+                this.draggedEl.classList.add('tag-dragging');
+                this.draggedEl.style.cssText = `
+                    position: fixed;
+                    left: ${rect.left}px;
+                    top: ${rect.top}px;
+                    width: ${rect.width}px;
+                    height: ${rect.height}px;
+                    z-index: 9999;
+                    pointer-events: none;
+                    background: ${backgroundColor};
+                    filter: ${filter};
+                    transform: scale(0.98);
+                    opacity: 0.9;
+                    box-shadow: ${boxShadow || '0 8px 25px rgba(99, 102, 241, 0.4)'};
+                    transition: none;
+                    margin: 0;
+                    padding: 0;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                `;
+                document.body.appendChild(this.draggedEl);
+
+                document.getElementById('group_tag_container').classList.add('dragging-active');
+            },
+
+            updateDropTarget(pos) {
+                const container = document.getElementById('group_tag_container');
+                const tags = Array.from(container.querySelectorAll('.tag'));
+
+                let newTargetIndex = this.draggedIndex;
+
+                for (let i = 0; i < tags.length; i++) {
+                    const tag = tags[i];
+                    if (tag.style.display === 'none') continue;
+
+                    const rect = tag.getBoundingClientRect();
+                    const tagIndex = parseInt(tag.dataset.tagIndex);
+                    const centerX = rect.left + rect.width / 2;
+
+                    if (pos.x < centerX) {
+                        newTargetIndex = tagIndex;
+                        if (tagIndex > this.draggedIndex) newTargetIndex = tagIndex;
+                        break;
+                    } else if (i === tags.length - 1) {
+                        newTargetIndex = tagIndex + 1;
+                    }
+                }
+
+                this.targetIndex = newTargetIndex;
+
+                // 计算移动距离：使用原标签的宽度
+                const originalRect = this.originalTag.getBoundingClientRect();
+                const gap = 5;
+                const moveDistance = -(originalRect.width + gap);
+
+                // 让所有受影响的标签一起移动
+                tags.forEach(tag => {
+                    if (tag.style.display === 'none') return;
+
+                    const tagIndex = parseInt(tag.dataset.tagIndex);
+                    tag.style.transform = '';
+                    tag.style.transition = '';
+
+                    if (this.draggedIndex < newTargetIndex) {
+                        // 向右拖拽：draggedIndex 到 newTargetIndex 之间的标签向左移动
+                        if (tagIndex > this.draggedIndex && tagIndex <= newTargetIndex) {
+                            tag.style.transform = `translateX(${moveDistance}px)`;
+                            tag.style.transition = 'transform 0.25s cubic-bezier(0.2, 0, 0.2, 1)';
+                        }
+                    } else if (this.draggedIndex > newTargetIndex) {
+                        // 向左拖拽：newTargetIndex 到 draggedIndex 之间的标签向右移动
+                        if (tagIndex >= newTargetIndex && tagIndex < this.draggedIndex) {
+                            tag.style.transform = `translateX(${-moveDistance}px)`;
+                            tag.style.transition = 'transform 0.25s cubic-bezier(0.2, 0, 0.2, 1)';
+                        }
+                    }
+                });
+            },
+
+            endDrag() {
+                if (!this.isDragging) return;
+
+                const container = document.getElementById('group_tag_container');
+                const draggedEl = this.draggedEl;
+                const originalTag = this.originalTag;
+
+                // 清除其他标签的动画状态
+                container.querySelectorAll('.tag').forEach(t => {
+                    t.classList.remove('tag-shift-left', 'tag-shift-right');
+                    t.style.transform = '';
+                    t.style.transition = '';
+                    t.removeAttribute('data-dragging');
+                    // 恢复被隐藏的原标签
+                    if (t.style.visibility === 'hidden') {
+                        t.style.visibility = '';
+                    }
+                });
+                container.classList.remove('dragging-active');
+
+                // 如果位置发生了变化，更新数据并重新渲染
+                if (this.targetIndex !== null && this.targetIndex !== this.draggedIndex) {
+                    let insertAt = this.targetIndex;
+                    if (insertAt > this.draggedIndex) insertAt--;
+
+                    const item = groupKeywords.splice(this.draggedIndex, 1)[0];
+                    groupKeywords.splice(insertAt, 0, item);
+
+                    // 立即重新渲染，让标签出现在新位置
+                    renderGroupTags(false);
+
+                    // 拖拽元素平滑淡出
+                    if (draggedEl && draggedEl.parentNode) {
+                        const newContainer = document.getElementById('group_tag_container');
+                        const newTag = newContainer.querySelector(`.tag[data-tag-value="${item.value.replace(/"/g, '\\"')}"]`);
+                        if (newTag) {
+                            const newRect = newTag.getBoundingClientRect();
+                            // 让拖拽元素移动到新位置并淡出
+                            draggedEl.style.transition = 'all 0.2s ease-out';
+                            draggedEl.style.left = newRect.left + 'px';
+                            draggedEl.style.top = newRect.top + 'px';
+                            draggedEl.style.opacity = '0';
+                            draggedEl.style.transform = 'scale(1)';
+                            setTimeout(() => {
+                                if (draggedEl.parentNode) draggedEl.remove();
+                            }, 200);
+                        } else {
+                            if (draggedEl.parentNode) draggedEl.remove();
+                        }
+                    }
+
+                    clearTimeout(window.previewDebounceTimer);
+                    window.previewDebounceTimer = setTimeout(updateRealtimePreview, 300);
+                } else {
+                    // 没有移动，直接清理拖拽元素
+                    if (draggedEl && draggedEl.parentNode) {
+                        draggedEl.remove();
+                    }
+                }
+
+                this.isDragging = false;
+                this.draggedEl = null;
+                this.draggedIndex = null;
+                this.originalTag = null;
+                this.targetIndex = null;
+            },
+
+            handleClick(tag) {
+                // 拖拽中忽略点击
+                if (this.isDragging) return;
+                // 拖拽中的标签忽略点击
+                if (tag.getAttribute('data-dragging') === 'true') return;
+
+                const container = document.getElementById('group_tag_container');
+                if (container.classList.contains('editing-mode')) return;
+
+                const tagValue = tag.dataset.tagValue;
+                const now = Date.now();
+
+                if (now - this.lastClickTime < this.DOUBLE_CLICK_DELAY && this.lastClickTag === tagValue) {
+                    this.enterEditMode(tag, tagValue);
+                    this.lastClickTime = 0;
+                    this.lastClickTag = null;
+                } else {
+                    this.lastClickTime = now;
+                    this.lastClickTag = tagValue;
+                    selectGroupKeyword(tagValue);
+                }
+            },
+
+            enterEditMode(tag, originalValue) {
+                const kObj = groupKeywords.find(k => k.value === originalValue);
+                if (!kObj) return;
+
+                const container = document.getElementById('group_tag_container');
+                // 防止重复进入编辑模式
+                if (container.classList.contains('editing-mode')) return;
+
+                const tagRect = tag.getBoundingClientRect();
+                const containerRect = container.getBoundingClientRect();
+
+                // 添加编辑模式类，模糊其他标签
+                container.classList.add('editing-mode');
+                tag.classList.add('tag-editing');
+
+                // 创建浮动编辑器
+                const editor = document.createElement('div');
+                editor.className = 'tag-editor-overlay';
+                editor.innerHTML = `
+                    <input type="text" class="tag-edit-keyword" value="${kObj.value}" placeholder="来源分组">
+                    <div class="tag-edit-actions">
+                        <button class="tag-edit-confirm" title="确认">✓</button>
+                        <button class="tag-edit-cancel" title="取消">✕</button>
+                    </div>
+                `;
+
+                // 先添加到容器以获取编辑器尺寸
+                editor.style.visibility = 'hidden';
+                editor.style.position = 'absolute';
+                container.appendChild(editor);
+                const editorRect = editor.getBoundingClientRect();
+
+                // 计算编辑器位置（默认在标签上方）
+                let left = tagRect.left - containerRect.left;
+                let top = tagRect.top - containerRect.top - editorRect.height - 8;
+
+                // 边界检查：确保不会超出容器范围
+                const maxLeft = containerRect.width - editorRect.width - 10;
+                const maxTop = containerRect.height - editorRect.height - 10;
+
+                // 确保 left 不会超出容器
+                if (left < 5) left = 5;
+                if (left > maxLeft) left = maxLeft;
+
+                // 确保 top 不会超出容器（如果上方空间不够，显示在标签下方）
+                if (top < 5) {
+                    top = tagRect.top - containerRect.top + tagRect.height + 8;
+                }
+                if (top > maxTop) top = maxTop;
+
+                // 应用定位
+                editor.style.left = left + 'px';
+                editor.style.top = top + 'px';
+                editor.style.visibility = 'visible';
+
+                const keywordInput = editor.querySelector('.tag-edit-keyword');
+
+                // 延迟聚焦确保动画完成
+                setTimeout(() => {
+                    keywordInput.focus();
+                    keywordInput.select();
+                }, 50);
+
+                const closeEditor = () => {
+                    container.classList.remove('editing-mode');
+                    tag.classList.remove('tag-editing');
+                    editor.remove();
+                };
+
+                const confirmEdit = () => {
+                    const newValue = keywordInput.value.trim();
+
+                    if (newValue && newValue !== originalValue) {
+                        if (groupKeywords.some(k => k.value === newValue && k.value !== originalValue)) {
+                            keywordInput.style.borderColor = '#ef4444';
+                            keywordInput.classList.add('shake');
+                            setTimeout(() => keywordInput.classList.remove('shake'), 500);
+                            return;
+                        }
+                    }
+
+                    if (newValue) {
+                        kObj.value = newValue;
+                        if (activeGroupKeyword === originalValue) activeGroupKeyword = newValue;
+                    } else {
+                        groupKeywords = groupKeywords.filter(k => k.value !== originalValue);
+                    }
+
+                    closeEditor();
+                    renderGroupTags();
+                    clearTimeout(window.previewDebounceTimer);
+                    window.previewDebounceTimer = setTimeout(updateRealtimePreview, 300);
+                };
+
+                const cancelEdit = () => {
+                    closeEditor();
+                };
+
+                editor.querySelector('.tag-edit-confirm').onclick = confirmEdit;
+                editor.querySelector('.tag-edit-cancel').onclick = cancelEdit;
+
+                keywordInput.onkeydown = (e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); confirmEdit(); }
+                    else if (e.key === 'Escape') cancelEdit();
+                };
+            }
+        };
+
+
+        function initGroupTagInteractions() {
+            GroupTagDragManager.init();
+        }
+        renderGroupTags(false);
+
         function initTagInteractions() {
             TagDragManager.init();
         }
@@ -2414,16 +3123,22 @@ function removeTag(val) {
         }
 
         function selectKeyword(k) {
+            activeGroupKeyword = null;
             activeKeyword = k;
             renderTags();
+            renderGroupTags(false);
             renderSelectedPreview();
         }
 
         function updateKeywordGroup(val, newGroup) {
-            const kObj = keywords.find(k => k.value === val);
+            let kObj = keywords.find(k => k.value === val);
+            if (!kObj && activeGroupKeyword) {
+                kObj = groupKeywords.find(k => k.value === val);
+            }
             if (kObj) {
                 kObj.group = newGroup.trim();
-                renderTags(); // 更新显示
+                if ((kObj.match_by || 'name') === 'source_group') renderGroupTags(false);
+                else renderTags(); // 更新显示
                 // 更新预览标题
 
                 // 触发预览更新
@@ -2432,27 +3147,108 @@ function removeTag(val) {
             }
         }
 
-        function renderSelectedPreview() {
-            const previewWin = document.getElementById('preview_window');
 
-            if (!activeKeyword || !lastPreviewData) {
-                if (keywords.length === 0 && lastPreviewData && lastPreviewData["All"]) {
-                    // 暂且隐藏
-                    previewWin.style.display = 'none';
+
+        function isGroupRule(kObj) {
+            return kObj && (kObj.match_by || 'name') === 'source_group';
+        }
+
+        function collectPreviewBuckets() {
+            const nameIds = new Set();
+            const groupIds = new Set();
+            const allIds = new Set();
+            if (!lastPreviewData) return { nameIds, groupIds, allIds };
+            keywords.forEach(k => {
+                const key = ruleDisplayKey({ ...k, match_by: 'name' });
+                (lastPreviewData[key] || []).forEach(c => {
+                    if (c.id != null) {
+                        nameIds.add(c.id);
+                        allIds.add(c.id);
+                    }
+                });
+            });
+            groupKeywords.forEach(k => {
+                const key = ruleDisplayKey({ ...k, match_by: 'source_group' });
+                (lastPreviewData[key] || []).forEach(c => {
+                    if (c.id != null) {
+                        groupIds.add(c.id);
+                        allIds.add(c.id);
+                    }
+                });
+            });
+            return { nameIds, groupIds, allIds };
+        }
+
+        function isChannelIncludedInAggregate(channelId) {
+            const { nameIds, groupIds } = collectPreviewBuckets();
+            if (nameIds.has(channelId) && !excludedChannelIds.has(channelId)) return true;
+            if (groupIds.has(channelId) && includedGroupChannelIds.has(channelId)) return true;
+            return false;
+        }
+
+        function computeSaveExcludedIds() {
+            const { nameIds, groupIds, allIds } = collectPreviewBuckets();
+            const output = new Set();
+            nameIds.forEach(id => {
+                if (!excludedChannelIds.has(id)) output.add(id);
+            });
+            includedGroupChannelIds.forEach(id => {
+                if (groupIds.has(id)) output.add(id);
+            });
+            const excluded = [];
+            allIds.forEach(id => {
+                if (!output.has(id)) excluded.push(id);
+            });
+            return excluded;
+        }
+
+        function syncIncludedGroupFromSaved(excludedIdsArray) {
+            includedGroupChannelIds = new Set();
+            if (!lastPreviewData || !groupKeywords.length) return;
+            const excluded = new Set(excludedIdsArray || []);
+            groupKeywords.forEach(k => {
+                const key = ruleDisplayKey({ ...k, match_by: 'source_group' });
+                (lastPreviewData[key] || []).forEach(c => {
+                    if (c.id != null && !excluded.has(c.id)) {
+                        includedGroupChannelIds.add(c.id);
+                    }
+                });
+            });
+        }
+
+        function getPreviewWindowForRule(kObj) {
+            const isGroup = kObj && (kObj.match_by || 'name') === 'source_group';
+            return {
+                el: document.getElementById(isGroup ? 'group_preview_window' : 'preview_window'),
+                other: document.getElementById(isGroup ? 'preview_window' : 'group_preview_window'),
+                isGroup
+            };
+        }
+
+        function hideAllPreviewWindows() {
+            const a = document.getElementById('preview_window');
+            const b = document.getElementById('group_preview_window');
+            if (a) a.style.display = 'none';
+            if (b) b.style.display = 'none';
+        }
+
+        function renderSelectedPreview() {
+            let kObj = null;
+            if (activeKeyword) {
+                kObj = keywords.find(k => k.value === activeKeyword);
+            } else if (activeGroupKeyword) {
+                kObj = groupKeywords.find(k => k.value === activeGroupKeyword);
+            }
+            if (!kObj || !lastPreviewData) {
+                if (getMergedFilterKeywords().length === 0 && lastPreviewData && lastPreviewData["All"]) {
+                    hideAllPreviewWindows();
                     return;
                 }
-                previewWin.style.display = 'none';
+                hideAllPreviewWindows();
                 return;
             }
 
-            const kObj = keywords.find(k => k.value === activeKeyword);
-            if (!kObj) {
-                previewWin.style.display = 'none';
-                return;
-            }
-
-            // 找数据
-            const displayKey = kObj.group ? `${kObj.value} → ${kObj.group}` : kObj.value;
+            const displayKey = ruleDisplayKey(kObj);
 
             // 没频道也给它画个头
             renderPreviewGroup(kObj, lastPreviewData[displayKey] || []);
@@ -2461,7 +3257,7 @@ function removeTag(val) {
         function updateGlobalStats(included, excluded) {
             const el = document.getElementById('global_preview_stats');
             if (!el) return;
-            if ((included === 0 && excluded === 0) || keywords.length === 0) {
+            if ((included === 0 && excluded === 0) || getMergedFilterKeywords().length === 0) {
                 el.style.display = 'none';
                 el.innerHTML = '';
                 return;
@@ -2472,46 +3268,229 @@ function removeTag(val) {
 
         function refreshGlobalStats() {
             if (!lastPreviewData) return;
-            let totalMatched = 0;
-            let totalExcluded = 0;
-            const seenIds = new Set();
-            for (const key in lastPreviewData) {
-                lastPreviewData[key].forEach(c => {
-                    if (!seenIds.has(c.id)) {
-                        seenIds.add(c.id);
-                        totalMatched++;
-                        if (excludedChannelIds.has(c.id)) totalExcluded++;
-                    }
-                });
+            const { allIds } = collectPreviewBuckets();
+            let included = 0;
+            allIds.forEach(id => {
+                if (isChannelIncludedInAggregate(id)) included++;
+            });
+            updateGlobalStats(included, allIds.size - included);
+        }
+
+
+        function getActivePreviewRule() {
+            if (activeKeyword) return keywords.find(k => k.value === activeKeyword) || null;
+            if (activeGroupKeyword) return groupKeywords.find(k => k.value === activeGroupKeyword) || null;
+            return null;
+        }
+
+        function getActivePreviewChannels() {
+            const kObj = getActivePreviewRule();
+            if (!kObj || !lastPreviewData) return { kObj: null, channels: [] };
+            const displayKey = ruleDisplayKey(kObj);
+            return { kObj, channels: lastPreviewData[displayKey] || [] };
+        }
+
+
+        function previewLogoSlotHtml(logoUrl) {
+            const src = (logoUrl || '').trim();
+            if (src) {
+                return `<span class="preview-item__logo-slot" aria-hidden="true">` +
+                    `<img class="preview-item__logo" src="${src.replace(/"/g, '&quot;')}" alt="" ` +
+                    `onerror="this.classList.add('preview-item__logo--broken');this.removeAttribute('src');">` +
+                    `</span>`;
             }
-            updateGlobalStats(totalMatched - totalExcluded, totalExcluded);
+            return `<span class="preview-item__logo-slot preview-item__logo-slot--empty" aria-hidden="true"></span>`;
+        }
+
+        function buildPreviewChannelRowHtml(c, groupMode) {
+            const isIncluded = groupMode
+                ? includedGroupChannelIds.has(c.id)
+                : !excludedChannelIds.has(c.id);
+            const disabledStyle = isIncluded ? '' : 'opacity: 0.5; text-decoration: line-through;';
+            const btnStyle = isIncluded
+                ? 'background: #ef4444; color: white;'
+                : 'background: #10b981; color: white;';
+            const btnText = groupMode
+                ? (isIncluded ? '取消选用' : '选用')
+                : (isIncluded ? '排除' : '恢复');
+            const statusTag = isIncluded
+                ? ''
+                : (groupMode
+                    ? ' <span style="color: #94a3b8; font-size: 0.8em;">[未选用]</span>'
+                    : ' <span style="color: #ef4444; font-size: 0.8em;">[已排除]</span>');
+            const toggleFn = groupMode
+                ? `toggleIncludeGroupChannel(${c.id})`
+                : `toggleExcludeChannel(${c.id})`;
+            return `
+                    <div class="preview-item" data-channel-id="${c.id}" style="${disabledStyle}">
+                        ${previewLogoSlotHtml(c.logo)}
+                        <div style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                            <strong>${c.name}</strong>${statusTag}<br>
+                            <small style="opacity: 0.8; font-size: 0.85em; color: #a5b4fc;">来源: ${c.source}</small>
+                        </div>
+                        <small style="opacity: 0.4; margin-left: 5px;">${c.group || '默认'}</small>
+                        <button onclick="event.stopPropagation(); ${toggleFn}"
+                                style="${btnStyle} border: none; border-radius: 4px; padding: 2px 8px; font-size: 0.75em; cursor: pointer; margin-left: 8px; white-space: nowrap;">
+                            ${btnText}
+                        </button>
+                    </div>`;
+        }
+
+        function updatePreviewStatsInPlace() {
+            const { kObj, channels } = getActivePreviewChannels();
+            if (!kObj) return;
+            const groupMode = isGroupRule(kObj);
+            const { el: previewWin } = getPreviewWindowForRule(kObj);
+            if (!previewWin) return;
+            const key = kObj.value;
+            const bar = previewWin.querySelector(`#preview-group-${CSS.escape(key)}`);
+            if (!bar) return;
+            let includedCount = 0;
+            let excludedCount = 0;
+            channels.forEach(c => {
+                const inc = groupMode ? includedGroupChannelIds.has(c.id) : !excludedChannelIds.has(c.id);
+                if (inc) includedCount++; else excludedCount++;
+            });
+            const statsLabel = groupMode ? '选用' : '入选';
+            const statsEl = bar.querySelector('.preview-group-stats');
+            if (statsEl) {
+                statsEl.innerHTML = `${statsLabel}: ${includedCount} | 未选: <span style="color: #ef4444;">${excludedCount}</span>`;
+            }
+        }
+
+        function patchPreviewChannelRow(channelId) {
+            const { kObj, channels } = getActivePreviewChannels();
+            if (!kObj) {
+                renderSelectedPreview();
+                return;
+            }
+            const groupMode = isGroupRule(kObj);
+            const c = channels.find(x => x.id === channelId);
+            const { el: previewWin } = getPreviewWindowForRule(kObj);
+            if (!c || !previewWin || previewWin.style.display === 'none') {
+                renderSelectedPreview();
+                return;
+            }
+            const body = previewWin.querySelector('.preview-float__body');
+            const row = body && body.querySelector(`.preview-item[data-channel-id="${channelId}"]`);
+            if (!row) {
+                renderSelectedPreview();
+                return;
+            }
+            const scrollTop = body.scrollTop;
+            const tmp = document.createElement('div');
+            tmp.innerHTML = buildPreviewChannelRowHtml(c, groupMode).trim();
+            const newRow = tmp.firstElementChild;
+            if (newRow) row.replaceWith(newRow);
+            updatePreviewStatsInPlace();
+            refreshGlobalStats();
+            if (body) body.scrollTop = scrollTop;
+        }
+
+        function renderSelectedPreviewPreserveScroll() {
+            const kObj = getActivePreviewRule();
+            let scrollTop = 0;
+            if (kObj) {
+                const { el } = getPreviewWindowForRule(kObj);
+                const body = el && el.querySelector('.preview-float__body');
+                if (body) scrollTop = body.scrollTop;
+            }
+            renderSelectedPreview();
+            if (kObj) {
+                const { el } = getPreviewWindowForRule(kObj);
+                const body = el && el.querySelector('.preview-float__body');
+                if (body) body.scrollTop = scrollTop;
+            }
+        }
+
+        function patchPreviewChannelRowsBulk(channelIds) {
+            const { kObj, channels } = getActivePreviewChannels();
+            if (!kObj || !channelIds || !channelIds.length) {
+                renderSelectedPreview();
+                return;
+            }
+            const groupMode = isGroupRule(kObj);
+            const { el: previewWin } = getPreviewWindowForRule(kObj);
+            if (!previewWin || previewWin.style.display === 'none') return;
+            const body = previewWin.querySelector('.preview-float__body');
+            if (!body) return;
+            const scrollTop = body.scrollTop;
+            const idSet = new Set(channelIds);
+            channels.forEach(c => {
+                if (!idSet.has(c.id)) return;
+                const row = body.querySelector(`.preview-item[data-channel-id="${c.id}"]`);
+                if (!row) return;
+                const tmp = document.createElement('div');
+                tmp.innerHTML = buildPreviewChannelRowHtml(c, groupMode).trim();
+                const newRow = tmp.firstElementChild;
+                if (newRow) row.replaceWith(newRow);
+            });
+            updatePreviewStatsInPlace();
+            refreshGlobalStats();
+            body.scrollTop = scrollTop;
+        }
+
+        function patchAllPreviewChannelRowsInView(previewRoot) {
+            const { kObj, channels } = getActivePreviewChannels();
+            if (!kObj) return;
+            const groupMode = isGroupRule(kObj);
+            const previewWin = previewRoot || getPreviewWindowForRule(kObj).el;
+            if (!previewWin) return;
+            const body = previewWin.querySelector('.preview-float__body');
+            if (!body) return;
+            const scrollTop = body.scrollTop;
+            channels.forEach(c => {
+                const row = body.querySelector(`.preview-item[data-channel-id="${c.id}"]`);
+                if (!row) return;
+                const tmp = document.createElement('div');
+                tmp.innerHTML = buildPreviewChannelRowHtml(c, groupMode).trim();
+                const newRow = tmp.firstElementChild;
+                if (newRow) row.replaceWith(newRow);
+            });
+            updatePreviewStatsInPlace();
+            refreshGlobalStats();
+            body.scrollTop = scrollTop;
         }
 
         function renderPreviewGroup(kObj, channels) {
-            const previewWin = document.getElementById('preview_window');
             if (!kObj) return;
+            const { el: previewWin, other: otherWin } = getPreviewWindowForRule(kObj);
+            if (!previewWin) return;
+            if (otherWin) otherWin.style.display = 'none';
 
             const key = kObj.value;
             const groupVal = kObj.group || '';
 
+            const groupMode = isGroupRule(kObj);
             const channelsHtml = (channels && channels.length > 0) ? channels.map(c => {
-                // 使用本地排除列表判断是否在此聚合表中排除
-                const isExcluded = excludedChannelIds.has(c.id);
-                const disabledStyle = isExcluded ? 'opacity: 0.5; text-decoration: line-through;' : '';
-                const btnStyle = isExcluded
-                    ? 'background: #10b981; color: white;'
-                    : 'background: #ef4444; color: white;';
-                const btnText = isExcluded ? '恢复' : '排除';
+                const isIncluded = groupMode
+                    ? includedGroupChannelIds.has(c.id)
+                    : !excludedChannelIds.has(c.id);
+                const disabledStyle = isIncluded ? '' : 'opacity: 0.5; text-decoration: line-through;';
+                const btnStyle = isIncluded
+                    ? 'background: #ef4444; color: white;'
+                    : 'background: #10b981; color: white;';
+                const btnText = groupMode
+                    ? (isIncluded ? '取消选用' : '选用')
+                    : (isIncluded ? '排除' : '恢复');
+                const statusTag = isIncluded
+                    ? ''
+                    : (groupMode
+                        ? ' <span style="color: #94a3b8; font-size: 0.8em;">[未选用]</span>'
+                        : ' <span style="color: #ef4444; font-size: 0.8em;">[已排除]</span>');
+                const toggleFn = groupMode
+                    ? `toggleIncludeGroupChannel(${c.id})`
+                    : `toggleExcludeChannel(${c.id})`;
 
                 return `
-                    <div class="preview-item" style="${disabledStyle}">
-                        ${c.logo ? `<img src="${c.logo}" onerror="this.style.display='none'">` : '<div style="width:20px"></div>'}
+                    <div class="preview-item" data-channel-id="${c.id}" style="${disabledStyle}">
+                        ${previewLogoSlotHtml(c.logo)}
                         <div style="flex-grow: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                            <strong>${c.name}</strong>${isExcluded ? ' <span style="color: #ef4444; font-size: 0.8em;">[已排除]</span>' : ''}<br>
+                            <strong>${c.name}</strong>${statusTag}<br>
                             <small style="opacity: 0.8; font-size: 0.85em; color: #a5b4fc;">来源: ${c.source}</small>
                         </div>
                         <small style="opacity: 0.4; margin-left: 5px;">${c.group || '默认'}</small>
-                        <button onclick="event.stopPropagation(); toggleExcludeChannel(${c.id})" 
+                        <button onclick="event.stopPropagation(); ${toggleFn}" 
                                 style="${btnStyle} border: none; border-radius: 4px; padding: 2px 8px; font-size: 0.75em; cursor: pointer; margin-left: 8px; white-space: nowrap;">
                             ${btnText}
                         </button>
@@ -2519,10 +3498,16 @@ function removeTag(val) {
                 `;
             }).join('') : '<div style="opacity: 0.5; padding: 10px;">该标签下没有匹配的频道</div>';
 
-            // 统计启用和排除数量
-            const excludedCount = channels ? channels.filter(c => excludedChannelIds.has(c.id)).length : 0;
-            const includedCount = channels ? channels.length - excludedCount : 0;
-            const statsHtml = `<span style="font-size: 0.8em; opacity: 0.5; margin-left: 5px;">入选: ${includedCount} | 排除: <span style="color: #ef4444;">${excludedCount}</span></span>`;
+            let includedCount = 0;
+            let excludedCount = 0;
+            if (channels) {
+                channels.forEach(c => {
+                    const inc = groupMode ? includedGroupChannelIds.has(c.id) : !excludedChannelIds.has(c.id);
+                    if (inc) includedCount++; else excludedCount++;
+                });
+            }
+            const statsLabel = groupMode ? '选用' : '入选';
+            const statsHtml = `<span class="preview-group-stats" style="font-size: 0.8em; opacity: 0.5; margin-left: 5px;">${statsLabel}: ${includedCount} | 未选: <span style="color: #ef4444;">${excludedCount}</span></span>`;
 
             const html = `
                 <div id="preview-group-${key}" style="margin-top: 5px; border-left: 3px solid var(--primary); padding-left: 8px; margin-bottom: 5px; background: var(--input-bg); display: flex; align-items: center; justify-content: space-between; padding-right: 10px;">
@@ -2537,17 +3522,82 @@ function removeTag(val) {
                 ${channelsHtml}
             `;
 
+            const channelIdList = (channels || []).map(c => c.id).filter(id => id != null);
+            previewWin.dataset.previewGroupMode = groupMode ? '1' : '0';
+            previewWin.dataset.previewChannelIds = JSON.stringify(channelIdList);
+
             previewWin.innerHTML = `
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 5px; background: var(--preview-bg); color: var(--text);">
-                    <span style="opacity: 0.7; font-size: 0.8em;">匹配与分组设置:</span>
-                    <span onclick="document.getElementById('preview_window').style.display='none'" 
-                          style="cursor:pointer; font-size: 1.2em; line-height: 0.5; opacity: 0.8;">&times;</span>
+                <div class="preview-float__header">
+                    <span class="preview-float__title">匹配与分组设置</span>
+                    <div class="preview-float__bulk" role="group" aria-label="批量操作">
+                        <button type="button" class="preview-float__bulk-btn" onclick="previewBulkSelectAll(this)">全选</button>
+                        <button type="button" class="preview-float__bulk-btn preview-float__bulk-btn--secondary" onclick="previewBulkInvert(this)">反选</button>
+                    </div>
+                    <button type="button" class="preview-float__close" aria-label="关闭预览"
+                        onclick="this.closest('.preview-float').style.display='none'">&times;</button>
                 </div>
-                ${html}`;
-            previewWin.style.display = 'block';
+                <div class="preview-float__body">${html}</div>`;
+            previewWin.style.display = 'flex';
         }
 
         // 切换频道在当前聚合表中的排除状态（本地操作，保存时一起提交）
+
+        function _previewContextFromEl(btn) {
+            const root = btn.closest('.preview-float');
+            if (!root) return null;
+            let ids = [];
+            try {
+                ids = JSON.parse(root.dataset.previewChannelIds || '[]');
+            } catch (e) {
+                ids = [];
+            }
+            const groupMode = root.dataset.previewGroupMode === '1';
+            return { root, ids, groupMode };
+        }
+
+        function previewBulkSelectAll(btn) {
+            const ctx = _previewContextFromEl(btn);
+            if (!ctx || !ctx.ids.length) return;
+            if (ctx.groupMode) {
+                ctx.ids.forEach(id => includedGroupChannelIds.add(id));
+                showToast('已全选选用', 'success');
+            } else {
+                ctx.ids.forEach(id => excludedChannelIds.delete(id));
+                showToast('已全选入选', 'success');
+            }
+            patchAllPreviewChannelRowsInView(ctx.root);
+        }
+
+        function previewBulkInvert(btn) {
+            const ctx = _previewContextFromEl(btn);
+            if (!ctx || !ctx.ids.length) return;
+            if (ctx.groupMode) {
+                ctx.ids.forEach(id => {
+                    if (includedGroupChannelIds.has(id)) includedGroupChannelIds.delete(id);
+                    else includedGroupChannelIds.add(id);
+                });
+                showToast('已反选选用状态', 'info');
+            } else {
+                ctx.ids.forEach(id => {
+                    if (excludedChannelIds.has(id)) excludedChannelIds.delete(id);
+                    else excludedChannelIds.add(id);
+                });
+                showToast('已反选入选状态', 'info');
+            }
+            patchAllPreviewChannelRowsInView(ctx.root);
+        }
+
+        function toggleIncludeGroupChannel(channelId) {
+            if (includedGroupChannelIds.has(channelId)) {
+                includedGroupChannelIds.delete(channelId);
+                showToast('已取消选用', 'info');
+            } else {
+                includedGroupChannelIds.add(channelId);
+                showToast('频道已选用', 'success');
+            }
+            patchPreviewChannelRow(channelId);
+        }
+
         function toggleExcludeChannel(channelId) {
             console.log('[排除调试] 当前排除列表:', Array.from(excludedChannelIds));
             console.log('[排除调试] 点击的频道ID:', channelId);
@@ -2561,9 +3611,7 @@ function removeTag(val) {
             }
 
             console.log('[排除调试] 更新后排除列表:', Array.from(excludedChannelIds));
-            // 重新渲染当前预览
-            renderSelectedPreview();
-            refreshGlobalStats();
+            patchPreviewChannelRow(channelId);
         }
 
         // 弹窗系统
@@ -2595,17 +3643,17 @@ function removeTag(val) {
         // --- 结束 ---
 
         async function updateRealtimePreview() {
-            const previewWin = document.getElementById('preview_window');
             const selectedSubs = Array.from(document.querySelectorAll('input[name="selected_subs"]:checked')).map(cb => parseInt(cb.value));
 
-            if (selectedSubs.length === 0 && keywords.length === 0) {
-                previewWin.style.display = 'none';
+            const mergedKeywords = getMergedFilterKeywords();
+            if (selectedSubs.length === 0 && mergedKeywords.length === 0) {
+                hideAllPreviewWindows();
                 return;
             }
 
             const data = {
                 subscription_ids: selectedSubs,
-                keywords: keywords,
+                keywords: mergedKeywords,
                 filter_regex: document.getElementById('out_regex').value || ".*"
             };
 
@@ -2618,25 +3666,39 @@ function removeTag(val) {
                 const groupedResults = await res.json();
                 lastPreviewData = groupedResults;
 
-                if (keywords.length > 0) {
-                    // 校验当前标签是否还有效
-                    if (!activeKeyword || !keywords.some(k => k.value === activeKeyword)) {
-                        activeKeyword = keywords[keywords.length - 1].value;
+                const merged = getMergedFilterKeywords();
+                if (merged.length > 0) {
+                    const nameOk = activeKeyword && keywords.some(k => k.value === activeKeyword);
+                    const groupOk = activeGroupKeyword && groupKeywords.some(k => k.value === activeGroupKeyword);
+                    if (!nameOk && !groupOk) {
+                        const last = merged[merged.length - 1];
+                        if ((last.match_by || 'name') === 'source_group') {
+                            activeGroupKeyword = last.value;
+                            activeKeyword = null;
+                        } else {
+                            activeKeyword = last.value;
+                            activeGroupKeyword = null;
+                        }
                     }
                 } else {
                     activeKeyword = null;
+                    activeGroupKeyword = null;
                 }
 
                 renderTags();
+                renderGroupTags(false);
 
                 // 全局统计计算
                 refreshGlobalStats();
 
+                if (document.getElementById('edit_output_id').value && groupKeywords.length) {
+                    // 编辑态首次预览后保持已保存的选用关系
+                }
                 renderSelectedPreview();
 
             } catch (err) {
                 console.error('预览加载失败:', err);
-                previewWin.style.display = 'none';
+                hideAllPreviewWindows();
             }
         }
 
@@ -2852,21 +3914,29 @@ function removeTag(val) {
             document.getElementById('out_auto_visual').checked = out.auto_visual_check || false;
 
             // 还原关键字
-            keywords = [];
             let parsedKeys = [];
             try {
                 parsedKeys = JSON.parse(out.keywords || "[]");
             } catch (e) { parsedKeys = []; }
 
+            keywords = [];
+            groupKeywords = [];
             parsedKeys.forEach(k => {
                 if (typeof k === 'string') {
-                    keywords.push({ value: k, group: '' });
+                    keywords.push({ value: k, group: '', match_by: 'name' });
                 } else if (typeof k === 'object') {
-                    keywords.push(k);
+                    const item = { ...k };
+                    if (!item.match_by) item.match_by = 'name';
+                    if (item.match_by === 'source_group') {
+                        groupKeywords.push({ value: item.value, group: item.group || '', match_by: 'source_group' });
+                    } else {
+                        keywords.push(item);
+                    }
                 }
             });
 
             renderTags();
+            renderGroupTags(false);
             activeKeyword = null; // 修改时不自动选中标签
 
             // 还原选中的订阅
@@ -2877,10 +3947,17 @@ function removeTag(val) {
 
             // 还原排除列表
             excludedChannelIds = new Set();
+            let savedExcludedArr = [];
             try {
-                const excludedIds = JSON.parse(out.excluded_channel_ids || "[]");
-                excludedIds.forEach(id => excludedChannelIds.add(id));
-            } catch (e) { excludedChannelIds = new Set(); }
+                savedExcludedArr = JSON.parse(out.excluded_channel_ids || "[]");
+                excludedChannelIds = new Set();
+                includedGroupChannelIds = new Set();
+            } catch (e) {
+                savedExcludedArr = [];
+                excludedChannelIds = new Set();
+                includedGroupChannelIds = new Set();
+            }
+            window._pendingSyncGroupIncludedFrom = savedExcludedArr;
 
             // 换 UI
             document.getElementById('out_btn').innerText = '保存修改';
@@ -2906,15 +3983,19 @@ function removeTag(val) {
             document.getElementById('out_auto_visual').checked = false;
 
             keywords = [];
+            groupKeywords = [];
             renderTags();
+            renderGroupTags(false);
             activeKeyword = null;
-            excludedChannelIds = new Set(); // 清空排除列表
+            activeGroupKeyword = null;
+            excludedChannelIds = new Set();
+            includedGroupChannelIds = new Set();
 
             document.querySelectorAll('input[name="selected_subs"]').forEach(cb => cb.checked = false);
 
             document.getElementById('out_btn').innerText = '生成专属 M3U 聚合 URL';
             document.getElementById('out_cancel_btn').style.display = 'none';
-            document.getElementById('preview_window').style.display = 'none';
+            hideAllPreviewWindows();
         }
 
         async function saveOutput() {
@@ -2935,9 +4016,9 @@ function removeTag(val) {
                 name: name,
                 slug: slug,
                 filter_regex: document.getElementById('out_regex').value,
-                keywords: JSON.stringify(keywords), // Assuming 'keywords' is the global variable for tags
+                keywords: JSON.stringify(getMergedFilterKeywords()),
                 subscription_ids: JSON.stringify(selectedSubs),
-                excluded_channel_ids: JSON.stringify(Array.from(excludedChannelIds)), // 聚合表级别排除列表
+                excluded_channel_ids: JSON.stringify(computeSaveExcludedIds()), // 名称排除 + 分组未选用
                 epg_url: document.getElementById('out_epg').value,
                 include_source_suffix: document.getElementById('out_include_suffix').checked,
                 is_enabled: document.getElementById('out_is_enabled').checked,

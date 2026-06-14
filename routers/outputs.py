@@ -14,6 +14,48 @@ from routers.subscriptions import process_subscription_refresh
 
 router = APIRouter(tags=["outputs"])
 
+
+def _normalize_keyword_rules(raw_keywords: list) -> list:
+    """统一关键字规则结构，缺省按频道名匹配"""
+    keywords = []
+    for k in raw_keywords or []:
+        if isinstance(k, str):
+            keywords.append({"value": k, "group": "", "match_by": "name"})
+        elif isinstance(k, dict):
+            item = dict(k)
+            if not item.get("match_by"):
+                item["match_by"] = "name"
+            keywords.append(item)
+    return keywords
+
+
+@router.get("/outputs/source-groups")
+def list_source_groups(subscription_ids: str = "", session: Session = Depends(get_session)):
+    """列出已选订阅源内的 group-title 及频道数量"""
+    sub_ids = []
+    if subscription_ids.strip():
+        for part in subscription_ids.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                sub_ids.append(int(part))
+            except ValueError:
+                continue
+    enabled_subs = session.exec(select(Subscription.id).where(Subscription.is_enabled == True)).all()
+    active_sub_ids = [sid for sid in sub_ids if sid in enabled_subs] if sub_ids else list(enabled_subs)
+    if not active_sub_ids:
+        return {"groups": []}
+    channels = session.exec(
+        select(Channel).where(Channel.subscription_id.in_(active_sub_ids))
+    ).all()
+    counts: Dict[str, int] = {}
+    for ch in channels:
+        label = (ch.group or "").strip() or "Default"
+        counts[label] = counts.get(label, 0) + 1
+    groups = [{"name": name, "count": count} for name, count in sorted(counts.items(), key=lambda x: x[0])]
+    return {"groups": groups}
+
 @router.post("/outputs/", response_model=OutputSource)
 async def create_output(out: OutputSource, session: Session = Depends(get_session)):
     """新建聚合源"""
@@ -124,12 +166,7 @@ def preview_output(data: dict, session: Session = Depends(get_session)):
         excluded_set = set()
     
     # 整理关键字列表
-    keywords = []
-    for k in raw_keywords:
-        if isinstance(k, str):
-            keywords.append({"value": k, "group": ""})
-        elif isinstance(k, dict):
-            keywords.append(k)
+    keywords = _normalize_keyword_rules(raw_keywords)
 
     # 只要启用了的预览
     enabled_subs = session.exec(select(Subscription.id).where(Subscription.is_enabled == True)).all()
@@ -175,7 +212,7 @@ def preview_output(data: dict, session: Session = Depends(get_session)):
             # 关键字筛选逻辑
             matches = M3UGenerator.filter_channels(channels, None, [k_obj])
             
-            display_key = f"{k_val} → {k_group}" if k_group else k_val
+            display_key = M3UGenerator.rule_display_key(k_obj)
             results[display_key] = [
                 {**c.model_dump(), "source": sub_map.get(c.subscription_id, "Unknown")} 
                 for c in matches 
@@ -431,12 +468,7 @@ async def get_m3u_output(slug: str, session: Session = Depends(get_session)):
 
     try:
         raw_keywords = json.loads(out.keywords)
-        keywords = []
-        for k in raw_keywords:
-            if isinstance(k, str):
-                keywords.append({"value": k, "group": ""})
-            elif isinstance(k, dict):
-                keywords.append(k)
+        keywords = _normalize_keyword_rules(raw_keywords)
     except:
         keywords = []
     

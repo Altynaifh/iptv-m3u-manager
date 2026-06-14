@@ -1,0 +1,30 @@
+feature: 2026-06-14-group-source-filter
+design: group-source-filter-design.md
+status: in_progress
+steps:
+  - id: noun-filter
+    title: 扩展 filter_channels 支持 match_by source_group
+    paradigm: backend
+    status: completed
+  - id: api-source-groups
+    title: 新增 GET /outputs/source-groups 返回可选来源分组
+    paradigm: backend
+    status: completed
+  - id: ui-dual-tags
+    title: 前端双区标签与 keywords 合并读写
+    paradigm: frontend
+    status: completed
+  - id: wire-preview-m3u
+    title: 确认 preview 与 m3u 及自动检测共用过滤逻辑
+    paradigm: integration
+    status: completed
+checks:
+  - id: accept-source-group-only
+    text: 仅来源分组规则时预览与 M3U 结果正确
+    status: completed
+  - id: accept-backward-compat
+    text: 无 match_by 的旧规则仍按名称匹配
+    status: completed
+  - id: accept-output-group-override
+    text: 来源分组规则可覆盖输出 group-title
+    status: completed
