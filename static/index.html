@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>IPTV M3U Manager</title>
-    <link rel="stylesheet" href="/static/index.css">
+    <link rel="stylesheet" href="/static/index.css?v=20260614aipop2">
     <style>
         /* 弹窗通知样式 */
         #toast-container {
@@ -141,6 +141,43 @@
         <section id="outputs">
             <div class="glass-card">
                 <h2>🛠️ 创建聚合列表</h2>
+            <div id="llm_panel" class="glass-card" style="margin-bottom: 16px; padding: 14px; border: 1px solid rgba(14,165,233,0.35);">
+                <h3 style="margin: 0 0 8px 0; font-size: 1.05em;">🤖 AI 能力配置</h3>
+                <p style="margin:0 0 10px 0;font-size:0.82em;opacity:0.8;">勾选后展开对应配置；预览节目表内可进行 Ping / 截图 / AI 视觉 / AI 排序</p>
+                <div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:12px;">
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9em;">
+                        <input type="checkbox" id="out_enable_ai_vision" onchange="toggleLlmConfigPanels()"> 启用 AI 视觉检测
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:0.9em;">
+                        <input type="checkbox" id="out_enable_ai_organize" onchange="toggleLlmConfigPanels()"> 启用 AI 整理排序
+                    </label>
+                </div>
+                <div id="llm_vision_config_block" style="display:none;margin-bottom:12px;">
+                    <label style="font-size:0.85em;opacity:0.9;">视觉 LLM（四宫格判台）</label>
+                    <input id="llm_vision_base" placeholder="Base URL" style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);">
+                    <div class="llm-key-row">
+                        <input id="llm_vision_key" placeholder="API Key" type="password" autocomplete="off" style="flex:1;min-width:0;margin:0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);">
+                        <button type="button" class="btn btn-sm llm-key-toggle" data-target="llm_vision_key" onclick="toggleLlmKeyVisibility(this)" title="显示/隐藏 API Key">显示</button>
+                    </div>
+                    <input id="llm_vision_model" placeholder="模型 ID" style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);">
+                </div>
+                <div id="llm_text_config_block" style="display:none;margin-bottom:12px;">
+                    <label style="font-size:0.85em;opacity:0.9;">文本 LLM（AI 排序编排）</label>
+                    <input id="llm_text_base" placeholder="Base URL" style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);">
+                    <div class="llm-key-row" style="margin:6px 0;">
+                        <input id="llm_text_key" placeholder="API Key" type="password" autocomplete="off" style="flex:1;min-width:0;margin:0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);">
+                        <button type="button" class="btn btn-sm llm-key-toggle" data-target="llm_text_key" onclick="toggleLlmKeyVisibility(this)" title="显示/隐藏 API Key">显示</button>
+                    </div>
+                    <input id="llm_text_model" placeholder="模型 ID" style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);">
+                </div>
+                <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:center;">
+                    <button type="button" class="btn btn-sm" onclick="saveLlmSettings()">保存 LLM 配置</button>
+                    <button type="button" class="btn btn-sm btn-secondary" onclick="restoreRulesLayoutMode()">恢复规则模式</button>
+                    <span id="layout_mode_badge" style="font-size:0.82em;opacity:0.75;"></span>
+                </div>
+                <p style="margin:10px 0 0;font-size:0.78em;opacity:0.65;">检测与排序请在「预览节目表」工具栏操作；自动任务见下方三个勾选。</p>
+            </div>
+
                 <div class="form-group">
                     <label
                         style="display: block; margin-bottom: 8px; opacity: 0.9; font-size: 0.95em; font-weight: 500;">名称与后缀</label>
@@ -214,12 +251,20 @@
                             <option value="10080">自动更新: 每 7 天</option>
                         </select>
                     </div>
-                    <div id="auto_visual_toggle_container"
-                        style="flex: 1.2; display: flex; align-items: center; gap: 6px; padding-left: 10px; border-left: 1px solid var(--glass-border);">
-                        <input type="checkbox" id="out_auto_visual"
-                            style="width: 18px; height: 18px; cursor: pointer; margin: 0;">
-                        <label for="out_auto_visual"
-                            style="margin: 0; opacity: 0.8; font-size: 0.85em; cursor: pointer; line-height: 1.2;">更新后自动执行深度检测并启用/禁用频道</label>
+                    <div id="auto_check_toggles"
+                        style="flex: 2; display: flex; flex-direction: column; gap: 6px; padding-left: 10px; border-left: 1px solid var(--glass-border); font-size: 0.82em;">
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;">
+                            <input type="checkbox" id="out_auto_screenshot" style="width:16px;height:16px;">
+                            更新节目源后自动截图检测
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;">
+                            <input type="checkbox" id="out_auto_ai_vision" style="width:16px;height:16px;">
+                            自动 AI 视觉检测
+                        </label>
+                        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;">
+                            <input type="checkbox" id="out_auto_ai_organize" style="width:16px;height:16px;">
+                            自动 AI 排序
+                        </label>
                     </div>
                 </div>
 
@@ -279,6 +324,10 @@
                     <span onclick="closePreview()"
                         style="cursor: pointer; font-size: 32px; line-height: 1; color: var(--text); opacity: 0.8;">&times;</span>
                 </div>
+                <div id="preview_group_mode_tabs" class="preview-group-mode-tabs" role="tablist" aria-label="分组展示模式">
+                    <button type="button" id="preview_group_tab_manual" class="preview-group-mode-tab is-active" role="tab" aria-selected="true" onclick="setPreviewGroupDisplayMode('manual')">手动分组</button>
+                    <button type="button" id="preview_group_tab_ai" class="preview-group-mode-tab" role="tab" aria-selected="false" onclick="setPreviewGroupDisplayMode('ai')">AI分组</button>
+                </div>
                 <!-- 工具栏 -->
                 <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                     <div style="display: flex; gap: 5px; flex-grow: 1;">
@@ -298,9 +347,13 @@
                         </label>
                     </div>
                     <button id="check_btn" class="btn btn-sm toolbar-btn" onclick="checkPageConnectivity()"
-                        style="background: #8b5cf6; display: none;">🚀 快速检测</button>
+                        style="background: #8b5cf6; display: none;">Ping 检测</button>
                     <button id="check_visual_btn" class="btn btn-sm toolbar-btn" onclick="checkVisualConnectivity()"
-                        style="background: #ec4899; display: none;">📺 深度检测</button>
+                        style="background: #ec4899; display: none;">截图检测</button>
+                    <button id="check_ai_vision_btn" class="btn btn-sm toolbar-btn" onclick="checkPreviewAiVision()"
+                        style="background: #7c3aed; display: none;">AI 视觉检测</button>
+                    <button id="check_ai_organize_btn" class="btn btn-sm toolbar-btn" onclick="checkPreviewAiOrganize()"
+                        style="background: #0ea5e9; display: none;">AI 排序</button>
                     <button id="refresh_epg_btn" class="btn btn-sm toolbar-btn" onclick="refreshEPG()"
                         style="background: #10b981; display: none;">🔄 刷新节目表</button>
 
@@ -343,7 +396,7 @@
 
     <!-- 任务中心挂载点 -->
     <div class="navbar-tools">
-        <div class="task-toggle-btn" onclick="taskCenter.toggle()" title="查看任务中心">
+        <div class="task-toggle-btn" id="task_toggle_btn" title="点击打开任务中心；按住图标区域可拖动">
             <span id="task_icon">🔔</span>
             <div id="task_badge" class="task-count-badge" style="display: none;">0</div>
         </div>
@@ -458,6 +511,7 @@
                 this.isVisible = !this.isVisible;
                 if (this.isVisible) {
                     panel.classList.add('active');
+                    if (typeof hideAiVisualPopover === 'function') hideAiVisualPopover();
                     this.loadTasks(); // 展开时刷新
                 } else {
                     panel.classList.remove('active');
@@ -543,17 +597,24 @@
                     }
                 }
 
-                // 处理自动更新完成后的刷新逻辑 (如果是成功的关键任务)
                 if (task.status === 'success' && (task.id.startsWith('auto-') || task.id.startsWith('fetch-') || task.id.startsWith('check-'))) {
-                    // 延迟刷新主列表，确保后端数据库已持久化
                     setTimeout(() => {
                         fetchSubs(true);
                         fetchOutputs(true);
-                        // 如果当前开着预览框，尝试局部刷新预览数据
                         if (typeof searchChannels === 'function' && document.getElementById('channel_modal').style.display === 'flex') {
                             searchChannels();
                         }
                     }, 1000);
+                }
+
+                if (isStatusChange && task.name && task.name.includes('批量深度检测')) {
+                    if (task.status === 'success' || task.status === 'failure' || task.status === 'canceled') {
+                        window._activeScreenshotTaskId = null;
+                    }
+                }
+
+                if (isStatusChange) {
+                    refreshAfterAggregateTask(task);
                 }
             }
 
@@ -660,44 +721,316 @@
         }
 
         const taskCenter = new GlobalTaskCenter();
+        const FLOATING_UI_POS_KEY = 'iptv_floating_ui_positions_v1';
+
         document.addEventListener('DOMContentLoaded', () => {
             taskCenter.init();
-            makeDraggable(document.getElementById('console_panel'), document.querySelector('.console-header'));
+            const dragMargin = 10;
+            const consolePanel = document.getElementById('console_panel');
+            const taskPanel = document.getElementById('task_panel');
+            const navTools = document.querySelector('.navbar-tools');
+            const taskToggle = document.getElementById('task_toggle_btn');
+
+            makeDraggable(
+                consolePanel,
+                document.querySelector('.console-header'),
+                { margin: dragMargin, persistKey: 'console' }
+            );
+            window.syncTaskPanelToNavbarTools = function syncTaskPanelToNavbarTools() {
+                if (!navTools || !taskPanel) return;
+                const left = parseFloat(navTools.style.left);
+                const top = parseFloat(navTools.style.top);
+                if (Number.isNaN(left) || Number.isNaN(top)) return;
+                const nw = navTools.offsetWidth || 44;
+                const nh = navTools.offsetHeight || 44;
+                const pw = taskPanel.offsetWidth || 380;
+                const gap = 10;
+                taskPanel.style.position = 'fixed';
+                taskPanel.style.right = 'auto';
+                taskPanel.style.bottom = 'auto';
+                taskPanel.style.margin = '0';
+                taskPanel.style.left = (left + nw - pw) + 'px';
+                taskPanel.style.top = (top + nh + gap) + 'px';
+                clampFloatingPanelToViewport(taskPanel, dragMargin);
+            };
+
+            window.syncNavbarToolsToTaskPanel = function syncNavbarToolsToTaskPanel() {
+                if (!navTools || !taskPanel) return;
+                const pl = parseFloat(taskPanel.style.left);
+                const pt = parseFloat(taskPanel.style.top);
+                if (Number.isNaN(pl) || Number.isNaN(pt)) return;
+                const pw = taskPanel.offsetWidth || 380;
+                const nw = navTools.offsetWidth || 44;
+                const nh = navTools.offsetHeight || 44;
+                const gap = 10;
+                navTools.style.position = 'fixed';
+                navTools.style.right = 'auto';
+                navTools.style.bottom = 'auto';
+                navTools.style.margin = '0';
+                navTools.style.left = (pl + pw - nw) + 'px';
+                navTools.style.top = (pt - gap - nh) + 'px';
+                clampFloatingPanelToViewport(navTools, dragMargin);
+                saveFloatingUIPosition('task_icon', navTools);
+            };
+
+            if (navTools && taskToggle) {
+                let taskIconDragMoved = false;
+                makeDraggable(navTools, navTools, {
+                    margin: dragMargin,
+                    persistKey: 'task_icon',
+                    dragHandleSelector: '#task_toggle_btn',
+                    onPositionChange: () => {
+                        if (navTools.__floatingDragMoved) syncTaskPanelToNavbarTools();
+                    },
+                    onDragFinished: (moved) => {
+                        taskIconDragMoved = moved;
+                        navTools.__floatingDragMoved = false;
+                        if (moved) syncTaskPanelToNavbarTools();
+                    },
+                    onTap: () => taskCenter.toggle(),
+                });
+                makeDraggable(
+                    taskPanel,
+                    document.querySelector('.task-panel-header'),
+                    {
+                        margin: dragMargin,
+                        onPositionChange: () => {
+                            if (taskPanel.__floatingDragMoved) syncNavbarToolsToTaskPanel();
+                        },
+                        onDragFinished: (moved) => {
+                            taskPanel.__floatingDragMoved = false;
+                            if (moved) syncNavbarToolsToTaskPanel();
+                        },
+                    }
+                );
+            }
+
+            setTimeout(() => restoreAllFloatingUIPositions(dragMargin), 0);
+
+            window.addEventListener('resize', () => {
+                clampFloatingPanelToViewport(consolePanel, dragMargin);
+                clampFloatingPanelToViewport(taskPanel, dragMargin);
+                clampFloatingPanelToViewport(navTools, dragMargin);
+            });
         });
 
-        function makeDraggable(element, handle) {
+        function loadFloatingUIPositions() {
+            try {
+                const raw = localStorage.getItem(FLOATING_UI_POS_KEY);
+                if (!raw) return {};
+                const data = JSON.parse(raw);
+                return data && typeof data === 'object' ? data : {};
+            } catch (_) {
+                return {};
+            }
+        }
+
+        function saveFloatingUIPosition(persistKey, element) {
+            if (!persistKey || !element) return;
+            const left = parseFloat(element.style.left);
+            const top = parseFloat(element.style.top);
+            if (Number.isNaN(left) || Number.isNaN(top)) return;
+            const all = loadFloatingUIPositions();
+            all[persistKey] = { left, top };
+            try {
+                localStorage.setItem(FLOATING_UI_POS_KEY, JSON.stringify(all));
+            } catch (_) { /* 存储满或隐私模式 */ }
+        }
+
+        function applySavedFloatingPosition(element, persistKey, margin) {
+            if (!element || !persistKey) return;
+            const all = loadFloatingUIPositions();
+            const pos = all[persistKey];
+            if (!pos || pos.left == null || pos.top == null) return;
+            const left = Number(pos.left);
+            const top = Number(pos.top);
+            if (!Number.isFinite(left) || !Number.isFinite(top)) return;
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            if (left < -vw || left > vw * 2 || top < -vh || top > vh * 2) return;
+            element.style.position = 'fixed';
+            element.style.left = left + 'px';
+            element.style.top = top + 'px';
+            element.style.right = 'auto';
+            element.style.bottom = 'auto';
+            element.style.margin = '0';
+            clampFloatingPanelToViewport(element, margin);
+        }
+
+        function restoreAllFloatingUIPositions(margin) {
+            applySavedFloatingPosition(document.getElementById('console_panel'), 'console', margin);
+            applySavedFloatingPosition(document.querySelector('.navbar-tools'), 'task_icon', margin);
+            if (typeof window.syncTaskPanelToNavbarTools === 'function') {
+                window.syncTaskPanelToNavbarTools();
+            } else {
+                const nav = document.querySelector('.navbar-tools');
+                const panel = document.getElementById('task_panel');
+                if (nav && panel && nav.style.position === 'fixed') {
+                    const left = parseFloat(nav.style.left);
+                    const top = parseFloat(nav.style.top);
+                    if (!Number.isNaN(left) && !Number.isNaN(top)) {
+                        const nw = nav.offsetWidth || 44;
+                        const nh = nav.offsetHeight || 44;
+                        const pw = panel.offsetWidth || 380;
+                        panel.style.position = 'fixed';
+                        panel.style.left = (left + nw - pw) + 'px';
+                        panel.style.top = (top + nh + 10) + 'px';
+                        panel.style.right = 'auto';
+                        panel.style.bottom = 'auto';
+                        clampFloatingPanelToViewport(panel, margin);
+                    }
+                }
+            }
+        }
+
+        /** 将已拖动的浮层限制在视口内，避免拖出屏幕后找不回 */
+        function clampFloatingPanelToViewport(element, margin) {
+            if (!element || element.style.position !== 'fixed') return;
+            const left = parseFloat(element.style.left);
+            const top = parseFloat(element.style.top);
+            if (Number.isNaN(left) || Number.isNaN(top)) return;
+            const w = element.offsetWidth;
+            const h = element.offsetHeight;
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            const m = margin ?? 10;
+            const clampedLeft = Math.min(Math.max(m, left), Math.max(m, vw - w - m));
+            const clampedTop = Math.min(Math.max(m, top), Math.max(m, vh - h - m));
+            element.style.left = clampedLeft + 'px';
+            element.style.top = clampedTop + 'px';
+        }
+
+        /**
+         * 支持鼠标与触摸；拖动时钳制在视口内。
+         * options.onTap：未发生明显位移时的点击回调（用于任务图标轻点打开面板）。
+         */
+        function makeDraggable(element, handle, options) {
             if (!element || !handle) return;
-            let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
-            handle.onmousedown = dragMouseDown;
+            const margin = (options && options.margin) != null ? options.margin : 10;
+            const dragHandleSelector = options && options.dragHandleSelector;
+            const onDragFinished = options && options.onDragFinished;
+            const onPositionChange = options && options.onPositionChange;
+            const DRAG_THRESHOLD = 12;
+            const onTap = options && options.onTap;
 
-            function dragMouseDown(e) {
-                e = e || window.event;
-                e.preventDefault();
-                pos3 = e.clientX;
-                pos4 = e.clientY;
-                document.onmouseup = closeDragElement;
-                document.onmousemove = elementDrag;
-                element.style.transition = 'none'; // 拖动时禁用动画
+            const dragSelectGuardClass = 'floating-ui-dragging';
+
+            function setDragSelectGuard(on) {
+                document.documentElement.classList.toggle(dragSelectGuardClass, !!on);
+                document.body.classList.toggle(dragSelectGuardClass, !!on);
             }
 
-            function elementDrag(e) {
-                e = e || window.event;
-                e.preventDefault();
-                pos1 = pos3 - e.clientX;
-                pos2 = pos4 - e.clientY;
-                pos3 = e.clientX;
-                pos4 = e.clientY;
-                element.style.top = (element.offsetTop - pos2) + "px";
-                element.style.left = (element.offsetLeft - pos1) + "px";
-                element.style.bottom = 'auto'; // 清除原有对齐
+            function canStartDrag(target) {
+                if (!target) return false;
+                if (dragHandleSelector) {
+                    const zone = element.querySelector(dragHandleSelector);
+                    if (!zone || !zone.contains(target)) return false;
+                } else if (!handle.contains(target)) {
+                    return false;
+                }
+                if (target.closest && target.closest('button, a, input, select, textarea')) return false;
+                return true;
+            }
+
+            function clampPos(left, top) {
+                const w = element.offsetWidth || element.getBoundingClientRect().width || 44;
+                const h = element.offsetHeight || element.getBoundingClientRect().height || 44;
+                const vw = window.innerWidth;
+                const vh = window.innerHeight;
+                const maxL = Math.max(margin, vw - w - margin);
+                const maxT = Math.max(margin, vh - h - margin);
+                return {
+                    left: Math.min(Math.max(margin, left), maxL),
+                    top: Math.min(Math.max(margin, top), maxT),
+                };
+            }
+
+            function ensureFixedFromLayout() {
+                const rect = element.getBoundingClientRect();
+                element.style.position = 'fixed';
+                element.style.margin = '0';
                 element.style.right = 'auto';
+                element.style.bottom = 'auto';
+                const p = clampPos(rect.left, rect.top);
+                element.style.left = p.left + 'px';
+                element.style.top = p.top + 'px';
+                return p;
             }
 
-            function closeDragElement() {
-                document.onmouseup = null;
-                document.onmousemove = null;
-                element.style.transition = 'all 0.3s cubic-bezier(0.19, 1, 0.22, 1)'; // 恢复动画
+            function cleanupSession() {
+                if (!session) return;
+                document.removeEventListener('mousemove', session.onMove);
+                document.removeEventListener('mouseup', session.onUp);
+                document.removeEventListener('touchmove', session.onMove, { capture: false });
+                document.removeEventListener('touchend', session.onUp);
+                document.removeEventListener('touchcancel', session.onUp);
+                document.removeEventListener('selectstart', session.onSelectStart);
+                document.removeEventListener('dragstart', session.onDragStart);
+                const moved = session.moved;
+                session = null;
+                if (!moved) element.__floatingDragMoved = false;
+                setDragSelectGuard(false);
+                element.style.transition = '';
+                if (!moved && onTap) onTap();
+                if (moved) {
+                    clampFloatingPanelToViewport(element, margin);
+                    if (options && options.persistKey) {
+                        saveFloatingUIPosition(options.persistKey, element);
+                    }
+                }
+                if (onDragFinished) onDragFinished(!!moved);
             }
+
+            function onMove(clientX, clientY) {
+                if (!session) return;
+                const dx = clientX - session.startX;
+                const dy = clientY - session.startY;
+                if (!session.moved && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
+                    session.moved = true;
+                    element.__floatingDragMoved = true;
+                    element.style.transition = 'none';
+                }
+                if (!session.moved) return;
+                const p = clampPos(session.startLeft + dx, session.startTop + dy);
+                element.style.left = p.left + 'px';
+                element.style.top = p.top + 'px';
+                if (onPositionChange) onPositionChange();
+            }
+
+            function onDown(e) {
+                const target = e.target;
+                if (!canStartDrag(target)) return;
+                if (e.type === 'mousedown' && e.button !== 0) return;
+                if (e.cancelable) e.preventDefault();
+                setDragSelectGuard(true);
+                const pos = ensureFixedFromLayout();
+                session = {
+                    startX: e.clientX != null ? e.clientX : (e.touches && e.touches[0] ? e.touches[0].clientX : 0),
+                    startY: e.clientY != null ? e.clientY : (e.touches && e.touches[0] ? e.touches[0].clientY : 0),
+                    startLeft: pos.left,
+                    startTop: pos.top,
+                    moved: false,
+                    onMove(ev) {
+                        const x = ev.clientX != null ? ev.clientX : (ev.touches && ev.touches[0] ? ev.touches[0].clientX : session.startX);
+                        const y = ev.clientY != null ? ev.clientY : (ev.touches && ev.touches[0] ? ev.touches[0].clientY : session.startY);
+                        onMove(x, y);
+                        if (session && ev.cancelable) ev.preventDefault();
+                    },
+                    onSelectStart(ev) { ev.preventDefault(); },
+                    onDragStart(ev) { ev.preventDefault(); },
+                    onUp() { cleanupSession(); },
+                };
+                document.addEventListener('mousemove', session.onMove);
+                document.addEventListener('mouseup', session.onUp);
+                document.addEventListener('touchmove', session.onMove, { passive: false });
+                document.addEventListener('touchend', session.onUp);
+                document.addEventListener('touchcancel', session.onUp);
+                document.addEventListener('selectstart', session.onSelectStart);
+                document.addEventListener('dragstart', session.onDragStart);
+            }
+
+            handle.addEventListener('mousedown', onDown);
+            handle.addEventListener('touchstart', onDown, { passive: false });
         }
 
         function toggleConsole() {
@@ -801,7 +1134,7 @@
         // 多选状态
         window.selectedChannelIds = new Set();
 
-        function prepareModal(titleText, showCheckBtn = false) {
+        function prepareModal(titleText, showCheckBtn = false, previewOutput = null) {
             const modal = document.getElementById('channel_modal');
             const title = document.getElementById('modal_title');
             const list = document.getElementById('channel_list');
@@ -811,6 +1144,8 @@
             // 切换检测按钮
             const checkBtn = document.getElementById('check_btn');
             const checkVisualBtn = document.getElementById('check_visual_btn');
+            const checkAiVisionBtn = document.getElementById('check_ai_vision_btn');
+            const checkAiOrganizeBtn = document.getElementById('check_ai_organize_btn');
             const checkOptions = document.getElementById('check_options_container');
             const refreshBtn = document.getElementById('refresh_epg_btn');
 
@@ -826,6 +1161,12 @@
             const displayStyle = showCheckBtn ? 'block' : 'none';
             if (checkBtn) checkBtn.style.display = displayStyle;
             if (checkVisualBtn) checkVisualBtn.style.display = displayStyle;
+            if (checkAiVisionBtn) {
+                checkAiVisionBtn.style.display = (showCheckBtn && previewOutput && previewOutput.enable_ai_vision) ? 'block' : 'none';
+            }
+            if (checkAiOrganizeBtn) {
+                checkAiOrganizeBtn.style.display = (showCheckBtn && previewOutput && previewOutput.enable_ai_organize) ? 'block' : 'none';
+            }
             if (checkOptions) checkOptions.style.display = showCheckBtn ? 'flex' : 'none';
             if (refreshBtn) refreshBtn.style.display = displayStyle;
 
@@ -845,6 +1186,16 @@
             const refreshEpgBtn = document.getElementById('refresh_epg_btn');
             if (refreshEpgBtn) {
                 refreshEpgBtn.style.display = (showCheckBtn && window.currentEPGUrl) ? 'block' : 'none';
+            }
+
+            const groupTabs = document.getElementById('preview_group_mode_tabs');
+            if (groupTabs) {
+                if (showCheckBtn) groupTabs.classList.add('is-visible');
+                else groupTabs.classList.remove('is-visible');
+            }
+            if (!showCheckBtn) {
+                window._previewGroupPayload = null;
+                window._previewGroupDisplayMode = 'manual';
             }
 
             modal.style.setProperty('display', 'flex', 'important');
@@ -876,7 +1227,8 @@
             const out = allOutputs.find(o => o.slug === slug);
             if (out) window.currentEPGUrl = out.epg_url;
 
-            prepareModal(`预览聚合: ${name}`, true); // 传 true 显示检测按钮
+            prepareModal(`预览聚合: ${name}`, true, out);
+            window.currentPreviewOutputId = out ? out.id : null;
 
             if (!out) {
                 document.getElementById('channel_list').innerHTML = '无法找到聚合配置，请刷新页面重试';
@@ -904,30 +1256,15 @@
                     excluded_channel_ids: excludedIds
                 };
 
-                const res = await fetch('/outputs/preview', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
+                syncLayoutGlobalsFromOutput(out);
 
+                const res = await fetch(`/outputs/${out.id}/export-preview`);
+                if (!res.ok) throw new Error('export-preview 请求失败');
                 const data = await res.json();
-
-                // 把结果铺平并去重（避免一个频道匹配多个关键字导致多次出现）
-                const seenIds = new Set();
-                const excludedSet = new Set(excludedIds.map(id => parseInt(id))); // 确保是数字集合
-                let flatChannels = [];
-                for (const [key, list] of Object.entries(data)) {
-                    list.forEach(c => {
-                        if (!seenIds.has(c.id) && !excludedSet.has(c.id)) {
-                            seenIds.add(c.id);
-                            flatChannels.push(c);
-                        }
-                    });
-                }
-
-                currentChannels = flatChannels;
-                filteredChannels = flatChannels;
-                renderBaseTable(document.getElementById('channel_list'), true);
+                window.lastRenderShowActions = true;
+                window._previewGroupPayload = data;
+                updatePreviewGroupModeTabs(data);
+                applyPreviewGroupDisplay();
             } catch (err) {
                 document.getElementById('channel_list').innerHTML = '预览加载失败: ' + err.message;
             }
@@ -952,8 +1289,76 @@
                 return;
             }
 
-            // 移动端聚合预览模式：使用新的卡片布局
             const isMobile = window.innerWidth <= 768;
+            const groupSections = (showActions && window._previewGroupPayload) ? getActivePreviewGroupSections() : [];
+            const useGroupedPreview = showActions && groupSections.length > 0;
+
+            if (useGroupedPreview) {
+                let globalIdx = 0;
+                if (isMobile) {
+                    list.innerHTML = groupSections.map((sec, si) => {
+                        const title = sec.title || '未命名';
+                        const chs = sec.channels || [];
+                        const cards = chs.map((c, idx) => {
+                            const epgId = `mobile_epg_grp_${globalIdx + idx}`;
+                            return buildMobileAggregateCardHtml(c, epgId);
+                        }).join('');
+                        globalIdx += chs.length;
+                        const secKey = previewGroupSectionKey(title, si);
+                        const collapsed = window._previewGroupCollapsed && window._previewGroupCollapsed.has(secKey);
+                        return `<section class="preview-group-section preview-group-section--mobile${collapsed ? ' is-collapsed' : ''}" data-group-title="${title.replace(/"/g, '&quot;')}">
+                            ${buildPreviewGroupHeaderHtml(title, chs.length, secKey)}
+                            <div class="preview-group-section__body"${collapsed ? ' hidden' : ''}>
+                            <div class="preview-group-section__cards">${cards || '<div class="preview-group-section__empty">该组暂无频道</div>'}</div>
+                            </div>
+                        </section>`;
+                    }).join('');
+                } else {
+                    list.innerHTML = groupSections.map((sec, si) => {
+                        const title = sec.title || '未命名';
+                        const chs = sec.channels || [];
+                        const rows = chs.map((c, idx) => buildPreviewTableRowHtml(c, si * 10000 + idx)).join('');
+                        const secKey = previewGroupSectionKey(title, si);
+                        const collapsed = window._previewGroupCollapsed && window._previewGroupCollapsed.has(secKey);
+                        return `<section class="preview-group-section${collapsed ? ' is-collapsed' : ''}" data-group-title="${title.replace(/"/g, '&quot;')}">
+                            ${buildPreviewGroupHeaderHtml(title, chs.length, secKey)}
+                            <div class="preview-group-section__body"${collapsed ? ' hidden' : ''}>
+                            <table class="channel-table-container" style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr style="text-align: left; border-bottom: 2px solid var(--primary);">
+                                        <th style="padding: 10px; width: 30px;"><input type="checkbox" onclick="toggleSelectAllInSection(this, ${si})"></th>
+                                        <th style="padding: 10px; width: 60px;">Logo</th>
+                                        <th style="padding: 10px;">名称</th>
+                                        <th style="padding: 10px;">tvg-id</th>
+                                        ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
+                                        <th style="padding: 10px;">分组</th>
+                                        <th style="padding: 10px;">来源</th>
+                                        <th style="padding: 10px; width: 100px;">可用性</th>
+                                        <th style="padding: 10px; width: 80px;">预览</th>
+                                        <th style="padding: 10px; width: 80px;">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${rows || '<tr><td colspan="10" style="padding:12px;opacity:0.6;">该组暂无频道</td></tr>'}</tbody>
+                            </table>
+                            </div>
+                        </section>`;
+                    }).join('');
+                }
+                renderOffset = filteredChannels.length;
+                updatePreviewStats();
+                if (window.currentEPGUrl) {
+                    let epgIdx = 0;
+                    groupSections.forEach(sec => {
+                        (sec.channels || []).forEach(c => {
+                            const cellId = isMobile ? `mobile_epg_grp_${epgIdx}` : `epg_grp_${epgIdx}`;
+                            enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, false);
+                            epgIdx++;
+                        });
+                    });
+                }
+                return;
+            }
+
             if (isMobile && showActions) {
                 list.innerHTML = `
                     <div id="channel_cards_container"></div>
@@ -994,6 +1399,372 @@
         }
 
 
+
+
+
+        function isPreviewAiGroupMode() {
+            return window._previewGroupDisplayMode === 'ai' && (window._previewGroupPayload?.layout_mode || 'rules') === 'explicit';
+        }
+
+        window._previewGroupCollapsed = window._previewGroupCollapsed || new Set();
+
+        function previewGroupSectionKey(title, sectionIndex) {
+            const mode = window._previewGroupDisplayMode || 'manual';
+            const t = String(title || '未命名');
+            return `${mode}::${sectionIndex}::${t}`;
+        }
+
+        function togglePreviewGroupCollapse(key) {
+            if (!window._previewGroupCollapsed) window._previewGroupCollapsed = new Set();
+            if (window._previewGroupCollapsed.has(key)) window._previewGroupCollapsed.delete(key);
+            else window._previewGroupCollapsed.add(key);
+            applyPreviewGroupDisplay();
+        }
+
+        function buildPreviewGroupHeaderHtml(title, count, sectionKey) {
+            const safe = String(title || '未命名').replace(/</g, '&lt;');
+            const aiOnTitle = isPreviewAiGroupMode()
+                ? ` <span class="preview-group-section__ai-mark">AI</span>`
+                : '';
+            const collapsed = window._previewGroupCollapsed && window._previewGroupCollapsed.has(sectionKey);
+            const keyEsc = String(sectionKey).replace(/'/g, "\'");
+            return `<button type="button" class="preview-group-section__title preview-group-section__title--toggle" onclick="togglePreviewGroupCollapse('${keyEsc}')" aria-expanded="${collapsed ? 'false' : 'true'}">
+                <span class="preview-group-section__chevron" aria-hidden="true">${collapsed ? '▶' : '▼'}</span>
+                <span class="preview-group-section__title-text" title="${safe}">${safe}${aiOnTitle}</span>
+                <span class="preview-group-section__meta">
+                    <span class="preview-group-section__count">${count} 个频道</span>
+                </span>
+            </button>`;
+        }
+
+
+
+        /** AI 视觉：有检测结果时在预览图右下角显示角标（绿=有效，红=无效） */
+        function isAiVisualStatusValid(st) {
+            const s = (st || '').toLowerCase();
+            return s === 'ok' || s === 'frozen';
+        }
+
+        function hasAiVisualResult(c) {
+            return !!(c && (c.ai_visual_date || (c.ai_visual_status && String(c.ai_visual_status).trim())));
+        }
+
+        window._aiVisualById = window._aiVisualById || {};
+
+        function registerAiVisualChannel(c) {
+            if (!c || c.id == null || !hasAiVisualResult(c)) return;
+            window._aiVisualById[c.id] = {
+                name: c.name || '',
+                status: c.ai_visual_status || '',
+                detail: c.ai_visual_detail || '',
+                date: c.ai_visual_date || '',
+            };
+        }
+
+        function aiVisualStatusLabel(st) {
+            const m = {
+                ok: '正常节目',
+                frozen: '画面静止',
+                promo_loop: '宣传语/扫码引流',
+                invalid: '无效画面',
+                no_image: '无截图',
+                error: '检测异常',
+            };
+            return m[(st || '').toLowerCase()] || (st || '未知');
+        }
+
+        function formatAiVisualDate(iso) {
+            if (!iso) return '';
+            let s = String(iso).replace(' ', 'T');
+            if (!s.endsWith('Z')) s += 'Z';
+            try {
+                return new Date(s).toLocaleString('zh-CN', { hour12: false });
+            } catch (_) {
+                return String(iso);
+            }
+        }
+
+
+        function ensureAiVisualPopoverBackdrop() {
+            let bd = document.getElementById('ai_visual_popover_backdrop');
+            if (bd) return bd;
+            bd = document.createElement('div');
+            bd.id = 'ai_visual_popover_backdrop';
+            bd.className = 'ai-visual-popover-backdrop';
+            bd.hidden = true;
+            bd.setAttribute('aria-hidden', 'true');
+            document.body.appendChild(bd);
+            const dismissFromBackdrop = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                hideAiVisualPopover();
+            };
+            bd.addEventListener('click', dismissFromBackdrop);
+            bd.addEventListener('touchend', dismissFromBackdrop, { passive: false });
+            return bd;
+        }
+
+        function isAiVisualPopoverScrollDismissTarget(node) {
+            if (!node || !node.closest) return false;
+            return !!(node.closest('#channel_list_container') || node.closest('.preview-float__body'));
+        }
+
+        function bindAiVisualPopoverScrollDismiss() {
+            if (window._aiVisualPopoverScrollDismissBound) return;
+            window._aiVisualPopoverScrollDismissBound = true;
+            const onScrollOrTouchMove = (e) => {
+                const pop = document.getElementById('ai_visual_popover');
+                if (!pop || pop.hidden) return;
+                if (!isAiVisualPopoverScrollDismissTarget(e.target)) return;
+                hideAiVisualPopover();
+            };
+            document.addEventListener('scroll', onScrollOrTouchMove, { capture: true, passive: true });
+            document.addEventListener('touchmove', onScrollOrTouchMove, { capture: true, passive: true });
+        }
+
+        function setAiVisualPopoverOpenUi(open) {
+            document.body.classList.toggle('ai-visual-popover-open', !!open);
+            const bd = ensureAiVisualPopoverBackdrop();
+            bd.hidden = !open;
+            bd.setAttribute('aria-hidden', open ? 'false' : 'true');
+        }
+
+        function ensureAiVisualPopoverEl() {
+            let el = document.getElementById('ai_visual_popover');
+            if (el) return el;
+            el = document.createElement('div');
+            el.id = 'ai_visual_popover';
+            el.className = 'ai-visual-popover';
+            el.setAttribute('role', 'tooltip');
+            el.hidden = true;
+            ensureAiVisualPopoverBackdrop();
+            bindAiVisualPopoverScrollDismiss();
+            document.body.appendChild(el);
+            el.addEventListener('mouseenter', () => { window._aiVisualPopoverHover = true; });
+            el.addEventListener('mouseleave', () => {
+                window._aiVisualPopoverHover = false;
+                scheduleHideAiVisualPopover();
+            });
+            document.addEventListener('click', (e) => {
+                if (!el.hidden && !e.target.closest('.preview-ai-badge--interactive') && !e.target.closest('#ai_visual_popover') && !e.target.closest('#ai_visual_popover_backdrop')) {
+                    hideAiVisualPopover();
+                }
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') hideAiVisualPopover();
+            });
+            return el;
+        }
+
+        let _aiVisualHideTimer = null;
+        function scheduleHideAiVisualPopover() {
+            clearTimeout(_aiVisualHideTimer);
+            _aiVisualHideTimer = setTimeout(() => {
+                if (!window._aiVisualPopoverHover && !window._aiVisualBadgeHover) {
+                    hideAiVisualPopover();
+                }
+            }, 220);
+        }
+
+        function hideAiVisualPopover() {
+            setAiVisualPopoverOpenUi(false);
+            const el = document.getElementById('ai_visual_popover');
+            if (el) el.hidden = true;
+            window._aiVisualPopoverPinned = false;
+        }
+
+        function renderAiVisualPopoverHtml(data) {
+            const valid = isAiVisualStatusValid(data.status);
+            const badgeCls = valid ? 'ai-visual-popover__status--ok' : 'ai-visual-popover__status--bad';
+            const esc = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const when = formatAiVisualDate(data.date);
+            return `
+                <div class="ai-visual-popover__title">AI 视觉检测</div>
+                <div class="ai-visual-popover__row"><span class="ai-visual-popover__label">频道</span><span>${esc(data.name)}</span></div>
+                <div class="ai-visual-popover__row"><span class="ai-visual-popover__label">结果</span><span class="ai-visual-popover__status ${badgeCls}">${esc(aiVisualStatusLabel(data.status))}</span></div>
+                ${data.detail ? `<div class="ai-visual-popover__detail">${esc(data.detail)}</div>` : ''}
+                ${when ? `<div class="ai-visual-popover__time">检测时间：${esc(when)}</div>` : ''}
+            `;
+        }
+
+        function positionAiVisualPopover(anchorEl) {
+            const el = ensureAiVisualPopoverEl();
+            setAiVisualPopoverOpenUi(true);
+            el.hidden = false;
+            const rect = anchorEl.getBoundingClientRect();
+            const margin = 8;
+            let top = rect.bottom + margin;
+            let left = rect.left;
+            const pw = el.offsetWidth || 280;
+            const ph = el.offsetHeight || 120;
+            if (left + pw > window.innerWidth - margin) {
+                left = Math.max(margin, window.innerWidth - pw - margin);
+            }
+            if (top + ph > window.innerHeight - margin) {
+                top = Math.max(margin, rect.top - ph - margin);
+            }
+            el.style.top = top + 'px';
+            el.style.left = left + 'px';
+        }
+
+        function showAiVisualPopover(anchorEl, channelId, pin) {
+            const data = (window._aiVisualById || {})[channelId];
+            if (!data) return;
+            const el = ensureAiVisualPopoverEl();
+            el.innerHTML = renderAiVisualPopoverHtml(data);
+            window._aiVisualPopoverPinned = !!pin;
+            positionAiVisualPopover(anchorEl);
+        }
+
+        function isCoarsePointer() {
+            return window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        }
+
+        function onAiVisualBadgeClick(ev, channelId) {
+            ev.stopPropagation();
+            const el = ev.currentTarget;
+            const pop = document.getElementById('ai_visual_popover');
+            if (pop && !pop.hidden && window._aiVisualPopoverChannelId === channelId && window._aiVisualPopoverPinned) {
+                hideAiVisualPopover();
+                return;
+            }
+            window._aiVisualPopoverChannelId = channelId;
+            showAiVisualPopover(el, channelId, true);
+        }
+
+        function onAiVisualBadgeHover(ev, channelId, entering) {
+            if (isCoarsePointer()) return;
+            const el = ev.currentTarget;
+            window._aiVisualBadgeHover = !!entering;
+            if (entering) {
+                clearTimeout(_aiVisualHideTimer);
+                window._aiVisualPopoverChannelId = channelId;
+                if (!window._aiVisualPopoverPinned) {
+                    showAiVisualPopover(el, channelId, false);
+                }
+            } else {
+                scheduleHideAiVisualPopover();
+            }
+        }
+
+        function aiVisualBadgeInnerHtml(c) {
+            if (!hasAiVisualResult(c)) return '';
+            registerAiVisualChannel(c);
+            const valid = isAiVisualStatusValid(c.ai_visual_status);
+            const cls = valid ? 'preview-ai-badge preview-ai-badge--ok' : 'preview-ai-badge preview-ai-badge--bad';
+            const id = c.id;
+            return `<span class="${cls} preview-ai-badge--interactive" data-channel-id="${id}" onclick="onAiVisualBadgeClick(event, ${id})" onmouseenter="onAiVisualBadgeHover(event, ${id}, true)" onmouseleave="onAiVisualBadgeHover(event, ${id}, false)">AI</span>`;
+        }
+
+        function wrapTablePreviewThumb(image, c) {
+            if (!image) return '';
+            const badge = aiVisualBadgeInnerHtml(c);
+            const safeImg = String(image).replace(/'/g, "\\'");
+            return `<span class="preview-thumb-wrap preview-thumb-wrap--table"><img src="${image}" style="height: 40px; cursor: zoom-in; display:block;" onclick="event.stopPropagation(); showLightbox('${safeImg}')" title="点击放大">${badge}</span>`;
+        }
+
+        function mobilePreviewBgInnerHtml(c, image) {
+            const badge = aiVisualBadgeInnerHtml(c);
+            const copyUrl = (c.url || '').replace(/'/g, "\\'");
+            if (!image) {
+                return '<span>📺</span>' + badge + `<button class="mobile-channel-card__copy-btn" onclick="event.stopPropagation(); copyChannelUrl('${copyUrl}')" title="复制播放链接">📋</button>`;
+            }
+            const safeImg = String(image).replace(/'/g, "\\'");
+            return `<img src="${image}" onclick="event.stopPropagation(); showLightbox('${safeImg}')" alt="预览">${badge}<button class="mobile-channel-card__copy-btn" onclick="event.stopPropagation(); copyChannelUrl('${copyUrl}')" title="复制播放链接">📋</button>`;
+        }
+
+
+        function mobileCardLogoHtml(logo) {
+            const src = (logo || '').trim();
+            if (!src) return '';
+            const safe = src.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+            return `<img class="mobile-channel-card__logo" src="${safe}" alt="" onerror="this.remove()">`;
+        }
+
+        function buildMobileAggregateCardHtml(c, epgCellId) {
+            const image = c.visualImage || c.check_image;
+            const isSelected = window.selectedChannelIds.has(c.id);
+            const isDisabled = c.is_enabled === false;
+            let statusText = '-';
+            if (c.status !== undefined) statusText = c.status ? `✅ ${c.latency}ms` : `❌ 失败`;
+            else if (c.checking) statusText = '⏳ 检测中...';
+            let checkTimeHtml = '';
+            if (c.check_date) {
+                let dateStr = c.check_date.replace(' ', 'T');
+                if (!dateStr.endsWith('Z')) dateStr += 'Z';
+                const dateObj = new Date(dateStr);
+                const now = new Date();
+                const mins = Math.floor((now - dateObj) / 60000);
+                let timeStr = mins < 60 ? `${mins}分前` : (mins < 1440 ? `${Math.floor(mins / 60)}时前` : `${Math.floor(mins / 1440)}天前`);
+                const hhmm = dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                const isAuto = c.check_source === 'auto';
+                const autoTag = isAuto ? '<span class="mobile-channel-card__auto-tag">自动</span>' : '';
+                checkTimeHtml = `<div class="mobile-channel-card__check-time">上次检测: ${timeStr} (${hhmm}) ${autoTag}</div>`;
+            }
+            return `
+                    <div class="mobile-channel-card ${isDisabled ? 'disabled' : ''} ${isSelected ? 'selected' : ''}"
+                         data-id="${c.id}" onclick="handleMobileCardClick(event, ${c.id})">
+                        ${mobileCardLogoHtml(c.logo)}
+                        <div class="mobile-channel-card__bg ${!image ? 'mobile-channel-card__bg--empty' : ''}">
+                            ${mobilePreviewBgInnerHtml(c, image)}
+                        </div>
+                        <div class="mobile-channel-card__info">
+                            <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">名称:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap"><strong>${c.name}</strong></span></div>
+                            <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">TVG:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap">${c.tvg_id || '-'}</span></div>
+                            ${window.currentEPGUrl ? `<div class="mobile-channel-card__row"><span class="mobile-channel-card__label">节目:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap" id="${epgCellId}"><span class="mobile-channel-card__epg-tag mobile-channel-card__epg-tag--empty">加载中...</span></span></div>` : ''}
+                            <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">分组:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap"><strong>${c.group || '默认'}</strong></span></div>
+                            <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">来源:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap">${c.source || '未知'}</span></div>
+                            <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">状态:</span><span class="mobile-channel-card__value">${statusText}</span></div>
+                            ${checkTimeHtml}
+                            <div class="mobile-channel-card__actions">
+                                <label class="mobile-channel-card__checkbox"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${isSelected ? 'checked' : ''} onchange="event.stopPropagation(); toggleChannelSelection(${c.id}, this.checked); updateMobileCardSelection(${c.id}, this.checked);"></label>
+                                <button class="mobile-channel-card__toggle-btn ${isDisabled ? 'mobile-channel-card__toggle-btn--enable' : 'mobile-channel-card__toggle-btn--disable'}" onclick="event.stopPropagation(); toggleChannel(${c.id})">${isDisabled ? '启用' : '禁用'}</button>
+                            </div>
+                        </div>
+                    </div>`;
+        }
+
+        function buildPreviewTableRowHtml(c, rowIndex) {
+            let statusHtml = '-';
+            if (c.status !== undefined) {
+                statusHtml = c.status ? `<span style="color: #10b981;">✅ ${c.latency}ms</span>` : `<span style="color: #ef4444;">❌ 失败</span>`;
+            } else if (c.checking) {
+                statusHtml = '<span style="opacity: 0.6;">⏳ 检测中...</span>';
+            }
+            const image = c.visualImage || c.check_image;
+            let visualHtml = '<td style="padding: 10px; font-size: 0.8em; opacity: 0.5;">-</td>';
+            if (image) {
+                visualHtml = `<td style="padding: 10px;">${wrapTablePreviewThumb(image, c)}</td>`;
+            }
+            const epgCellId = `epg_grp_${rowIndex}`;
+            return `
+                    <tr onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''}">
+                        <td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>
+                        <td style="padding: 10px;"><span class="channel-logo-slot channel-logo-slot--table">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span></td>
+                        <td style="padding: 10px;">${c.name}</td>
+                        <td style="padding: 10px;"><span style="font-size: 0.8em; opacity: 0.6;">${c.tvg_id || '-'}</span></td>
+                        ${window.currentEPGUrl ? `<td id="${epgCellId}" style="padding: 10px;"><span style="font-size: 0.85em; color: var(--text-loading);">⏳ 加载中...</span></td>` : ''}
+                        <td style="padding: 10px;">${c.group || '默认'}</td>
+                        <td style="padding: 10px;"><span style="font-size: 0.85em; opacity: 0.7;">${c.source || '未知'}</span></td>
+                        <td style="padding: 10px;">${statusHtml}</td>
+                        ${visualHtml.replace('<td ', '<td data-label="画面预览：" ')}
+                        <td style="padding: 10px;">
+                            <button class="btn btn-sm" style="background: ${c.is_enabled !== false ? '#ef4444' : '#10b981'}; padding: 4px 8px; font-size: 0.8em;" onclick="toggleChannel(${c.id})">${c.is_enabled !== false ? '禁用' : '启用'}</button>
+                            <button class="btn btn-sm" style="background: #6366f1; padding: 4px 8px; font-size: 0.8em; margin-left: 4px;" onclick="event.stopPropagation(); copyChannelUrl('${(c.url || '').replace(/'/g, "\'")}')" title="复制播放链接">📋</button>
+                        </td>
+                    </tr>`;
+        }
+
+        function toggleSelectAllInSection(master, sectionIndex) {
+            const sections = getActivePreviewGroupSections();
+            const sec = sections[sectionIndex];
+            if (!sec) return;
+            (sec.channels || []).forEach(c => {
+                if (master.checked) window.selectedChannelIds.add(c.id);
+                else window.selectedChannelIds.delete(c.id);
+            });
+            applyPreviewGroupDisplay();
+        }
 
         function renderNextBatch() {
             const isMobile = window.innerWidth <= 768;
@@ -1047,8 +1818,7 @@
                     return `
                     <div class="mobile-channel-card ${isDisabled ? 'disabled' : ''} ${isSelected ? 'selected' : ''}" 
                          data-id="${c.id}" onclick="handleMobileCardClick(event, ${c.id})">
-                        <!-- Logo 放在大卡片右上角 -->
-                        <span class="channel-logo-slot channel-logo-slot--card">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span>
+                        ${mobileCardLogoHtml(c.logo)}
                         <!-- 背景预览图 -->
                         <div class="mobile-channel-card__bg ${!image ? 'mobile-channel-card__bg--empty' : ''}">
                             ${image
@@ -1150,7 +1920,7 @@
                             visualHtml = `<td style="padding: 10px; font-size: 0.85em;">🔄 检测中...</td>`;
                         } else if ((c.visualStatus === 'ok' || !c.visualStatus) && image) {
                             visualHtml = `<td style="padding: 10px;">
-                                <img src="${image}" style="height: 40px; cursor: zoom-in;" onclick="event.stopPropagation(); showLightbox('${image}')" title="点击放大">
+                                ${wrapTablePreviewThumb(image, c)}
                                 ${dateHtml}
                             </td>`;
                         } else if (c.visualStatus === 'error' || error) {
@@ -1465,149 +2235,172 @@
             }
         }
 
+
+        function isAggregatePreviewTaskName(name) {
+            const n = String(name || '');
+            return n.includes('批量深度检测')
+                || n.includes('AI 画面检测')
+                || n.includes('AI 整理节目表');
+        }
+
+        function rememberPreviewTask(taskId, outputId) {
+            if (!taskId || !outputId) return;
+            window._previewTaskOutputMap = window._previewTaskOutputMap || {};
+            window._previewTaskOutputMap[taskId] = outputId;
+        }
+
+        async function reloadCurrentAggregatePreview() {
+            const oid = window.currentPreviewOutputId;
+            if (!oid) return;
+            const out = (typeof allOutputs !== 'undefined' && allOutputs) ? allOutputs.find(o => o.id === oid) : null;
+            if (!out) return;
+            const savedMode = window._previewGroupDisplayMode;
+            try {
+                const res = await fetch(`/outputs/${oid}/export-preview`);
+                if (!res.ok) throw new Error('export-preview 请求失败');
+                const data = await res.json();
+                window._previewGroupPayload = data;
+                updatePreviewGroupModeTabs(data);
+                if (savedMode) window._previewGroupDisplayMode = savedMode;
+                applyPreviewGroupDisplay();
+            } catch (e) {
+                console.error('reloadCurrentAggregatePreview failed', e);
+            }
+        }
+
+        async function refreshAfterAggregateTask(task) {
+            if (!task || task.status !== 'success') return;
+            if (!isAggregatePreviewTaskName(task.name)) return;
+            const map = window._previewTaskOutputMap || {};
+            const linkedOid = map[task.id];
+            const shouldReloadPreview = document.getElementById('channel_modal')?.style.display === 'flex'
+                && window.currentPreviewOutputId
+                && (!linkedOid || linkedOid === window.currentPreviewOutputId);
+            setTimeout(async () => {
+                if (typeof fetchOutputs === 'function') await fetchOutputs(true);
+                if (shouldReloadPreview) await reloadCurrentAggregatePreview();
+            }, 800);
+        }
+
+        function flattenAggregatePreviewChannels() {
+            const p = window._previewGroupPayload;
+            if (!p) return [];
+            const flat = [];
+            (p.manual_groups || []).forEach(g => (g.channels || []).forEach(c => flat.push(c)));
+            const seen = new Set();
+            return flat.filter(c => {
+                if (c.id == null || seen.has(c.id)) return false;
+                seen.add(c.id);
+                return true;
+            });
+        }
+
+
+        /** 聚合预览下批量勾选/截图范围：整张表成员（含启用与禁用），不受 AI 分组视图折叠影响 */
+        function getAggregateMemberChannelsForSelection() {
+            if (window.currentPreviewOutputId && window._previewGroupPayload) {
+                const all = flattenAggregatePreviewChannels();
+                if (all.length) return all;
+            }
+            return filteredChannels;
+        }
+
+        function getScreenshotCheckPool() {
+            if (window.currentPreviewOutputId && window._previewGroupPayload) {
+                const all = flattenAggregatePreviewChannels();
+                if (all.length) return all;
+            }
+            return filteredChannels;
+        }
+
         async function checkVisualConnectivity() {
             const btn = document.getElementById('check_visual_btn');
-
-            // 如果正在检查，设置标志为 false 以取消
-            if (window.isVisualChecking) {
-                window.isVisualChecking = false;
-                btn.innerText = "⏳ 正在取消...";
-                btn.disabled = true;
+            if (window._activeScreenshotTaskId) {
+                if (!confirm('当前已有截图检测任务在任务中心运行，是否前往任务中心查看？')) return;
+                taskCenter.toggle();
                 return;
             }
 
-            if (filteredChannels.length === 0) return;
+            const pool = getScreenshotCheckPool();
+            if (pool.length === 0) return;
 
-            // 1. 查找哪些是还没检测过的
+            let scopeChannels = pool;
+            if (window.selectedChannelIds && window.selectedChannelIds.size > 0) {
+                scopeChannels = pool.filter(c => window.selectedChannelIds.has(c.id));
+                if (scopeChannels.length === 0) {
+                    showToast('所选频道不在当前聚合表范围内', 'error');
+                    return;
+                }
+                showToast(`已勾选 ${scopeChannels.length} 个频道（含启用与禁用），将仅检测勾选范围`, 'info');
+            } else if (window.currentPreviewOutputId) {
+                showToast(`未勾选频道，将对整张聚合表 ${pool.length} 个频道截图检测`, 'info');
+            }
+
             const freshThreshold = 30 * 60 * 1000;
             const now = new Date();
 
-            // 辅助函数：判断频道是否已经有了“新鲜”的检测结果
             const isFreshlyFinished = (c) => {
-                if (c.visualStatus) return true; // 本轮检测过的
-                if (!c.check_date) return false; // 根本没检测过
-
+                if (!c.check_date) return false;
                 try {
-                    // 兼容各种日期格式，确保解析正确
                     const dateStr = c.check_date.endsWith('Z') ? c.check_date : c.check_date.includes('+') ? c.check_date : c.check_date + 'Z';
                     const dateObj = new Date(dateStr);
-                    return (now - dateObj) < freshThreshold;
+                    return (now - dateObj) < freshThreshold && c.check_status === true;
                 } catch (e) {
                     return false;
                 }
             };
 
-            const pendingChannels = filteredChannels.filter(c => !isFreshlyFinished(c));
-            const completedCount = filteredChannels.length - pendingChannels.length;
+            const pendingChannels = scopeChannels.filter(c => !isFreshlyFinished(c));
+            const completedCount = scopeChannels.length - pendingChannels.length;
 
-            let targets = filteredChannels;
+            let targets = scopeChannels;
             if (completedCount > 0 && pendingChannels.length > 0) {
-                // 如果有新鲜结果，提示是否跳过
-                if (confirm(`当前列表共 ${filteredChannels.length} 个频道：\n- 30分钟内已有结果: ${completedCount} 个\n- 待检测/上次失败: ${pendingChannels.length} 个\n\n是否仅检测“待检测/上次失败”的频道？\n(确定：断点续传； 取消：全部重新检测)`)) {
+                if (confirm(`本次范围共 ${scopeChannels.length} 个频道：\n- 30分钟内已成功截图: ${completedCount} 个\n- 待检测/上次失败: ${pendingChannels.length} 个\n\n是否仅检测“待检测/上次失败”的频道？\n(确定：断点续传； 取消：全部重新检测)`)) {
                     targets = pendingChannels;
                 }
-            } else if (pendingChannels.length === 0 && filteredChannels.length > 0) {
-                // 所有都没变动，提示全部重测
-                if (!confirm(`所有 ${filteredChannels.length} 个频道在 30 分钟内都已检测过，是否要全部重新检测？`)) {
+            } else if (pendingChannels.length === 0 && scopeChannels.length > 0) {
+                if (!confirm(`范围内 ${scopeChannels.length} 个频道在 30 分钟内都已成功截图，是否要全部重新检测？`)) {
                     return;
                 }
             }
 
             const count = targets.length;
-            const confirmMsg = `即将对 ${count} 个频道进行深度检测（截图）。\n这将会非常耗时（每个频道约 3-5 秒）。\n\n确定要继续吗？`;
-            if (count > 20 && !confirm(confirmMsg)) return;
+            const confirmMsg = `即将提交 ${count} 个频道的截图检测到后台任务。\n每个频道约 3-5 秒，进度请在任务中心查看。\n\n确定要继续吗？`;
+            if (!confirm(confirmMsg)) return;
 
-            window.isVisualChecking = true;
-            btn.disabled = false;
-            btn.innerText = "🛑 取消检测";
-            const originalBg = btn.style.background;
-            btn.style.background = "var(--danger)";
+            const autoDisable = document.getElementById('auto_disable_check')?.checked ?? false;
+            const items = targets.map(c => ({ id: c.id, url: c.url }));
 
-            const autoDisable = document.getElementById('auto_disable_check').checked;
-
-            // 初始标记为 loading (仅针对本次要检测的目标)
-            targets.forEach(c => c.visualStatus = 'loading');
-            renderOffset = 0;
-            renderBaseTable(document.getElementById('channel_list'), window.lastRenderShowActions);
-
-            // 分批处理 (深度检测要慢点)
-            const chunkSize = 5;
-            let finishedInThisSession = 0;
-
-            for (let i = 0; i < targets.length; i += chunkSize) {
-                if (!window.isVisualChecking) break;
-
-                const chunk = targets.slice(i, i + chunkSize);
-                const items = chunk.map(c => ({ id: c.id, url: c.url }));
-
-                // 更新按钮进度
-                btn.innerText = `🛑 取消 (${finishedInThisSession}/${count})`;
-
-                try {
-                    const res = await fetch('/check-stream-visual', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ items: items, auto_disable: autoDisable })
-                    });
-                    const results = await res.json();
-
-                    results.forEach(r => {
-                        const match = chunk.find(c => c.id === r.id);
-                        if (match) {
-                            finishedInThisSession++;
-                            if (r.status) {
-                                match.visualStatus = 'ok';
-                                match.visualImage = r.image;
-                                match.check_status = true;
-                                match.check_image = r.image;
-                                match.check_date = new Date().toISOString();
-                            } else {
-                                match.visualStatus = 'error';
-                                match.visualError = r.error || '检测失败';
-                                match.check_status = false;
-                                match.check_image = null;
-
-                                if (r.auto_disabled) {
-                                    match.is_enabled = false;
-                                }
-                            }
-                        }
-                    });
-                } catch (err) {
-                    chunk.forEach(c => {
-                        c.visualStatus = 'error';
-                        c.visualError = "网络错误";
-                        c.check_status = false;
-                        c.check_image = null;
-                        finishedInThisSession++;
-                    });
-                }
-
-                renderOffset = 0;
-                renderBaseTable(document.getElementById('channel_list'), window.lastRenderShowActions);
+            const originalText = btn ? btn.innerText : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = '提交中...';
             }
 
-            // 收尾
-            const wasCancelled = !window.isVisualChecking;
-            window.isVisualChecking = false;
-            btn.disabled = false;
-            btn.innerText = "📺 深度检测";
-            btn.style.background = originalBg;
-
-            // 如果是中途取消的，把还没轮到的 loading 状态清掉，保留已完成的
-            targets.forEach(c => {
-                if (c.visualStatus === 'loading') {
-                    c.visualStatus = null;
+            try {
+                const res = await fetch('/check-stream-visual', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items, auto_disable: autoDisable })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.status === 'error') {
+                    showToast(data.message || data.detail || '提交截图检测失败', 'error');
+                    return;
                 }
-            });
-
-            renderOffset = 0;
-            renderBaseTable(document.getElementById('channel_list'), window.lastRenderShowActions);
-
-            if (!wasCancelled) {
-                showToast(`深度检测圆满完成！共处理 ${finishedInThisSession} 个频道。`, 'success');
-            } else {
-                showToast(`检测已提前中断，已保存 ${finishedInThisSession} 个结果。`, 'warning');
+                if (data.task_id && window.currentPreviewOutputId) {
+                    rememberPreviewTask(data.task_id, window.currentPreviewOutputId);
+                    window._activeScreenshotTaskId = data.task_id;
+                }
+                showToast(data.message || `已提交截图检测（${count} 个频道），请到任务中心查看进度`, 'info');
+                taskCenter.toggle();
+            } catch (err) {
+                showToast('提交截图检测失败: ' + (err.message || err), 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = originalText || '截图检测';
+                }
             }
         }
 
@@ -3911,7 +4704,14 @@ function removeTag(val) {
             document.getElementById('out_include_suffix').checked = out.include_source_suffix !== false;
             document.getElementById('out_is_enabled').checked = out.is_enabled !== false;
             document.getElementById('out_auto_update').value = out.auto_update_minutes || 0;
-            document.getElementById('out_auto_visual').checked = out.auto_visual_check || false;
+            document.getElementById('out_auto_screenshot').checked = out.auto_visual_check || false;
+            document.getElementById('out_auto_ai_vision').checked = out.auto_ai_vision_check || false;
+            document.getElementById('out_auto_ai_organize').checked = out.auto_ai_organize || false;
+            document.getElementById('out_enable_ai_vision').checked = !!out.enable_ai_vision;
+            document.getElementById('out_enable_ai_organize').checked = !!out.enable_ai_organize;
+            toggleLlmConfigPanels();
+            syncLayoutGlobalsFromOutput(out);
+            loadLlmSettings(true);
 
             // 还原关键字
             let parsedKeys = [];
@@ -3965,6 +4765,7 @@ function removeTag(val) {
             document.getElementById('out_name').focus();
 
             // 预加载预览数据，确保点击标签时能立即显示频道预览
+            updateLayoutModeBadge(out.layout_mode || 'rules');
             updateRealtimePreview();
         }
 
@@ -3980,7 +4781,13 @@ function removeTag(val) {
             document.getElementById('out_include_suffix').checked = true;
             document.getElementById('out_is_enabled').checked = true; // 默认启用
             document.getElementById('out_auto_update').value = 0; // 默认不自动更新
-            document.getElementById('out_auto_visual').checked = false;
+            document.getElementById('out_auto_screenshot').checked = false;
+            document.getElementById('out_auto_ai_vision').checked = false;
+            document.getElementById('out_auto_ai_organize').checked = false;
+            document.getElementById('out_enable_ai_vision').checked = false;
+            document.getElementById('out_enable_ai_organize').checked = false;
+            toggleLlmConfigPanels();
+            syncLayoutGlobalsFromOutput(null);
 
             keywords = [];
             groupKeywords = [];
@@ -3996,6 +4803,7 @@ function removeTag(val) {
             document.getElementById('out_btn').innerText = '生成专属 M3U 聚合 URL';
             document.getElementById('out_cancel_btn').style.display = 'none';
             hideAllPreviewWindows();
+            updateLayoutModeBadge('rules');
         }
 
         async function saveOutput() {
@@ -4023,7 +4831,14 @@ function removeTag(val) {
                 include_source_suffix: document.getElementById('out_include_suffix').checked,
                 is_enabled: document.getElementById('out_is_enabled').checked,
                 auto_update_minutes: parseInt(document.getElementById('out_auto_update').value),
-                auto_visual_check: document.getElementById('out_auto_visual').checked
+                auto_visual_check: document.getElementById('out_auto_screenshot').checked,
+                auto_ai_vision_check: document.getElementById('out_auto_ai_vision').checked,
+                auto_ai_organize: document.getElementById('out_auto_ai_organize').checked,
+                enable_ai_vision: document.getElementById('out_enable_ai_vision').checked,
+                enable_ai_organize: document.getElementById('out_enable_ai_organize').checked,
+                layout_mode: document.getElementById('edit_output_id').value ? (window._currentLayoutMode || 'rules') : 'rules',
+                channel_layout: window._currentChannelLayout || '{"groups":[]}',
+                layout_meta: window._currentLayoutMeta || '{}'
             };
 
             const method = id ? 'PUT' : 'POST';
@@ -4296,8 +5111,8 @@ function removeTag(val) {
 
         function toggleSelectAll(checked) {
             if (checked) {
-                // 选中当前过滤后的所有频道
-                filteredChannels.forEach(c => window.selectedChannelIds.add(c.id));
+                const bulk = getAggregateMemberChannelsForSelection();
+                bulk.forEach(c => window.selectedChannelIds.add(c.id));
             } else {
                 // 取消全选
                 window.selectedChannelIds.clear();
@@ -4313,7 +5128,8 @@ function removeTag(val) {
             const currentSet = new Set(window.selectedChannelIds);
             window.selectedChannelIds.clear();
 
-            filteredChannels.forEach(c => {
+            const bulk = getAggregateMemberChannelsForSelection();
+            bulk.forEach(c => {
                 if (!currentSet.has(c.id)) {
                     window.selectedChannelIds.add(c.id);
                 }
@@ -4525,6 +5341,312 @@ function removeTag(val) {
             lightbox.style.display = 'none';
             document.body.style.overflow = '';
         }
+
+        function buildOutputDraftPayload() {
+            const selectedSubs = Array.from(document.querySelectorAll('input[name="selected_subs"]:checked')).map(cb => parseInt(cb.value));
+            return {
+                use_draft: true,
+                subscription_ids: selectedSubs,
+                keywords: getMergedFilterKeywords(),
+                excluded_channel_ids: Array.from(computeSaveExcludedIds()),
+                filter_regex: document.getElementById('out_regex').value || '.*'
+            };
+        }
+
+
+        function syncLayoutGlobalsFromOutput(out) {
+            if (!out) {
+                window._currentLayoutMode = 'rules';
+                window._currentChannelLayout = '{"groups":[]}';
+                window._currentLayoutMeta = '{}';
+                return;
+            }
+            window._currentLayoutMode = out.layout_mode || 'rules';
+            window._currentChannelLayout = out.channel_layout || '{"groups":[]}';
+            window._currentLayoutMeta = out.layout_meta || '{}';
+        }
+
+        window._previewGroupPayload = null;
+        window._previewGroupDisplayMode = 'manual';
+
+        function previewAiGroupingAvailable() {
+            const p = window._previewGroupPayload;
+            if (!p) return false;
+            if ((p.layout_mode || 'rules') !== 'explicit') return false;
+            if (p.ai_groups_stale) return false;
+            return (p.ai_groups || []).some(g => (g.channels || []).length > 0);
+        }
+
+        function renderPreviewAiNotReadyMessage() {
+            const list = document.getElementById('channel_list');
+            if (!list) return;
+            list.innerHTML = '<div class="preview-ai-empty" style="text-align:center;padding:48px 24px;opacity:0.85;"><p style="font-size:1.05em;margin:0 0 12px;">尚未进行 AI 分组</p><p style="font-size:0.88em;margin:0;opacity:0.7;">请先在预览工具栏执行「AI 排序」，或当前 AI 布局已过期需重新整理。</p></div>';
+            currentChannels = [];
+            filteredChannels = [];
+            renderOffset = 0;
+            updatePreviewStats();
+        }
+
+        function setPreviewGroupDisplayMode(mode) {
+            if (!window._previewGroupPayload) return;
+            window._previewGroupDisplayMode = mode;
+            const tabManual = document.getElementById('preview_group_tab_manual');
+            const tabAi = document.getElementById('preview_group_tab_ai');
+            if (tabManual) {
+                tabManual.classList.toggle('is-active', mode === 'manual');
+                tabManual.setAttribute('aria-selected', mode === 'manual' ? 'true' : 'false');
+            }
+            if (tabAi) {
+                tabAi.classList.toggle('is-active', mode === 'ai');
+                tabAi.setAttribute('aria-selected', mode === 'ai' ? 'true' : 'false');
+            }
+            applyPreviewGroupDisplay();
+        }
+
+        function updatePreviewGroupModeTabs(payload) {
+            const wrap = document.getElementById('preview_group_mode_tabs');
+            if (!wrap) return;
+            if (!payload) {
+                wrap.classList.remove('is-visible');
+                return;
+            }
+            wrap.classList.add('is-visible');
+            const layoutMode = payload.layout_mode || 'rules';
+            const tabAi = document.getElementById('preview_group_tab_ai');
+            if (tabAi) {
+                tabAi.style.opacity = layoutMode === 'explicit' ? '1' : '0.45';
+                tabAi.title = layoutMode === 'explicit' ? '按 AI 整理后的分组展示' : '需先执行 AI 排序并写入 explicit 布局';
+            }
+            const aiCount = (payload.ai_groups || []).reduce((n, g) => n + (g.channels || []).length, 0);
+            const defaultMode = (layoutMode === 'explicit' && aiCount > 0 && !payload.ai_groups_stale) ? 'ai' : 'manual';
+            window._previewGroupDisplayMode = defaultMode;
+            const tabManual = document.getElementById('preview_group_tab_manual');
+            if (tabManual) {
+                tabManual.classList.toggle('is-active', defaultMode === 'manual');
+                tabManual.setAttribute('aria-selected', defaultMode === 'manual' ? 'true' : 'false');
+            }
+            if (tabAi) {
+                tabAi.classList.toggle('is-active', defaultMode === 'ai');
+                tabAi.setAttribute('aria-selected', defaultMode === 'ai' ? 'true' : 'false');
+            }
+        }
+
+        function getActivePreviewGroupSections() {
+            const payload = window._previewGroupPayload;
+            if (!payload) return [];
+            const mode = window._previewGroupDisplayMode || 'manual';
+            if (mode === 'ai') {
+                return previewAiGroupingAvailable() ? (payload.ai_groups || []) : [];
+            }
+            return payload.manual_groups || [];
+        }
+
+        function applyPreviewGroupDisplay() {
+            if (window._previewGroupDisplayMode === 'ai' && !previewAiGroupingAvailable()) {
+                renderPreviewAiNotReadyMessage();
+                return;
+            }
+            const sections = getActivePreviewGroupSections();
+            const flat = [];
+            sections.forEach(sec => {
+                (sec.channels || []).forEach(c => flat.push(c));
+            });
+            currentChannels = flat;
+            filteredChannels = flat;
+            renderOffset = 0;
+            const container = document.getElementById('channel_list_container');
+            if (container) container.scrollTop = 0;
+            renderBaseTable(document.getElementById('channel_list'), true);
+        }
+
+        function updateLayoutModeBadge(mode) {
+            const el = document.getElementById('layout_mode_badge');
+            if (!el) return;
+            if (mode === 'explicit') el.textContent = '当前：AI分组';
+            else el.textContent = '当前：手动分组';
+        }
+
+        function applyLlmSettingsToForm(data, fillSecrets = false) {
+            const text = data.llm_text || {};
+            const vision = data.llm_vision || {};
+            document.getElementById('llm_text_base').value = text.base_url || '';
+            document.getElementById('llm_text_model').value = text.model || '';
+            document.getElementById('llm_vision_base').value = vision.base_url || '';
+            document.getElementById('llm_vision_model').value = vision.model || '';
+            const textKey = document.getElementById('llm_text_key');
+            const visionKey = document.getElementById('llm_vision_key');
+            if (fillSecrets) {
+                textKey.value = text.api_key || '';
+                visionKey.value = vision.api_key || '';
+                textKey.placeholder = 'API Key';
+                visionKey.placeholder = 'API Key';
+                textKey.type = 'password';
+                visionKey.type = 'password';
+                document.querySelectorAll('.llm-key-toggle').forEach(btn => { btn.textContent = '显示'; });
+            } else {
+                textKey.value = '';
+                visionKey.value = '';
+                textKey.placeholder = text.configured || text.api_key ? '已保存（留空不改）' : 'API Key';
+                visionKey.placeholder = vision.configured || vision.api_key ? '已保存（留空不改）' : 'API Key';
+            }
+        }
+
+        async function loadLlmSettings(fillSecrets = false) {
+            try {
+                const url = fillSecrets ? '/api/settings/llm?reveal=true' : '/api/settings/llm';
+                const res = await fetch(url);
+                const data = await res.json();
+                applyLlmSettingsToForm(data, fillSecrets);
+            } catch (e) {
+                console.warn('加载 LLM 配置失败', e);
+            }
+        }
+
+        async function toggleLlmKeyVisibility(btn) {
+            const id = btn.getAttribute('data-target');
+            let input = document.getElementById(id);
+            if (!input) return;
+            if (input.type === 'password') {
+                if (!input.value) {
+                    await loadLlmSettings(true);
+                    input = document.getElementById(id);
+                }
+                input.type = 'text';
+                btn.textContent = '隐藏';
+            } else {
+                input.type = 'password';
+                btn.textContent = '显示';
+            }
+        }
+
+        async function saveLlmSettings() {
+            const body = {
+                llm_text: {
+                    base_url: document.getElementById('llm_text_base').value.trim(),
+                    model: document.getElementById('llm_text_model').value.trim(),
+                    api_key: document.getElementById('llm_text_key').value
+                },
+                llm_vision: {
+                    base_url: document.getElementById('llm_vision_base').value.trim(),
+                    model: document.getElementById('llm_vision_model').value.trim(),
+                    api_key: document.getElementById('llm_vision_key').value
+                }
+            };
+            const res = await fetch('/api/settings/llm', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (res.ok) {
+                showToast('LLM 配置已保存', 'success');
+                loadLlmSettings(true);
+            } else {
+                showToast('保存失败', 'error');
+            }
+        }
+
+        async function runAiVisualCheck() {
+            const editId = document.getElementById('edit_output_id').value;
+            if (!editId) {
+                showToast('请先保存或进入编辑已有聚合源', 'error');
+                return;
+            }
+            const payload = buildOutputDraftPayload();
+            const res = await fetch(`/outputs/${editId}/ai-visual-check`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) showToast(data.message || '已提交 AI 画面检测', 'info');
+            else showToast(data.detail || data.message || '提交失败', 'error');
+        }
+
+        async function runAiOrganize() {
+            const editId = document.getElementById('edit_output_id').value;
+            if (!editId) {
+                showToast('请先保存或进入编辑已有聚合源', 'error');
+                return;
+            }
+            if (!confirm('将对当前可导出频道集做 AI 整理并切换为 explicit 布局，是否继续？')) return;
+            const payload = buildOutputDraftPayload();
+            const res = await fetch(`/outputs/${editId}/llm-organize`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) showToast(data.message || '已提交 AI 整理', 'info');
+            else showToast(data.detail || data.message || '提交失败', 'error');
+        }
+
+        async function restoreRulesLayoutMode() {
+            const editId = document.getElementById('edit_output_id').value;
+            if (!editId) return;
+            const res = await fetch(`/outputs/${editId}/layout-mode`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ layout_mode: 'rules' })
+            });
+            if (res.ok) {
+                updateLayoutModeBadge('rules');
+                showToast('已恢复规则模式', 'success');
+                fetchOutputs();
+            }
+        }
+
+
+        function toggleLlmConfigPanels() {
+            const v = document.getElementById('out_enable_ai_vision')?.checked;
+            const o = document.getElementById('out_enable_ai_organize')?.checked;
+            const vb = document.getElementById('llm_vision_config_block');
+            const tb = document.getElementById('llm_text_config_block');
+            if (vb) vb.style.display = v ? 'block' : 'none';
+            if (tb) tb.style.display = o ? 'block' : 'none';
+        }
+
+        window.currentPreviewOutputId = null;
+
+        async function postOutputAiVisual(outputId, draft) {
+            const res = await fetch(`/outputs/${outputId}/ai-visual-check`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...draft, use_draft: !!draft })
+            });
+            return res;
+        }
+
+        async function postOutputAiOrganize(outputId, draft) {
+            const res = await fetch(`/outputs/${outputId}/llm-organize`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...draft, use_draft: !!draft })
+            });
+            return res;
+        }
+
+        async function checkPreviewAiVision() {
+            const oid = window.currentPreviewOutputId;
+            if (!oid) { showToast('仅聚合预览支持 AI 视觉检测', 'error'); return; }
+            const res = await postOutputAiVisual(oid, null);
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                if (data.task_id) rememberPreviewTask(data.task_id, oid);
+                showToast(data.message || '已提交 AI 视觉检测，请到任务中心查看进度', 'info');
+                taskCenter.toggle();
+            } else showToast(data.detail || data.message || '提交失败', 'error');
+        }
+
+        function bootLoadLlmSettings() {
+            if (typeof loadLlmSettings === 'function') loadLlmSettings(true);
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', bootLoadLlmSettings);
+        } else {
+            bootLoadLlmSettings();
+        }
+
+        async function checkPreviewAiOrganize() {
+            const oid = window.currentPreviewOutputId;
+            if (!oid) { showToast('仅聚合预览支持 AI 排序', 'error'); return; }
+            if (!confirm('将对当前可导出频道集执行 AI 排序并写入 explicit 布局，是否继续？')) return;
+            const res = await postOutputAiOrganize(oid, null);
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                if (data.task_id) rememberPreviewTask(data.task_id, oid);
+                showToast(data.message || '已提交 AI 排序，请到任务中心查看进度', 'info');
+                taskCenter.toggle();
+            } else showToast(data.detail || data.message || '提交失败', 'error');
+        }
+
     </script>
 </body>
 
