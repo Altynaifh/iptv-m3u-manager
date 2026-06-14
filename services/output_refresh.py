@@ -35,6 +35,9 @@ async def refresh_output_task(task_id: str, output_id: int):
             except Exception:
                 sub_ids = []
 
+            sub_failures = 0
+            sync_ok = True
+
             for i, sub_id in enumerate(sub_ids):
                 with Session(engine) as check_session:
                     task = check_session.get(TaskRecord, task_id)
@@ -70,8 +73,6 @@ async def refresh_output_task(task_id: str, output_id: int):
                 except Exception as e:
                     print(f"[refresh_output_task] EPG failed: {e}")
 
-            sync_ok = True
-            sub_failures = 0
             out = session.get(OutputSource, output_id)
             if out:
                 out.last_updated = datetime.utcnow()
