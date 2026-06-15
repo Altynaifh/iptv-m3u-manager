@@ -24,7 +24,8 @@ class Channel(SQLModel, table=True):
     url: str # 频道链接
     group: Optional[str] = None # 频道分组
     logo: Optional[str] = None # 台标链接
-    tvg_id: Optional[str] = Field(default=None) # EPG ID
+    tvg_id: Optional[str] = Field(default=None) # M3U tvg-id（保留原值，EPG 以 tvg_name 为主）
+    tvg_name: Optional[str] = Field(default=None) # M3U tvg-name（EPG 匹配主键）
     subscription_id: int = Field(foreign_key="subscription.id") # 所属订阅
     is_enabled: bool = Field(default=True) # 是否启用该频道
     

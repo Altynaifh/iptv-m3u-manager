@@ -1435,21 +1435,29 @@
             return !!(c && c.epg_program != null && c.epg_program !== undefined);
         }
 
-        function getTvgIdTooltip(channel) {
-            const overlay = channel && channel.tvg_id_overlay;
-            if (overlay && overlay.source_name) {
-                return `AI 同频道覆盖：来自「${overlay.source_name}」的 tvg-id`;
-            }
-            const native = (channel && channel.tvg_id_native != null ? channel.tvg_id_native : channel && channel.tvg_id) || '';
-            if ((native || '').trim()) return '自带 tvg-id';
-            return '无 tvg-id';
+        function effectiveTvgName(channel) {
+            if (!channel) return '';
+            const explicit = (channel.tvg_name != null ? channel.tvg_name : '') || '';
+            if ((explicit || '').trim()) return explicit.trim();
+            return (channel.name || '').trim();
         }
 
-        function formatTvgIdCellHtml(channel) {
-            const text = (channel && channel.tvg_id) || '-';
+        function getTvgNameTooltip(channel) {
+            const overlay = channel && channel.tvg_name_overlay;
+            if (overlay && overlay.source_name) {
+                return `AI 同频道覆盖：来自「${overlay.source_name}」的 tvg-name`;
+            }
+            const native = (channel && channel.tvg_name_native != null ? channel.tvg_name_native : channel && channel.tvg_name) || '';
+            if ((native || '').trim()) return '自带 tvg-name';
+            if ((channel && channel.name || '').trim()) return '回退频道名';
+            return '无 tvg-name';
+        }
+
+        function formatTvgNameCellHtml(channel) {
+            const text = effectiveTvgName(channel) || '-';
             const safe = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-            const overlay = channel && channel.tvg_id_overlay;
-            const tip = getTvgIdTooltip(channel).replace(/"/g, '&quot;');
+            const overlay = channel && channel.tvg_name_overlay;
+            const tip = getTvgNameTooltip(channel).replace(/"/g, '&quot;');
             const mark = overlay
                 ? ' <span class="epg-overlay-mark" aria-hidden="true">AI</span>'
                 : '';
@@ -1512,11 +1520,11 @@
                         cell.innerHTML = '<span style="font-size:0.85em;color:var(--text-loading);">⏳ 更新中...</span>';
                     }
                     if (forceRefresh) {
-                        const dedupeKey = `${window.currentEPGUrl}_${c.tvg_id}_${c.name}`;
+                        const dedupeKey = `${window.currentEPGUrl}_${effectiveTvgName(c)}`;
                         window.epgCache.delete(dedupeKey);
                         pendingEpgRequests.delete(dedupeKey);
                     }
-                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, forceRefresh, c);
+                    enqueueEpgLoad(window.currentEPGUrl, effectiveTvgName(c), cellId, c.logo, c.id, forceRefresh, c);
                     queued += 1;
                 });
                 epgIdx += chs.length;
@@ -1548,7 +1556,7 @@
                             <th style="padding: 10px; width: 30px;"><input type="checkbox" class="preview-group-section__thead-select" data-section-index="${si}" onclick="event.stopPropagation(); togglePreviewGroupSectionSelect(${si});" title="全选本组 / 取消全选"></th>
                             <th style="padding: 10px; width: 60px;">Logo</th>
                             <th style="padding: 10px;">名称</th>
-                            <th style="padding: 10px;">tvg-id</th>
+                            <th style="padding: 10px;">tvg-name</th>
 ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 <th style="padding: 10px;" class="preview-col-source-group">分组</th>
 <th style="padding: 10px;">来源</th>
@@ -1771,12 +1779,12 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const name = (channel.name || '').toLowerCase();
             const group = (channel.group || '').toLowerCase();
             const sourceGroup = (channel.source_group || '').toLowerCase();
-            const tvgId = (channel.tvg_id || '').toLowerCase();
+            const tvgName = effectiveTvgName(channel).toLowerCase();
             const source = (channel.source || '').toLowerCase();
             return name.includes(query)
                 || group.includes(query)
                 || sourceGroup.includes(query)
-                || tvgId.includes(query)
+                || tvgName.includes(query)
                 || source.includes(query);
         }
 
@@ -1873,7 +1881,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                             ${showActions ? '<th style="padding: 10px; width: 30px;"><input type="checkbox" id="master_checkbox" onclick="toggleSelectAll(this.checked)"></th>' : ''}
                             <th style="padding: 10px; width: 60px;">Logo</th>
                             <th style="padding: 10px;">名称</th>
-                            <th style="padding: 10px;">tvg-id</th>
+                            <th style="padding: 10px;">tvg-name</th>
                             ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                             <th style="padding: 10px;" class="preview-col-source-group">分组</th>
                             ${showActions ? '<th style="padding: 10px;">来源</th>' : ''}
@@ -2701,7 +2709,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         </div>
                         <div class="mobile-channel-card__info">
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">名称:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap"><strong>${c.name}</strong></span></div>
-                            <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">TVG:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap">${formatTvgIdCellHtml(c)}</span></div>
+                            <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">TVG:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap">${formatTvgNameCellHtml(c)}</span></div>
                             ${window.currentEPGUrl ? `<div class="mobile-channel-card__row"><span class="mobile-channel-card__label">节目:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap" id="${epgCellId}">${previewEpgSnapshotSpan(c, '<span class="mobile-channel-card__epg-tag mobile-channel-card__epg-tag--empty">加载中...</span>')}</span></div>` : ''}
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label preview-col-source-group-label">分组:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap"><strong>${previewChannelGroupLabel(c)}</strong></span></div>
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">来源:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap">${c.source || '未知'}</span></div>
@@ -2729,7 +2737,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         <td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>
                         <td style="padding: 10px;">${channelLogoSlotHtml(c)}</td>
                         <td style="padding: 10px;">${c.name}</td>
-                        <td style="padding: 10px;">${formatTvgIdCellHtml(c)}</td>
+                        <td style="padding: 10px;">${formatTvgNameCellHtml(c)}</td>
                         ${window.currentEPGUrl ? `<td id="${epgCellId}" style="padding: 10px;">${previewEpgSnapshotSpan(c)}</td>` : ''}
                         <td style="padding: 10px;">${previewChannelGroupLabel(c)}</td>
                         <td style="padding: 10px;"><span style="font-size: 0.85em; opacity: 0.7;">${c.source || '未知'}</span></td>
@@ -2872,7 +2880,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                             
                             <div class="mobile-channel-card__row">
                                 <span class="mobile-channel-card__label">TVG:</span>
-                                <span class="mobile-channel-card__value">${c.tvg_id || '-'}</span>
+                                <span class="mobile-channel-card__value">${formatTvgNameCellHtml(c)}</span>
                             </div>
                             
                             ${window.currentEPGUrl ? `
@@ -2965,7 +2973,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         ${window.lastRenderShowActions ? `<td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>` : ''}
                         <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo">${channelLogoSlotHtml(c)}</td>
                         <td style="padding: 10px;" data-label="名称：">${c.name}</td>
-                        <td style="padding: 10px;" data-label="TVG：">${formatTvgIdCellHtml(c)}</td>
+                        <td style="padding: 10px;" data-label="TVG：">${formatTvgNameCellHtml(c)}</td>
                         ${window.currentEPGUrl ? `
                         <td id="epg_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="节目：">
                             <span style="font-size: 0.85em; color: var(--text-loading);">⏳ 加载中...</span>
@@ -2992,7 +3000,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     const isRefresh = !!window.forceRefreshEPG || (window.refreshSelectedOnly && window.selectedChannelIds.has(c.id));
                     // 移动端使用不同的 cell ID 前缀
                     const cellId = isMobileCardMode ? `mobile_epg_${renderOffset}_${idx}` : `epg_${renderOffset}_${idx}`;
-                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, isRefresh, c);
+                    enqueueEpgLoad(window.currentEPGUrl, effectiveTvgName(c), cellId, c.logo, c.id, isRefresh, c);
                 });
             }
 
@@ -3066,7 +3074,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         window.epgCache = new Map(); // 会话级缓存
         const pendingEpgRequests = new Map(); // 请求去重
 
-        async function loadChannelEPG(epgUrl, tvgId, tvgName, cellId, currentLogo, channelId, isRefresh = false, channelObj = null) {
+        async function loadChannelEPG(epgUrl, tvgName, cellId, currentLogo, channelId, isRefresh = false, channelObj = null) {
             const cell = document.getElementById(cellId);
             if (!cell) return;
 
@@ -3077,7 +3085,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 }
 
                 // 合并/去重 Key (缓存 Key 不应包含 refresh 状态，否则刷新后的结果无法复用)
-                const dedupeKey = `${epgUrl}_${tvgId}_${tvgName}`;
+                const dedupeKey = `${epgUrl}_${tvgName}`;
 
                 // 1. 检查缓存 (如果不是刷新请求，则尝试读缓存)
                 if (!isRefresh && window.epgCache.has(dedupeKey)) {
@@ -3094,7 +3102,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
                 // 3. 发起请求
                 const fetchPromise = (async () => {
-                    const url = `/api/epg/current?epg_url=${encodeURIComponent(epgUrl)}&tvg_id=${encodeURIComponent(tvgId || '')}&tvg_name=${encodeURIComponent(tvgName || '')}&current_logo=${encodeURIComponent(currentLogo || '')}&refresh=${isRefresh}`;
+                    const url = `/api/epg/current?epg_url=${encodeURIComponent(epgUrl)}&tvg_id=&tvg_name=${encodeURIComponent(tvgName || '')}&current_logo=${encodeURIComponent(currentLogo || '')}&refresh=${isRefresh}`;
                     const res = await fetch(url);
                     return await res.json();
                 })();
@@ -3214,7 +3222,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             } else {
                 window.refreshSelectedOnly = true;
                 targets.forEach((c) => {
-                    const dedupeKey = `${window.currentEPGUrl}_${c.tvg_id}_${c.name}`;
+                    const dedupeKey = `${window.currentEPGUrl}_${effectiveTvgName(c)}`;
                     window.epgCache.delete(dedupeKey);
                     pendingEpgRequests.delete(dedupeKey);
                 });

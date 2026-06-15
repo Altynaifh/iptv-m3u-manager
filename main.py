@@ -96,6 +96,13 @@ def migrate_db():
             session.exec(text("ALTER TABLE channel ADD COLUMN tvg_id VARCHAR"))
             session.commit()
 
+        try:
+            session.exec(text("SELECT tvg_name FROM channel LIMIT 1"))
+        except:
+            print("正在迁移 Channel 表: 添加 tvg_name 字段")
+            session.exec(text("ALTER TABLE channel ADD COLUMN tvg_name VARCHAR"))
+            session.commit()
+
         # 聚合输出表结构迁移
         try:
             session.exec(text("SELECT epg_url FROM outputsource LIMIT 1"))

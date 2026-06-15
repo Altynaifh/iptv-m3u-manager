@@ -121,12 +121,16 @@ def _enrich_preview_epg(
     out=None,
     members=None,
 ) -> dict:
-    """生成预览节目表快照：先同频道覆盖 tvg-id，再查 EPG，未匹配则换 tvg-id 重查。"""
-    from services.channel_logo_overlay import fix_epg_mismatch_via_tvg_id, prepare_preview_tvg_ids
+    """生成预览节目表快照：先同频道覆盖 tvg-name，再查 EPG，未匹配则换 tvg-name 重查。"""
+    from services.channel_logo_overlay import (
+        effective_tvg_name_dict,
+        fix_epg_mismatch_via_tvg_name,
+        prepare_preview_tvg_names,
+    )
     from services.epg import EPGManager
 
     if out is not None and members:
-        prepare_preview_tvg_ids(payload, out, members)
+        prepare_preview_tvg_names(payload, out, members)
 
     if epg_url and EPGManager.ensure_parsed_cache_sync(epg_url):
         for key in ("manual_groups", "ai_groups"):
@@ -134,15 +138,15 @@ def _enrich_preview_epg(
                 for ch in sec.get("channels") or []:
                     prog = EPGManager.lookup_program_sync(
                         epg_url,
-                        ch.get("tvg_id") or "",
-                        ch.get("name") or "",
+                        "",
+                        effective_tvg_name_dict(ch),
                         ch.get("logo"),
                     )
                     ch["epg_program"] = prog.get("title")
                     ch["epg_logo"] = prog.get("logo")
         payload["epg_snapshot_at"] = datetime.utcnow().isoformat()
         if out is not None and members:
-            fix_epg_mismatch_via_tvg_id(payload, out, members, epg_url)
+            fix_epg_mismatch_via_tvg_name(payload, out, members, epg_url)
     return payload
 
 

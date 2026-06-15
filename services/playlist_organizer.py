@@ -25,9 +25,9 @@ STANDARD_GROUP_ORDER = [
     "其他",
 ]
 
-ORGANIZE_SYSTEM = """你是中国 IPTV 节目表编排助手。输入是候选频道 JSON（含 id、name、可选 tvg_id；source_group 仅作参考）。
+ORGANIZE_SYSTEM = """你是中国 IPTV 节目表编排助手。输入是候选频道 JSON（含 id、name、可选 tvg_name / tvg_id；source_group 仅作参考）。
 
-【重要】完全忽略 source_group 与订阅自带分组。只根据频道名称、tvg_id、以及你对中文电视频道的常识，按中国大陆 IPTV 社区通用习惯分组并排序。
+【重要】完全忽略 source_group 与订阅自带分组。只根据频道名称、tvg_name、以及你对中文电视频道的常识，按中国大陆 IPTV 社区通用习惯分组并排序。
 
 【组间顺序】必须严格按以下 title 先后输出 groups（没有的组可省略，但顺序不变）：
 1. 央视 — 中央电视台及相关（CCTV-x、CGTN 等）
@@ -43,7 +43,7 @@ ORGANIZE_SYSTEM = """你是中国 IPTV 节目表编排助手。输入是候选�
 - 港澳台：同系列合并（如多种「翡翠台」写法视为同一节目族，排在港澳台组内相邻位置）。
 - 地方台、数字频道：按名称或频道重要性合理排序。
 
-【同频道识别】不同 id 但实际为同一套节目的频道（名称写法、tvg_id、订阅源不同但内容相同），写入 same_channels：
+【同频道识别】不同 id 但实际为同一套节目的频道（名称写法、tvg_name、订阅源不同但内容相同），写入 same_channels：
 - 每组 channel_ids 至少 2 个整数
 - 同一 channel_id 最多出现在一个 same_channels 组
 - 示例：「TVBS新闻台」与「TVBS新闻 [4gTV]」应归为同组
@@ -80,6 +80,7 @@ def _build_channel_payload(channels: List[Channel], sub_map: Dict[int, str]) -> 
                 "id": c.id,
                 "name": c.name,
                 "tvg_id": c.tvg_id or "",
+                "tvg_name": c.tvg_name or "",
                 "source_group": c.group or "",
                 "source": sub_map.get(c.subscription_id, ""),
             }

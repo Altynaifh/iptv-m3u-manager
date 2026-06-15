@@ -24,6 +24,7 @@ def _channel_preview_signature(channel: Channel) -> dict:
         "url": channel.url,
         "logo": channel.logo,
         "tvg_id": channel.tvg_id,
+        "tvg_name": channel.tvg_name,
         "subscription_id": channel.subscription_id,
         "check_status": channel.check_status,
         "check_date": channel.check_date.isoformat() if channel.check_date else None,

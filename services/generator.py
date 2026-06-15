@@ -125,14 +125,14 @@ class M3UGenerator:
         # 收集有效台标
         for c in channels:
             if c.logo:
-                key = c.tvg_id if c.tvg_id else c.name
+                key = (c.tvg_name or c.name or c.tvg_id or "").strip()
                 if key and key not in id_logo_map:
                     id_logo_map[key] = c.logo
         
         # 2. 补全缺失台标
         for c in channels:
             if not c.logo:
-                key = c.tvg_id if c.tvg_id else c.name
+                key = (c.tvg_name or c.name or c.tvg_id or "").strip()
                 if key and key in id_logo_map:
                     try:
                         c.logo = id_logo_map[key]
@@ -157,10 +157,11 @@ class M3UGenerator:
             source_tag = f" ({sub_map[c.subscription_id]})" if include_suffix and sub_map and c.subscription_id in sub_map else ""
             display_name = f"{c.name}{source_tag}"
             
-            # 构建属性字符串：logo, tvg-id, tvg-name (保留原始名称用于 EPG 匹配)
+            # 构建属性字符串：logo、tvg-id（原值）、tvg-name（EPG 匹配主键）
             logo_attr = f' tvg-logo="{c.logo or ""}"'
             tvg_id_attr = f' tvg-id="{c.tvg_id or ""}"'
-            tvg_name_attr = f' tvg-name="{c.name}"'
+            tvg_name_value = (c.tvg_name or c.name or "").strip()
+            tvg_name_attr = f' tvg-name="{tvg_name_value}"'
             group_attr = f' group-title="{c.group or "Default"}"'
             
             inf = f'#EXTINF:-1{tvg_id_attr}{tvg_name_attr}{logo_attr}{group_attr},{display_name}'

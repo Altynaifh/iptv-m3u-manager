@@ -226,73 +226,109 @@ class EPGManager:
         return zhconv.convert(name, 'zh-hans')
 
     @staticmethod
-    def _lookup_in_memory(cache_entry, channel_id, channel_name, current_logo=None):
-        """标准化多重查找策略"""
-        programs = cache_entry["programs"]
-        name_map = cache_entry["name_map"]
-        logos = cache_entry.get("logos", {})
-        reverse_logos = cache_entry.get("reverse_logos", {})
-        
+    def _expand_lookup_candidates(seed: str, name_map: dict) -> set:
+        """从 tvg-name / tvg-id 种子词扩展 EPG 候选键。"""
         candidates = set()
-        
-        # 收集所有可能的 ID 变体
-        if channel_id: candidates.add(channel_id)
-        if channel_name:
-            candidates.add(channel_name)
-            # 简繁体变体
-            candidates.add(zhconv.convert(channel_name, 'zh-hans'))
-            candidates.add(zhconv.convert(channel_name, 'zh-hant'))
-            
-            # 内存映射映射查找
-            for c in list(candidates):
-                if c in name_map: candidates.add(name_map[c])
-            
-            # 模糊匹配清洗后的名字 (清洗本身已转简体)
-            c_name = EPGManager._clean_name(channel_name)
-            if c_name:
-                candidates.add(c_name)
-                # 清洗后的繁体变体也能路过一下
-                candidates.add(zhconv.convert(c_name, 'zh-hant'))
-                
-            # 再次深度尝试映射关系
-            for c in list(candidates):
-                if c in name_map: candidates.add(name_map[c])
+        if not seed:
+            return candidates
+        candidates.add(seed)
+        candidates.add(zhconv.convert(seed, "zh-hans"))
+        candidates.add(zhconv.convert(seed, "zh-hant"))
+        for c in list(candidates):
+            if c in name_map:
+                candidates.add(name_map[c])
+        cleaned = EPGManager._clean_name(seed)
+        if cleaned:
+            candidates.add(cleaned)
+            candidates.add(zhconv.convert(cleaned, "zh-hant"))
+        for c in list(candidates):
+            if c in name_map:
+                candidates.add(name_map[c])
+        return candidates
 
-        now_dt = datetime.now(timezone.utc)
+    @staticmethod
+    def _lookup_candidates_in_programs(
+        candidates: set,
+        programs: dict,
+        name_map: dict,
+        logos: dict,
+        now_dt: datetime,
+        *,
+        channel_name: str = "",
+        channel_id: str = "",
+    ) -> dict:
+        """在给定候选集内查找当前节目与台标。"""
         found_title = "无节目信息"
         found_logo = None
-        
-        # 深度调试与匹配追踪
-        is_target = "翡翠" in channel_name or "Jade" in channel_name or "翡翠" in channel_id
+        is_target = (
+            "翡翠" in (channel_name or "")
+            or "Jade" in (channel_name or "")
+            or "翡翠" in (channel_id or "")
+        )
         if is_target:
             print(f"[EPG] 匹配追踪 [{channel_name}]: 候选词={list(candidates)}")
-            # 抽查内存核心库
             sample_keys = list(name_map.keys())[:5]
             print(f"[EPG] 匹配追踪 [{channel_name}]: 映射库样例键={sample_keys}")
 
         for cid in candidates:
-            # 尝试通过名字映射到 ID
-            actual_cid = cid 
+            actual_cid = cid
             if cid not in programs and cid in name_map:
                 actual_cid = name_map[cid]
-                if is_target: print(f"[EPG] 匹配追踪 [{channel_name}]: 通过 '{cid}' 映射到 ID '{actual_cid}'")
+                if is_target:
+                    print(f"[EPG] 匹配追踪 [{channel_name}]: 通过 '{cid}' 映射到 ID '{actual_cid}'")
 
             if actual_cid in programs and found_title == "无节目信息":
-                if is_target: print(f"[EPG] 匹配追踪 [{channel_name}]: ID '{actual_cid}' 在节目库中命中！")
+                if is_target:
+                    print(f"[EPG] 匹配追踪 [{channel_name}]: ID '{actual_cid}' 在节目库中命中！")
                 for start_dt, stop_dt, title in programs[actual_cid]:
                     if start_dt <= now_dt <= stop_dt:
                         found_title = title
                         break
                 if is_target and found_title == "无节目信息":
                     print(f"[EPG] 匹配追踪 [{channel_name}]: 命中频道但无当前时段节目 (当前时间: {now_dt})")
-            
+
             if actual_cid in logos and not found_logo:
                 found_logo = logos[actual_cid]
-                
+
             if found_title != "无节目信息" and found_logo:
                 break
-                
         return {"title": found_title, "logo": found_logo}
+
+    @staticmethod
+    def _lookup_in_memory(cache_entry, channel_id, channel_name, current_logo=None):
+        """优先 tvg-name，未命中再回退 tvg-id。"""
+        programs = cache_entry["programs"]
+        name_map = cache_entry["name_map"]
+        logos = cache_entry.get("logos", {})
+        now_dt = datetime.now(timezone.utc)
+
+        if channel_name:
+            name_candidates = EPGManager._expand_lookup_candidates(channel_name, name_map)
+            result = EPGManager._lookup_candidates_in_programs(
+                name_candidates,
+                programs,
+                name_map,
+                logos,
+                now_dt,
+                channel_name=channel_name,
+                channel_id=channel_id or "",
+            )
+            if result["title"] != "无节目信息" or result["logo"]:
+                return result
+
+        if channel_id:
+            id_candidates = EPGManager._expand_lookup_candidates(channel_id, name_map)
+            return EPGManager._lookup_candidates_in_programs(
+                id_candidates,
+                programs,
+                name_map,
+                logos,
+                now_dt,
+                channel_name=channel_name or "",
+                channel_id=channel_id,
+            )
+
+        return {"title": "无节目信息", "logo": None}
 
     @staticmethod
     def _parse_epg_file(xml_path):

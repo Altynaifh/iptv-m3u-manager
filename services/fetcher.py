@@ -143,7 +143,8 @@ class M3UParser:
                     "name": name,
                     "group": attrs.get("group-title") or attrs.get("group") or current_group,
                     "logo": attrs.get("tvg-logo") or attrs.get("logo") or "",
-                    "tvg_id": attrs.get("tvg-id") or attrs.get("id") or ""
+                    "tvg_id": attrs.get("tvg-id") or attrs.get("id") or "",
+                    "tvg_name": attrs.get("tvg-name") or "",
                 }
             # TXT 分组标题检测
             elif ",#genre#" in line:
@@ -162,7 +163,8 @@ class M3UParser:
                         "url": line,
                         "group": current_group,
                         "logo": "",
-                        "tvg_id": ""
+                        "tvg_id": "",
+                        "tvg_name": "",
                     })
             # TXT 行检测 (频道名,链接)
             else:
@@ -178,7 +180,8 @@ class M3UParser:
                                 "url": url,
                                 "group": current_group,
                                 "logo": "",
-                                "tvg_id": ""
+                                "tvg_id": "",
+                                "tvg_name": "",
                             })
                             break
 
