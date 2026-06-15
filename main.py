@@ -221,6 +221,7 @@ def migrate_db():
             ("member_disabled", "ALTER TABLE outputsource ADD COLUMN member_disabled INTEGER"),
             ("auto_ai_vision_check", "ALTER TABLE outputsource ADD COLUMN auto_ai_vision_check BOOLEAN DEFAULT 0"),
            ("ai_organize_prompt", "ALTER TABLE outputsource ADD COLUMN ai_organize_prompt VARCHAR DEFAULT ''"),
+           ("ai_vision_prompt", "ALTER TABLE outputsource ADD COLUMN ai_vision_prompt VARCHAR DEFAULT ''"),
            ("auto_ai_organize", "ALTER TABLE outputsource ADD COLUMN auto_ai_organize BOOLEAN DEFAULT 0"),
            ("enable_ai_vision", "ALTER TABLE outputsource ADD COLUMN enable_ai_vision BOOLEAN DEFAULT 0"),
            ("enable_ai_organize", "ALTER TABLE outputsource ADD COLUMN enable_ai_organize BOOLEAN DEFAULT 0"),

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, select
 
-from models import Channel
+from models import Channel, OutputSource
 from services.llm_client import LlmClient
 from services.llm_settings import load_llm_blocks
 from services.stream_checker import StreamChecker
@@ -32,6 +32,25 @@ SYSTEM_PROMPT = """你是 IPTV 频道画面质检员。根据 2x2 拼图判断�
 **拿不准时一律输出 ok**，detail 可写你看到的画面类型。
 只输出 JSON：{"results":[{"channel_id":数字,"status":"...","detail":"简短中文"}]}"""
 
+
+def _resolve_vision_prompt(
+    out: Optional[OutputSource] = None,
+    draft: Optional[dict] = None,
+    custom_prompt: Optional[str] = None,
+) -> str:
+    """合并用户前置提示词：draft 优先，其次聚合源已存配置。"""
+    prompt = (custom_prompt or "").strip()
+    if not prompt and draft and isinstance(draft, dict):
+        prompt = (draft.get("ai_vision_prompt") or "").strip()
+    if not prompt and out is not None:
+        prompt = (getattr(out, "ai_vision_prompt", "") or "").strip()
+    return prompt
+
+
+def _build_vision_system(custom_prompt: str) -> str:
+    if not custom_prompt:
+        return SYSTEM_PROMPT
+    return f"{SYSTEM_PROMPT}\n\n## 用户补充判定规则（优先遵守）\n{custom_prompt}"
 
 
 def _apply_ai_visual_enablement(ch: Channel, status: str) -> None:
@@ -144,6 +163,9 @@ class VisualAiChecker:
         capture_missing: bool = True,
         task_id: Optional[str] = None,
         progress_cb=None,
+        out: Optional[OutputSource] = None,
+        draft: Optional[dict] = None,
+        custom_prompt: Optional[str] = None,
     ) -> Dict[str, Any]:
         blocks = load_llm_blocks(session)
         vision = blocks["llm_vision"]
@@ -165,6 +187,7 @@ class VisualAiChecker:
         total_batches = (len(unique) + BATCH_SIZE - 1) // BATCH_SIZE or 0
         done = 0
         stats = {"batches": 0, "updated": 0, "errors": 0, "disabled": 0, "enabled": 0}
+        vision_system = _build_vision_system(_resolve_vision_prompt(out, draft, custom_prompt))
 
         for batch_start in range(0, len(unique), BATCH_SIZE):
             batch = unique[batch_start : batch_start + BATCH_SIZE]
@@ -201,7 +224,7 @@ class VisualAiChecker:
             user_text = f"拼图共 {len(slots)} 个槽位（左上→右上→左下→右下）：\n{slot_desc}\n请逐槽位输出 results。promo_loop 仅限整屏宣传语/扫码引流；无节目画面的广告垫片、品牌循环勿判 promo_loop。有剧集/新闻画面即 ok；仅全黑/无信号为 invalid。"
 
             try:
-                parsed = await client.chat_vision_json(SYSTEM_PROMPT, user_text, collage_url)
+                parsed = await client.chat_vision_json(vision_system, user_text, collage_url)
                 results = parsed.get("results") or []
             except Exception as e:
                 stats["errors"] += 1

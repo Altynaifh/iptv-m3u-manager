@@ -80,6 +80,7 @@ async def _run_ai_vision_step(
         capture_missing=True,
         task_id=task_id,
         progress_cb=_progress,
+        out=out,
     )
     summary = (
         f"[AI视觉] 聚合 id={out.id}：禁用 {stats.get('disabled', 0)}，"

@@ -65,6 +65,7 @@ class OutputSource(SQLModel, table=True):
     enable_ai_vision: bool = Field(default=False) # UI 展开视觉 LLM 配置
     enable_ai_organize: bool = Field(default=False)
     ai_organize_prompt: str = Field(default="")  # 用户自定义 AI 排序/分组前置提示词
+    ai_vision_prompt: str = Field(default="")  # 用户自定义 AI 视觉检测前置提示词
     layout_mode: str = Field(default="rules")  # rules | explicit
     channel_layout: str = Field(default='{"groups":[]}')
     layout_meta: str = Field(default="{}")

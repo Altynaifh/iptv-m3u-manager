@@ -79,6 +79,8 @@ async def ai_visual_check_task(
                 capture_missing=capture_missing,
                 task_id=task_id,
                 progress_cb=_progress,
+                out=out,
+                draft=draft,
             )
             await update_task_status(
                 task_id,

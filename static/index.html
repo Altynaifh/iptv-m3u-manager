@@ -182,6 +182,12 @@
                     </div>
                     <input id="llm_vision_model" placeholder="模型 ID" style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);">
                 </div>
+                <div id="llm_vision_prompt_block" style="display:none;margin-bottom:12px;">
+                    <label style="font-size:0.85em;opacity:0.9;">AI 视觉前置提示词（可选）</label>
+                    <textarea id="out_ai_vision_prompt" rows="4" placeholder="例如：带台标的新闻画面一律判 ok；仅全屏二维码扫码页判 promo_loop。" aria-label="AI 视觉前置提示词"
+                        style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);resize:vertical;min-height:88px;"></textarea>
+                    <p style="margin:0;font-size:0.78em;opacity:0.65;">保存聚合源后，手动或自动执行 AI 视觉检测时会传给视觉 LLM，用于微调判台规则。</p>
+                </div>
                 <div id="llm_text_config_block" style="display:none;margin-bottom:12px;">
                     <label style="font-size:0.85em;opacity:0.9;">文本 LLM（AI 排序编排）</label>
                     <input id="llm_text_base" placeholder="Base URL" style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);">
@@ -6147,6 +6153,8 @@ function removeTag(val) {
             document.getElementById('out_enable_ai_organize').checked = !!out.enable_ai_organize;
             const promptEl = document.getElementById('out_ai_organize_prompt');
             if (promptEl) promptEl.value = out.ai_organize_prompt || '';
+            const visionPromptEl = document.getElementById('out_ai_vision_prompt');
+            if (visionPromptEl) visionPromptEl.value = out.ai_vision_prompt || '';
             toggleLlmConfigPanels();
             syncLayoutGlobalsFromOutput(out);
             loadLlmSettings(true);
@@ -6225,6 +6233,8 @@ function removeTag(val) {
             document.getElementById('out_enable_ai_organize').checked = false;
             const promptEl = document.getElementById('out_ai_organize_prompt');
             if (promptEl) promptEl.value = '';
+            const visionPromptEl = document.getElementById('out_ai_vision_prompt');
+            if (visionPromptEl) visionPromptEl.value = '';
             toggleLlmConfigPanels();
             syncLayoutGlobalsFromOutput(null);
 
@@ -6277,6 +6287,7 @@ function removeTag(val) {
                 enable_ai_vision: document.getElementById('out_enable_ai_vision').checked,
                 enable_ai_organize: document.getElementById('out_enable_ai_organize').checked,
                 ai_organize_prompt: (document.getElementById('out_ai_organize_prompt')?.value || '').trim(),
+                ai_vision_prompt: (document.getElementById('out_ai_vision_prompt')?.value || '').trim(),
                 layout_mode: document.getElementById('edit_output_id').value ? (window._currentLayoutMode || 'rules') : 'rules',
                 channel_layout: window._currentChannelLayout || '{"groups":[]}',
                 layout_meta: window._currentLayoutMeta || '{}'
@@ -6824,7 +6835,8 @@ function removeTag(val) {
                 keywords: getMergedFilterKeywords(),
                 excluded_channel_ids: Array.from(computeSaveExcludedIds()),
                 filter_regex: document.getElementById('out_regex').value || '.*',
-                ai_organize_prompt: (document.getElementById('out_ai_organize_prompt')?.value || '').trim()
+                ai_organize_prompt: (document.getElementById('out_ai_organize_prompt')?.value || '').trim(),
+                ai_vision_prompt: (document.getElementById('out_ai_vision_prompt')?.value || '').trim(),
             };
         }
 
@@ -7125,9 +7137,11 @@ function removeTag(val) {
             const v = document.getElementById('out_enable_ai_vision')?.checked;
             const o = document.getElementById('out_enable_ai_organize')?.checked;
             const vb = document.getElementById('llm_vision_config_block');
+            const vpb = document.getElementById('llm_vision_prompt_block');
             const tb = document.getElementById('llm_text_config_block');
             const pb = document.getElementById('llm_organize_prompt_block');
             if (vb) vb.style.display = v ? 'block' : 'none';
+            if (vpb) vpb.style.display = v ? 'block' : 'none';
             if (tb) tb.style.display = o ? 'block' : 'none';
             if (pb) pb.style.display = o ? 'block' : 'none';
         }

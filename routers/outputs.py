@@ -167,6 +167,7 @@ def update_output(output_id: int, output_data: OutputSource, session: Session = 
     output.enable_ai_vision = getattr(output_data, 'enable_ai_vision', False) or False
     output.enable_ai_organize = getattr(output_data, 'enable_ai_organize', False) or False
     output.ai_organize_prompt = getattr(output_data, 'ai_organize_prompt', '') or ''
+    output.ai_vision_prompt = getattr(output_data, 'ai_vision_prompt', '') or ''
     output.excluded_channel_ids = output_data.excluded_channel_ids
     output.layout_mode = output_data.layout_mode or 'rules'
     output.channel_layout = output_data.channel_layout or '{"groups":[]}'
@@ -310,7 +311,9 @@ async def run_output_ai_visual_check(output_id: int, task_id: str):
                 p = 55 + int((done / max(total, 1)) * 40)
                 await update_task_status(task_id, progress=p, message=msg)
 
-            stats = await VisualAiChecker.run_batch(session, channels, capture_missing=True, progress_cb=_progress)
+            stats = await VisualAiChecker.run_batch(
+                session, channels, capture_missing=True, progress_cb=_progress, out=out
+            )
             out = session.get(OutputSource, output_id)
             if out:
                 out.last_update_status = "手动更新+AI画面检测完成"
@@ -539,6 +542,7 @@ async def ai_visual_check_output(output_id: int, data: dict, session: Session = 
             "keywords": data.get("keywords") or [],
             "excluded_channel_ids": data.get("excluded_channel_ids") or [],
             "filter_regex": data.get("filter_regex") or out.filter_regex,
+            "ai_vision_prompt": (data.get("ai_vision_prompt") or "").strip(),
         }
     channel_ids = data.get("channel_ids")
     capture_missing = data.get("capture_missing", True)
