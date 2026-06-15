@@ -2428,7 +2428,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const toggleText = isDisabled ? '启用' : '禁用';
             const copyUrl = (c.url || '').replace(/'/g, "\\'");
             return `<div class="preview-table-actions">
-                <button type="button" class="btn btn-sm ${toggleClass}" onclick="event.stopPropagation(); toggleChannel(${c.id})">${toggleText}</button>
+                <button type="button" class="btn btn-sm ${toggleClass}" data-channel-toggle-id="${c.id}" onclick="event.stopPropagation(); toggleChannel(${c.id})">${toggleText}</button>
                 ${buildPreviewAggregateExcludeButtonHtml(c.id)}
                 <button class="btn btn-sm preview-table-actions__btn preview-table-actions__btn--copy"
                     onclick="event.stopPropagation(); copyChannelUrl('${copyUrl}')" title="复制播放链接">复制</button>
@@ -2588,7 +2588,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                             ${checkTimeHtml}
                             <div class="mobile-channel-card__actions">
                                 <label class="mobile-channel-card__checkbox"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${isSelected ? 'checked' : ''} onchange="event.stopPropagation(); toggleChannelSelection(${c.id}, this.checked); updateMobileCardSelection(${c.id}, this.checked);"></label>
-                                <button class="mobile-channel-card__toggle-btn ${isDisabled ? 'mobile-channel-card__toggle-btn--enable' : 'mobile-channel-card__toggle-btn--disable'}" onclick="event.stopPropagation(); toggleChannel(${c.id})">${isDisabled ? '启用' : '禁用'}</button>
+                                <button class="mobile-channel-card__toggle-btn ${isDisabled ? 'mobile-channel-card__toggle-btn--enable' : 'mobile-channel-card__toggle-btn--disable'}" data-channel-toggle-id="${c.id}" onclick="event.stopPropagation(); toggleChannel(${c.id})">${isDisabled ? '启用' : '禁用'}</button>
                                 ${buildPreviewAggregateExcludeButtonHtml(c.id, { mobile: true })}
                             </div>
                         </div>
@@ -2787,6 +2787,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                                            onchange="event.stopPropagation(); toggleChannelSelection(${c.id}, this.checked); updateMobileCardSelection(${c.id}, this.checked);">
                                 </label>
                                 <button class="mobile-channel-card__toggle-btn ${isDisabled ? 'mobile-channel-card__toggle-btn--enable' : 'mobile-channel-card__toggle-btn--disable'}"
+                                        data-channel-toggle-id="${c.id}"
                                         onclick="event.stopPropagation(); toggleChannel(${c.id})">
                                     ${isDisabled ? '启用' : '禁用'}
                                 </button>
@@ -2839,7 +2840,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     }
 
                     return `
-                    <tr onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
+                    <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
                         ${window.lastRenderShowActions ? `<td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>` : ''}
                         <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo"><span class="channel-logo-slot channel-logo-slot--table">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span></td>
                         <td style="padding: 10px;" data-label="名称：">${c.name}</td>
@@ -3506,49 +3507,93 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
 
+        function normalizePreviewChannelId(channelId) {
+            const n = Number(channelId);
+            return Number.isFinite(n) ? n : channelId;
+        }
+
+        /** 统一判定频道是否启用（兼容布尔与 0/1） */
+        function isPreviewChannelEnabled(channel) {
+            if (!channel) return true;
+            const v = channel.is_enabled;
+            return v !== false && v !== 0 && v !== '0';
+        }
+
+        function coercePreviewChannelEnabled(value) {
+            return value !== false && value !== 0 && value !== '0';
+        }
+
+        function resolvePreviewChannelById(channelId) {
+            const nid = normalizePreviewChannelId(channelId);
+            const match = (list) => (list || []).find(c => Number(c.id) === Number(nid));
+            return match(currentChannels)
+                || match(filteredChannels)
+                || (typeof flattenAggregatePreviewChannels === 'function' ? match(flattenAggregatePreviewChannels()) : null);
+        }
+
         function syncChannelEnabledInPreviewPayload(channelId, isEnabled) {
+            const nid = normalizePreviewChannelId(channelId);
+            const enabled = coercePreviewChannelEnabled(isEnabled);
             const p = window._previewGroupPayload;
-            if (!p) return;
-            const apply = (groups) => {
-                (groups || []).forEach(g => (g.channels || []).forEach(c => {
-                    if (c.id === channelId) c.is_enabled = isEnabled;
-                }));
-            };
-            apply(p.manual_groups);
-            apply(p.ai_groups);
-            currentChannels.forEach(c => { if (c.id === channelId) c.is_enabled = isEnabled; });
-            filteredChannels.forEach(c => { if (c.id === channelId) c.is_enabled = isEnabled; });
+            if (p) {
+                const apply = (groups) => {
+                    (groups || []).forEach(g => (g.channels || []).forEach(c => {
+                        if (Number(c.id) === Number(nid)) c.is_enabled = enabled;
+                    }));
+                };
+                apply(p.manual_groups);
+                apply(p.ai_groups);
+            }
+            currentChannels.forEach(c => { if (Number(c.id) === Number(nid)) c.is_enabled = enabled; });
+            filteredChannels.forEach(c => { if (Number(c.id) === Number(nid)) c.is_enabled = enabled; });
             window._previewGroupedDomCache = {};
             window._previewGroupSectionOffsetsByDomKey = {};
         }
 
-        function patchAggregateEnablementControls(channelId) {
-            const item = currentChannels.find(c => c.id === channelId)
-                || filteredChannels.find(c => c.id === channelId)
-                || (typeof flattenAggregatePreviewChannels === 'function' ? flattenAggregatePreviewChannels().find(c => c.id === channelId) : null);
-            if (!item) return;
-            const enable = item.is_enabled !== false;
-            const toggleBtns = document.querySelectorAll(`button[onclick*="toggleChannel(${channelId})"]`);
-            toggleBtns.forEach(btn => {
-                btn.innerText = enable ? '禁用' : '启用';
-                if (btn.closest('.preview-table-actions')) {
+        function patchPreviewTableRowEnablement(tr, item) {
+            if (!tr || !item) return;
+            const enable = isPreviewChannelEnabled(item);
+            const actionsTd = tr.querySelector('td .preview-table-actions')?.closest('td')
+                || Array.from(tr.querySelectorAll('td')).find(td => td.querySelector('.preview-table-actions'));
+            if (actionsTd) {
+                actionsTd.innerHTML = buildPreviewTableActionsHtml(item);
+            } else {
+                tr.querySelectorAll('[data-channel-toggle-id]').forEach(btn => {
+                    btn.innerText = enable ? '禁用' : '启用';
                     btn.classList.remove('preview-table-actions__btn--disable', 'preview-table-actions__btn--enable');
                     btn.classList.add(enable ? 'preview-table-actions__btn--disable' : 'preview-table-actions__btn--enable');
-                    btn.style.background = '';
-                } else if (btn.classList.contains('mobile-channel-card__toggle-btn')) {
-                    btn.classList.toggle('mobile-channel-card__toggle-btn--enable', !enable);
-                    btn.classList.toggle('mobile-channel-card__toggle-btn--disable', enable);
-                }
-                const tr = btn.closest('tr');
-                if (tr) {
-                    tr.style.opacity = enable ? '1' : '0.5';
-                    tr.style.background = enable ? 'transparent' : 'rgba(0,0,0,0.2)';
-                }
-                const card = btn.closest('.mobile-channel-card');
-                if (card) {
-                    card.classList.toggle('disabled', !enable);
-                }
+                });
+            }
+            tr.style.opacity = enable ? '1' : '0.5';
+            tr.style.background = enable ? 'transparent' : 'rgba(0,0,0,0.2)';
+        }
+
+        function patchMobileCardEnablement(card, item) {
+            if (!card || !item) return;
+            const enable = isPreviewChannelEnabled(item);
+            const toggleBtn = card.querySelector('[data-channel-toggle-id]')
+                || card.querySelector('.mobile-channel-card__toggle-btn--disable, .mobile-channel-card__toggle-btn--enable');
+            if (toggleBtn) {
+                toggleBtn.innerText = enable ? '禁用' : '启用';
+                toggleBtn.classList.remove('mobile-channel-card__toggle-btn--enable', 'mobile-channel-card__toggle-btn--disable');
+                toggleBtn.classList.add(enable ? 'mobile-channel-card__toggle-btn--disable' : 'mobile-channel-card__toggle-btn--enable');
+            }
+            card.classList.toggle('disabled', !enable);
+        }
+
+        function patchAggregateEnablementControls(channelId) {
+            const nid = normalizePreviewChannelId(channelId);
+            const item = resolvePreviewChannelById(nid);
+            if (!item) return;
+
+            document.querySelectorAll(`tr[data-channel-id="${nid}"]`).forEach(tr => patchPreviewTableRowEnablement(tr, item));
+
+            document.querySelectorAll(`input.ch-checkbox[data-id="${nid}"]`).forEach(cb => {
+                const tr = cb.closest('tr');
+                if (tr && !tr.dataset.channelId) patchPreviewTableRowEnablement(tr, item);
             });
+
+            document.querySelectorAll(`.mobile-channel-card[data-id="${nid}"]`).forEach(card => patchMobileCardEnablement(card, item));
         }
 
         function refreshAggregateEnablementUI(channelIds) {
@@ -3574,14 +3619,15 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 }
                 const updated = await res.json();
 
-                syncChannelEnabledInPreviewPayload(id, updated.is_enabled);
-                if (updated.is_enabled === false) {
+                const enabled = coercePreviewChannelEnabled(updated.is_enabled);
+                syncChannelEnabledInPreviewPayload(id, enabled);
+                if (!enabled) {
                     rememberDeferredInactiveChannel(id);
                 } else {
                     forgetDeferredInactiveChannel(id);
                 }
                 refreshAggregateEnablementUI(id);
-                showToast(updated.is_enabled ? '频道已启用' : '频道已禁用', 'success');
+                showToast(enabled ? '频道已启用' : '频道已禁用', 'success');
                 if (typeof fetchOutputs === 'function') fetchOutputs(true);
             } catch (err) {
                 showToast('操作失败: ' + (err.message || err), 'error');
