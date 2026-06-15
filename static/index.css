@@ -3318,7 +3318,9 @@ body.sub-bulk-float-active {
     gap: 8px;
     margin-top: 10px;
     flex-wrap: nowrap;
-    align-items: center;
+    align-items: stretch;
+    width: 100%;
+    box-sizing: border-box;
 }
 .preview-group-mode-tabs.is-visible {
     display: flex;
@@ -3327,15 +3329,20 @@ body.sub-bulk-float-active {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-height: 34px;
-    padding: 6px 14px;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 36px;
+    padding: 6px 12px;
     border: 1px solid var(--glass-border);
     border-radius: 8px;
     background: rgba(255, 255, 255, 0.04);
     color: var(--text);
     font-size: 0.88em;
+    font-weight: 500;
+    line-height: 1.2;
     cursor: pointer;
     white-space: nowrap;
+    box-sizing: border-box;
     transition: background 0.15s, border-color 0.15s;
 }
 .preview-group-mode-tab:hover {
@@ -3345,6 +3352,19 @@ body.sub-bulk-float-active {
     border-color: var(--primary);
     background: rgba(99, 102, 241, 0.18);
     font-weight: 600;
+}
+
+/* PC：两枚分组按钮等宽，不占满整行 */
+@media (min-width: 769px) {
+    .preview-group-mode-tabs.is-visible {
+        width: 260px;
+        max-width: 100%;
+        align-self: flex-start;
+    }
+
+    .preview-group-mode-tab {
+        flex: 1 1 50%;
+    }
 }
 .preview-group-mode-tab__inner {
     display: inline-flex;
@@ -3420,10 +3440,16 @@ body.sub-bulk-float-active {
 }
 @media (max-width: 768px) {
     .preview-group-mode-tabs {
+        width: 100%;
         flex-wrap: nowrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        padding-bottom: 2px;
+        overflow: visible;
+        padding-bottom: 0;
+    }
+
+    .preview-group-mode-tab {
+        flex: 1 1 0;
+        min-height: 40px;
+        font-size: 0.92em;
     }
     .preview-group-section__title {
         font-size: 0.9em;
