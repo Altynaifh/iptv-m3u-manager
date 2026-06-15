@@ -9,13 +9,14 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, select
 
 from models import Channel, OutputSource
-from services.llm_client import LlmClient
+from services.llm_client import LlmClient, VisionJsonParseError
 from services.llm_settings import load_llm_blocks
 from services.stream_checker import StreamChecker
 
 BATCH_SIZE = 4
 VALID_STATUS = frozenset({"ok", "promo_loop", "invalid", "frozen", "no_image", "error"})
-DISABLE_STATUSES = frozenset({"invalid"})
+# 与导出门禁、前端「AI无效」角标一致：宣传垫片与无效画面均自动禁用
+DISABLE_STATUSES = frozenset({"invalid", "promo_loop"})
 ENABLE_STATUSES = frozenset({"ok", "frozen"})
 
 SYSTEM_PROMPT = """你是 IPTV 频道画面质检员。根据 2x2 拼图判断每个槽位。原则：**从宽认定有效**，避免误杀正常收视。
@@ -61,6 +62,15 @@ def _apply_ai_visual_enablement(ch: Channel, status: str) -> None:
         ch.is_enabled = False
     elif st in ENABLE_STATUSES:
         ch.is_enabled = True
+
+
+def _sync_stored_ai_visual_disablement(ch: Channel) -> bool:
+    """按已落库的 AI 视觉状态补齐禁用（修复历史 promo_loop 未禁用）。"""
+    st = (ch.ai_visual_status or "").lower()
+    if st in DISABLE_STATUSES and ch.is_enabled:
+        ch.is_enabled = False
+        return True
+    return False
 
 
 def _resolve_result_channel_id(
@@ -190,6 +200,13 @@ class VisualAiChecker:
         stats = {"batches": 0, "updated": 0, "errors": 0, "disabled": 0, "enabled": 0}
         vision_system = _build_vision_system(_resolve_vision_prompt(out, draft, custom_prompt))
 
+        for ch in unique:
+            if _sync_stored_ai_visual_disablement(ch):
+                stats["disabled"] += 1
+                session.add(ch)
+        if stats["disabled"]:
+            session.commit()
+
         for batch_start in range(0, len(unique), BATCH_SIZE):
             batch = unique[batch_start : batch_start + BATCH_SIZE]
             slots = []
@@ -227,7 +244,7 @@ class VisualAiChecker:
             try:
                 parsed = await client.chat_vision_json(vision_system, user_text, collage_url)
                 results = parsed.get("results") or []
-            except Exception as e:
+            except (VisionJsonParseError, ValueError) as e:
                 stats["errors"] += 1
                 for ch in batch:
                     ch.ai_visual_status = "error"

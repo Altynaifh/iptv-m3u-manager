@@ -828,7 +828,10 @@
                 // 重点：任务状态变为终态时的强提醒
                 if (isStatusChange) {
                     if (task.status === 'success') {
-                        showToast(`任务成功: ${task.name}`, "success");
+                        const doneMsg = (task.name && task.name.includes('批量深度检测') && task.message)
+                            ? task.message
+                            : `任务成功: ${task.name}`;
+                        showToast(doneMsg, "success");
                     } else if (task.status === 'failure') {
                         showToast(`任务失败: ${task.name}`, "error");
                     } else if (task.status === 'canceled') {

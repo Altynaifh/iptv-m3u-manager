@@ -32,10 +32,27 @@ async def check_channels_task(task_id: str, channel_ids: List[int], source: str 
                 await update_task_status(task_id, status="success", progress=100, message="没有有效的频道需要检测")
                 return
                 
-            if await StreamChecker.run_batch_check(session, channels, concurrency=5, source=source, task_id=task_id, auto_disable=auto_disable) is False:
-                # 如果是因为中止而退出的，不发送最后的 success 广播
+            batch_stats = await StreamChecker.run_batch_check(
+                session, channels, concurrency=5, source=source, task_id=task_id, auto_disable=auto_disable
+            )
+            if batch_stats is False:
                 return
-            
+            summary = batch_stats if isinstance(batch_stats, dict) else {}
+            ok_n = int(summary.get("success", 0))
+            total_n = int(summary.get("total", len(channels)))
+            fail_n = int(summary.get("failed", max(0, total_n - ok_n)))
+            msg = f"检测完成：成功截图 {ok_n}/{total_n}"
+            if fail_n:
+                msg += f"，失败 {fail_n}"
+            await update_task_status(
+                task_id,
+                status="success",
+                progress=100,
+                message=msg,
+                result=json.dumps(summary, ensure_ascii=False),
+            )
+            return
+
         await update_task_status(task_id, status="success", progress=100, message="检测任务已完成")
     except Exception as e:
         print(f"[Task] 深度检测异常中断 (ID: {task_id}): {e}")
@@ -208,7 +225,7 @@ class StreamChecker:
         [重构版] 分批执行多个频道的深度检测
         """
         if not channels:
-            return
+            return {"total": 0, "success": 0, "failed": 0}
 
         # 对频道按 URL 去重
         unique_channels = []
@@ -284,23 +301,29 @@ class StreamChecker:
         if local_aborted:
             return False
 
+        valid_results = [
+            res for res in results
+            if res and res.get("ch_id") and res.get("status") != "canceled"
+        ]
+        success_count = sum(1 for res in valid_results if res.get("status") is True)
+        failed_count = len(valid_results) - success_count
+
         # 批量写回数据库（过滤掉已取消的虚拟结果）
         from database import engine
         with Session(engine) as update_session:
-            for res in results:
-                if res and res.get('ch_id') and res.get('status') != "canceled":
-                    ch = update_session.get(cls._get_channel_model(), res['ch_id'])
-                    if ch:
-                        ch.check_status = res['status']
-                        ch.check_date = datetime.utcnow()
-                        ch.check_image = res.get('image')
-                        ch.check_error = res.get('error') if not res['status'] else None
-                        ch.check_source = source
-                        if auto_disable:
-                            ch.is_enabled = res['status']
-                        update_session.add(ch)
+            for res in valid_results:
+                ch = update_session.get(cls._get_channel_model(), res['ch_id'])
+                if ch:
+                    ch.check_status = res['status']
+                    ch.check_date = datetime.utcnow()
+                    ch.check_image = res.get('image')
+                    ch.check_error = res.get('error') if not res['status'] else None
+                    ch.check_source = source
+                    if auto_disable:
+                        ch.is_enabled = res['status']
+                    update_session.add(ch)
             update_session.commit()
-        return True
+        return {"total": total, "success": success_count, "failed": failed_count}
             
         # 清理进度标记属性，防止内存泄漏或属性过多
         if hasattr(cls, f"_last_p_{task_id}"):

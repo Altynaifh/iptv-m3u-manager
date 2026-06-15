@@ -11,6 +11,14 @@ import aiohttp
 _VISION_JSON_LOG: Path | None = None
 
 
+class VisionJsonParseError(ValueError):
+    """视觉 JSON 解析失败，附带最后一次模型原文便于排查。"""
+
+    def __init__(self, message: str, raw: str = ""):
+        super().__init__(message)
+        self.raw = raw or ""
+
+
 def _vision_json_log_path() -> Path:
     """视觉 JSON 解析失败日志路径。"""
     global _VISION_JSON_LOG
@@ -49,6 +57,9 @@ def _extract_detail_loose(chunk: str) -> str:
     """从可能含未转义双引号的片段中抽取 detail 字符串。"""
     m = re.search(r'"detail"\s*:\s*"', chunk)
     if not m:
+        plain = re.search(r'"detail"\s*:\s*([^,}\]]+)', chunk)
+        if plain:
+            return plain.group(1).strip().strip('"').strip("'")
         return ""
     i = m.end()
     chars: List[str] = []
@@ -177,6 +188,9 @@ def _parse_vision_json(text: str) -> Any:
     text = (text or "").strip()
     if not text:
         raise ValueError("模型返回为空")
+
+    if text.startswith("["):
+        text = '{"results":' + text + "}"
 
     candidates: List[str] = [text, _repair_json_text(text)]
     m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
@@ -340,7 +354,10 @@ class LlmClient:
                 if attempt < attempts:
                     print(f"[LLM] 视觉 JSON 不合规，重试 {attempt}/{attempts}: {e}")
                     continue
-        raise ValueError(str(last_err) if last_err else "无法解析 JSON")
+        raise VisionJsonParseError(
+            str(last_err) if last_err else "无法解析 JSON",
+            raw=last_raw,
+        )
 
     async def _chat_vision_raw(
         self,
