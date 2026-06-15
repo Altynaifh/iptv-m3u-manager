@@ -1,4 +1,4 @@
-"""AI 排序同频道识别与台标覆盖（预览 / M3U 共用）。"""
+"""AI 排序同频道识别：台标与 tvg-id 覆盖（预览 / M3U 共用）。"""
 
 from __future__ import annotations
 
@@ -250,17 +250,17 @@ def epg_program_matched(title: Optional[str]) -> bool:
     return (title or "").strip() not in _EPG_MISS_TITLES
 
 
-def pick_epg_donor_dict(
-    by_id: Dict[int, dict],
+def pick_tvg_id_donor(
+    channels_by_id: Dict[int, Channel],
     cluster: List[int],
     *,
     layout_order: Optional[Dict[int, int]] = None,
-) -> Optional[dict]:
-    """在集群内选主节目源：布局靠前且已匹配到节目的频道。"""
+) -> Optional[Channel]:
+    """在集群内选主 tvg-id 源：布局靠前且有 tvg_id 的频道。"""
     candidates: List[tuple] = []
     for cid in cluster:
-        ch = by_id.get(cid)
-        if ch and epg_program_matched(ch.get("epg_program")):
+        ch = channels_by_id.get(cid)
+        if ch and (ch.tvg_id or "").strip():
             rank = layout_order.get(cid, cid) if layout_order else cid
             candidates.append((rank, ch))
     if not candidates:
@@ -269,12 +269,117 @@ def pick_epg_donor_dict(
     return candidates[0][1]
 
 
-def apply_epg_cluster_overlays(
+def pick_tvg_id_donor_dict(
+    by_id: Dict[int, dict],
+    cluster: List[int],
+    *,
+    layout_order: Optional[Dict[int, int]] = None,
+    require_epg_match: bool = False,
+) -> Optional[dict]:
+    """预览 dict 版主 tvg-id 源；可选要求已匹配 EPG。"""
+    candidates: List[tuple] = []
+    for cid in cluster:
+        ch = by_id.get(cid)
+        if not ch or not (ch.get("tvg_id") or "").strip():
+            continue
+        if require_epg_match and not epg_program_matched(ch.get("epg_program")):
+            continue
+        rank = layout_order.get(cid, cid) if layout_order else cid
+        candidates.append((rank, ch))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def compute_tvg_id_overlays(
+    channels: List[Channel],
+    same_channel_clusters: List[List[int]],
+    *,
+    layout_order: Optional[Dict[int, int]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """同频道集群：仅对 tvg_id 为空的成员，使用主源 tvg_id。"""
+    by_id = {c.id: c for c in channels if c.id is not None}
+    overlays: Dict[str, Dict[str, Any]] = {}
+    for cluster in same_channel_clusters:
+        if len(cluster) < 2:
+            continue
+        donor = pick_tvg_id_donor(by_id, cluster, layout_order=layout_order)
+        if not donor or donor.id is None:
+            continue
+        tvg_id = (donor.tvg_id or "").strip()
+        if not tvg_id:
+            continue
+        for cid in cluster:
+            if cid == donor.id:
+                continue
+            ch = by_id.get(cid)
+            if not ch or (ch.tvg_id or "").strip():
+                continue
+            overlays[str(cid)] = {
+                "tvg_id": tvg_id,
+                "source_id": donor.id,
+                "source_name": donor.name or "",
+            }
+    return overlays
+
+
+def _payload_channel_maps(payload: dict) -> Dict[int, dict]:
+    by_id: Dict[int, dict] = {}
+    for key in ("manual_groups", "ai_groups"):
+        for sec in payload.get(key) or []:
+            for ch in sec.get("channels") or []:
+                cid = ch.get("id")
+                if cid is not None:
+                    by_id[int(cid)] = ch
+    return by_id
+
+
+def _apply_tvg_overlay_to_dict(ch: dict, ov: Dict[str, Any]) -> None:
+    if "tvg_id_native" not in ch:
+        ch["tvg_id_native"] = (ch.get("tvg_id") or "").strip()
+    ch["tvg_id"] = ov["tvg_id"]
+    ch["tvg_id_overlay"] = {
+        "source_id": ov["source_id"],
+        "source_name": ov["source_name"],
+    }
+
+
+def apply_tvg_id_overlays_to_dicts(
+    channel_dicts: List[dict],
+    overlays: Dict[str, Dict[str, Any]],
+) -> None:
+    for d in channel_dicts:
+        ov = overlays.get(str(d.get("id")))
+        if ov:
+            _apply_tvg_overlay_to_dict(d, ov)
+        else:
+            if "tvg_id_native" not in d:
+                d["tvg_id_native"] = (d.get("tvg_id") or "").strip()
+            d["tvg_id_overlay"] = None
+
+
+def apply_tvg_id_overlays_to_channels(
+    channels: List[Channel],
+    overlays: Dict[str, Dict[str, Any]],
+) -> List[Channel]:
+    """M3U 导出：仅对无 tvg_id 的成员写入主源 tvg-id。"""
+    out: List[Channel] = []
+    for ch in channels:
+        ov = overlays.get(str(ch.id))
+        if ov and not (ch.tvg_id or "").strip():
+            out.append(Channel(**{**ch.model_dump(), "tvg_id": ov["tvg_id"]}))
+        else:
+            out.append(Channel(**ch.model_dump()))
+    return out
+
+
+def prepare_preview_tvg_ids(
     payload: dict,
     out: OutputSource,
     members: List[Channel],
 ) -> None:
-    """预览节目表：同频道集群内，从未匹配成员覆盖有匹配成员的 EPG 快照。"""
+    """EPG 查询前：对无 tvg_id 成员做同频道覆盖。"""
     clusters = load_same_channel_clusters(
         out.layout_meta or "{}",
         members,
@@ -283,19 +388,45 @@ def apply_epg_cluster_overlays(
     if not clusters:
         return
     order = layout_channel_order(out.channel_layout or "{}")
-    by_id: Dict[int, dict] = {}
-    for key in ("manual_groups", "ai_groups"):
-        for sec in payload.get(key) or []:
-            for ch in sec.get("channels") or []:
-                cid = ch.get("id")
-                if cid is not None:
-                    by_id[int(cid)] = ch
+    overlays = compute_tvg_id_overlays(members, clusters, layout_order=order or None)
+    by_id = _payload_channel_maps(payload)
+    for cid_str, ov in overlays.items():
+        ch = by_id.get(int(cid_str))
+        if ch:
+            _apply_tvg_overlay_to_dict(ch, ov)
+
+
+def fix_epg_mismatch_via_tvg_id(
+    payload: dict,
+    out: OutputSource,
+    members: List[Channel],
+    epg_url: str,
+) -> None:
+    """EPG 首次查询后：未匹配成员改用同集群已匹配成员的 tvg-id 并重新查询。"""
+    from services.epg import EPGManager
+
+    if not epg_url or not EPGManager.ensure_parsed_cache_sync(epg_url):
+        return
+    clusters = load_same_channel_clusters(
+        out.layout_meta or "{}",
+        members,
+        layout_mode=(out.layout_mode or "rules"),
+    )
+    if not clusters:
+        return
+    order = layout_channel_order(out.channel_layout or "{}")
+    by_id = _payload_channel_maps(payload)
 
     for cluster in clusters:
         if len(cluster) < 2:
             continue
-        donor = pick_epg_donor_dict(by_id, cluster, layout_order=order or None)
+        donor = pick_tvg_id_donor_dict(
+            by_id, cluster, layout_order=order or None, require_epg_match=True
+        )
         if not donor:
+            continue
+        donor_tvg = (donor.get("tvg_id") or "").strip()
+        if not donor_tvg:
             continue
         donor_id = donor.get("id")
         for cid in cluster:
@@ -304,14 +435,25 @@ def apply_epg_cluster_overlays(
             ch = by_id.get(cid)
             if not ch or epg_program_matched(ch.get("epg_program")):
                 continue
-            ch["epg_program_native"] = ch.get("epg_program")
-            ch["epg_logo_native"] = ch.get("epg_logo")
-            ch["epg_program"] = donor.get("epg_program")
-            ch["epg_logo"] = donor.get("epg_logo")
-            ch["epg_overlay"] = {
-                "source_id": donor_id,
-                "source_name": donor.get("name") or "",
-            }
+            current = (ch.get("tvg_id") or "").strip()
+            if current == donor_tvg:
+                continue
+            _apply_tvg_overlay_to_dict(
+                ch,
+                {
+                    "tvg_id": donor_tvg,
+                    "source_id": donor_id,
+                    "source_name": donor.get("name") or "",
+                },
+            )
+            prog = EPGManager.lookup_program_sync(
+                epg_url,
+                ch.get("tvg_id") or "",
+                ch.get("name") or "",
+                ch.get("logo"),
+            )
+            ch["epg_program"] = prog.get("title")
+            ch["epg_logo"] = prog.get("logo")
 
 
 def apply_logo_overlays_to_dicts(

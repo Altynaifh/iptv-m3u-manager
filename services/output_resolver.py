@@ -9,7 +9,9 @@ from models import Channel, OutputSource, Subscription
 from services.channel_logo_overlay import (
     apply_logo_overlays_to_channels,
     apply_logo_overlays_to_dicts,
+    apply_tvg_id_overlays_to_channels,
     compute_logo_overlays,
+    compute_tvg_id_overlays,
     layout_channel_order,
     load_same_channel_clusters,
     quote_logo_url,
@@ -260,10 +262,33 @@ def export_m3u_channels(
     else:
         enabled = [c for c in members if c.is_enabled]
 
-    overlays = _resolve_logo_overlays(out, members)
-    if overlays:
-        return apply_logo_overlays_to_channels(enabled, overlays)
+    enabled = _apply_cluster_media_overlays_to_channels(enabled, out, members)
     return enabled
+
+
+def _resolve_tvg_id_overlays(out: OutputSource, members: List[Channel]) -> Dict:
+    clusters = load_same_channel_clusters(
+        out.layout_meta or "{}",
+        members,
+        layout_mode=(out.layout_mode or "rules"),
+    )
+    order = layout_channel_order(out.channel_layout or "{}")
+    return compute_tvg_id_overlays(members, clusters, layout_order=order or None)
+
+
+def _apply_cluster_media_overlays_to_channels(
+    channels: List[Channel],
+    out: OutputSource,
+    members: List[Channel],
+) -> List[Channel]:
+    logo_ov = _resolve_logo_overlays(out, members)
+    tvg_ov = _resolve_tvg_id_overlays(out, members)
+    result = channels
+    if logo_ov:
+        result = apply_logo_overlays_to_channels(result, logo_ov)
+    if tvg_ov:
+        result = apply_tvg_id_overlays_to_channels(result, tvg_ov)
+    return result
 
 
 def organize_candidates(
