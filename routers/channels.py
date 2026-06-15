@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlmodel import Session, select
 from models import Channel
 from database import get_session
-from services.output_stats import invalidate_all_output_runtime_caches
+from services.output_stats import invalidate_outputs_for_channel
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -18,6 +18,6 @@ def toggle_channel(channel_id: int, session: Session = Depends(get_session)):
     session.add(channel)
     session.commit()
     session.refresh(channel)
-    # 启用/禁用会改变 M3U 导出集合，须重建静态产物以与预览一致
-    invalidate_all_output_runtime_caches(session, schedule_rebuild=True)
+    # 仅失效相关聚合源缓存并排队重建，避免全量失效引发预览读到过期 gzip
+    invalidate_outputs_for_channel(session, channel, schedule_rebuild=True)
     return channel

@@ -2145,11 +2145,85 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         function beginAggregatePreviewSession() {
             window._aggregatePreviewSessionActive = true;
             window._aggregatePreviewDeferredInactiveIds = new Set();
+            window._previewChannelEnableOverrides = new Map();
         }
 
         function endAggregatePreviewSession() {
             window._aggregatePreviewSessionActive = false;
             window._aggregatePreviewDeferredInactiveIds = new Set();
+            window._previewChannelEnableOverrides = new Map();
+            window._previewReloadDeferredOptions = null;
+            if (window._previewReloadDeferredTimer) {
+                clearTimeout(window._previewReloadDeferredTimer);
+                window._previewReloadDeferredTimer = null;
+            }
+        }
+
+        function rememberPreviewChannelEnableOverride(channelId, isEnabled) {
+            if (!window._previewChannelEnableOverrides) {
+                window._previewChannelEnableOverrides = new Map();
+            }
+            window._previewChannelEnableOverrides.set(
+                Number(channelId),
+                normalizeChannelEnabled(isEnabled)
+            );
+        }
+
+        function forgetPreviewChannelEnableOverride(channelId) {
+            if (!window._previewChannelEnableOverrides) return;
+            window._previewChannelEnableOverrides.delete(Number(channelId));
+        }
+
+        function applyPreviewChannelEnableOverrides(payload) {
+            if (!payload || !window._previewChannelEnableOverrides?.size) return payload;
+            const apply = (groups) => (groups || []).forEach(g => (g.channels || []).forEach(c => {
+                if (c.id == null) return;
+                const ov = window._previewChannelEnableOverrides.get(Number(c.id));
+                if (ov !== undefined) c.is_enabled = ov;
+            }));
+            apply(payload.manual_groups);
+            apply(payload.ai_groups);
+            return payload;
+        }
+
+        function parseToggleResponseEnabled(updated, expectedEnabled) {
+            if (!updated || updated.is_enabled === undefined || updated.is_enabled === null) {
+                return normalizeChannelEnabled(expectedEnabled);
+            }
+            const actual = normalizeChannelEnabled(updated.is_enabled);
+            const expected = normalizeChannelEnabled(expectedEnabled);
+            if (actual !== expected) {
+                console.warn('[toggle] API is_enabled 与预期不一致，以本次切换结果为准', actual, expected);
+                return expected;
+            }
+            return actual;
+        }
+
+        function shouldDeferAggregatePreviewReload() {
+            if (window._channelToggleInFlight && window._channelToggleInFlight.size > 0) return true;
+            const recentMs = Date.now() - (window._previewLastChannelToggleAt || 0);
+            return recentMs < 4000;
+        }
+
+        function flushDeferredAggregatePreviewReload() {
+            if (!window._previewReloadDeferredOptions) return;
+            if (shouldDeferAggregatePreviewReload()) {
+                if (!window._previewReloadDeferredTimer) {
+                    const wait = Math.max(50, 4000 - (Date.now() - (window._previewLastChannelToggleAt || 0)) + 50);
+                    window._previewReloadDeferredTimer = setTimeout(() => {
+                        window._previewReloadDeferredTimer = null;
+                        flushDeferredAggregatePreviewReload();
+                    }, wait);
+                }
+                return;
+            }
+            if (window._previewReloadDeferredTimer) {
+                clearTimeout(window._previewReloadDeferredTimer);
+                window._previewReloadDeferredTimer = null;
+            }
+            const opts = window._previewReloadDeferredOptions;
+            window._previewReloadDeferredOptions = null;
+            scheduleAggregatePreviewReload(opts);
         }
 
         function rememberDeferredInactiveChannel(channelId) {
@@ -2730,6 +2804,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const apply = (groups) => (groups || []).forEach(g => (g.channels || []).forEach(normalizeChannelRecord));
             apply(payload.manual_groups);
             apply(payload.ai_groups);
+            applyPreviewChannelEnableOverrides(payload);
             return payload;
         }
 
@@ -3708,6 +3783,10 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
         function scheduleAggregatePreviewReload(options = {}) {
+            if (shouldDeferAggregatePreviewReload()) {
+                window._previewReloadDeferredOptions = options;
+                return;
+            }
             const delay = options.delay != null
                 ? options.delay
                 : (options.force ? 600 : 300);
@@ -3891,6 +3970,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         function syncChannelEnabledInPreviewPayload(channelId, isEnabled) {
             const nid = normalizePreviewChannelId(channelId);
             const enabled = normalizeChannelEnabled(isEnabled);
+            rememberPreviewChannelEnableOverride(nid, enabled);
             const p = window._previewGroupPayload;
             if (p) {
                 const apply = (groups) => {
@@ -4109,6 +4189,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
             window._channelToggleInFlight.add(nid);
             // 乐观更新：点击后立刻切换按钮与状态，不等待网络
+            window._previewLastChannelToggleAt = Date.now();
             syncChannelEnabledInPreviewPayload(nid, optimisticEnabled);
             if (!optimisticEnabled) rememberDeferredInactiveChannel(nid);
             else forgetDeferredInactiveChannel(nid);
@@ -4127,7 +4208,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     throw new Error(errBody.detail || '操作失败');
                 }
                 const updated = await res.json();
-                const enabled = normalizeChannelEnabled(updated.is_enabled);
+                const enabled = parseToggleResponseEnabled(updated, optimisticEnabled);
 
                 syncChannelEnabledInPreviewPayload(nid, enabled);
                 if (!enabled) rememberDeferredInactiveChannel(nid);
@@ -4138,6 +4219,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 showToast(`频道已${actionLabel}`, 'success');
                 if (typeof fetchOutputs === 'function') fetchOutputs(true);
             } catch (err) {
+                forgetPreviewChannelEnableOverride(nid);
                 syncChannelEnabledInPreviewPayload(nid, prevEnabled);
                 if (!prevEnabled) rememberDeferredInactiveChannel(nid);
                 else forgetDeferredInactiveChannel(nid);
@@ -4146,7 +4228,9 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 showToast('操作失败: ' + (err.message || err), 'error');
             } finally {
                 window._channelToggleInFlight.delete(nid);
+                window._previewLastChannelToggleAt = Date.now();
                 document.querySelectorAll(`[data-channel-toggle-id="${nid}"]`).forEach(btn => { btn.disabled = false; });
+                flushDeferredAggregatePreviewReload();
             }
         }
 
@@ -7309,6 +7393,7 @@ function removeTag(val) {
             const total = window.selectedChannelIds.size;
             let index = 0;
             const targetEnabled = normalizeChannelEnabled(enable);
+            window._previewLastChannelToggleAt = Date.now();
 
             for (const id of window.selectedChannelIds) {
                 index++;
@@ -7338,7 +7423,7 @@ function removeTag(val) {
                         continue;
                     }
                     const updated = await res.json();
-                    const actualEnabled = normalizeChannelEnabled(updated.is_enabled);
+                    const actualEnabled = parseToggleResponseEnabled(updated, targetEnabled);
                     syncChannelEnabledInPreviewPayload(id, actualEnabled);
                     if (!actualEnabled) rememberDeferredInactiveChannel(id);
                     else forgetDeferredInactiveChannel(id);
@@ -7358,9 +7443,11 @@ function removeTag(val) {
                 btn.disabled = false;
             }
 
+            window._previewLastChannelToggleAt = Date.now();
             updatePreviewStats();
             updateSelectionUI();
             if (typeof fetchOutputs === 'function') fetchOutputs(true);
+            flushDeferredAggregatePreviewReload();
             if (changedCount > 0) {
                 showToast(`已批量${actionName} ${changedCount} 个频道`, 'success');
             } else {

@@ -237,15 +237,19 @@ def get_or_build_preview_payload(
         if cached is not None and stale:
             meta = _read_artifact_meta(out.id) or {}
             schedule_rebuild_output_artifacts(out.id, epg_refresh=False)
-            cached["cache"] = {
-                "hit": True,
+            # 过期 gzip 可能仍含旧启用状态；改读库内实时预览，避免前端闪回
+            from services.output_resolver import preview_export_groups
+
+            payload = preview_export_groups(session, out, None)
+            payload["cache"] = {
+                "hit": False,
                 "stale": True,
                 "rebuilding": True,
                 "key": meta.get("cache_key"),
                 "at": meta.get("built_at") or (out.preview_cache_at.isoformat() if out.preview_cache_at else None),
-                "source": "disk",
+                "source": "live",
             }
-            return cached
+            return payload
 
     if not force and not _artifact_bundle_complete(out):
         from services.output_resolver import aggregate_channels

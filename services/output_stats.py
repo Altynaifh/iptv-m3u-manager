@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Dict, List, Optional, Set, Tuple
 
 from sqlmodel import Session, select
@@ -49,6 +50,32 @@ def invalidate_all_output_runtime_caches(session: Session, *, schedule_rebuild: 
         invalidate_output_runtime_cache(out, schedule_rebuild=schedule_rebuild)
         session.add(out)
     session.commit()
+
+
+def invalidate_outputs_for_channel(
+    session: Session,
+    channel: Channel,
+    *,
+    schedule_rebuild: bool = False,
+) -> None:
+    """仅失效包含该频道订阅的聚合源缓存，避免无关聚合源重建竞态。"""
+    if not channel or channel.subscription_id is None:
+        return
+    sub_id = int(channel.subscription_id)
+    touched = False
+    for out in session.exec(select(OutputSource)).all():
+        try:
+            sub_ids = json.loads(out.subscription_ids or "[]")
+            member_sub_ids = {int(x) for x in sub_ids}
+        except (TypeError, ValueError, json.JSONDecodeError):
+            member_sub_ids = set()
+        if sub_id not in member_sub_ids:
+            continue
+        invalidate_output_runtime_cache(out, schedule_rebuild=schedule_rebuild)
+        session.add(out)
+        touched = True
+    if touched:
+        session.commit()
 
 
 def compute_member_stats(
