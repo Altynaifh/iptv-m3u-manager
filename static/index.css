@@ -512,6 +512,13 @@ body.auth-locked .console-panel {
     align-items: center;
 }
 
+.preview-toolbar-refresh-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
 .preview-batch-action-row {
     display: flex;
     flex-wrap: wrap;
@@ -2258,10 +2265,19 @@ body.sub-bulk-float-active {
         box-shadow: 0 0 20px rgba(236, 72, 153, 0.4) !important;
     }
 
-    /* 刷新节目表 - 绿色描边透明背景 */
-    #refresh_epg_btn {
-        flex: 1 1 100% !important;
-        max-width: 100% !important;
+    /* 刷新节目表 / 刷新预览：同一样式，一行两列 */
+    .preview-toolbar-refresh-row {
+        width: 100% !important;
+        flex-wrap: nowrap !important;
+        gap: 6px !important;
+    }
+
+    #refresh_epg_btn,
+    #refresh_preview_btn,
+    .preview-toolbar-refresh-btn {
+        flex: 1 1 0 !important;
+        min-width: 0 !important;
+        max-width: none !important;
         height: 32px !important;
         font-size: 12px !important;
         background: transparent !important;
@@ -2271,7 +2287,9 @@ body.sub-bulk-float-active {
         box-shadow: 0 0 10px rgba(16, 185, 129, 0.15) !important;
     }
 
-    #refresh_epg_btn:hover {
+    #refresh_epg_btn:hover,
+    #refresh_preview_btn:hover,
+    .preview-toolbar-refresh-btn:hover {
         background: rgba(16, 185, 129, 0.15) !important;
         box-shadow: 0 0 20px rgba(16, 185, 129, 0.3) !important;
     }
@@ -2397,7 +2415,9 @@ body.sub-bulk-float-active {
         font-weight: 600 !important;
     }
 
-    [data-theme="light"] #refresh_epg_btn {
+    [data-theme="light"] #refresh_epg_btn,
+    [data-theme="light"] #refresh_preview_btn,
+    [data-theme="light"] .preview-toolbar-refresh-btn {
         border-color: #059669 !important;
         color: #059669 !important;
         font-weight: 600 !important;

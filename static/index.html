@@ -385,10 +385,12 @@
                             style="background: #7c3aed; display: none;">AI 视觉检测</button>
                         <button id="check_ai_organize_btn" class="btn btn-sm toolbar-btn" onclick="checkPreviewAiOrganize()"
                             style="background: #0ea5e9; display: none;">AI 排序</button>
-                        <button id="refresh_epg_btn" class="btn btn-sm toolbar-btn" onclick="refreshEPG()"
-                            style="background: #10b981; display: none;">🔄 刷新节目表</button>
-                        <button id="refresh_preview_btn" class="btn btn-sm toolbar-btn" onclick="forceRefreshAggregatePreview()"
-                            style="background: #6366f1; display: none;" title="重新生成预览数据（忽略服务端缓存）">刷新预览</button>
+                        <div class="preview-toolbar-refresh-row">
+                            <button id="refresh_epg_btn" class="btn btn-sm toolbar-btn preview-toolbar-refresh-btn" onclick="refreshEPG()"
+                                style="background: #10b981; display: none;">🔄 刷新节目表</button>
+                            <button id="refresh_preview_btn" class="btn btn-sm toolbar-btn preview-toolbar-refresh-btn" onclick="forceRefreshAggregatePreview()"
+                                style="background: #6366f1; display: none;" title="重新生成预览数据（忽略服务端缓存）">刷新预览</button>
+                        </div>
 
                         <div class="preview-toolbar-select-group">
                             <button class="btn btn-sm toolbar-btn btn-primary" onclick="toggleSelectAll(true)"
