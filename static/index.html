@@ -184,7 +184,7 @@
                 </div>
                 <div id="llm_vision_prompt_block" style="display:none;margin-bottom:12px;">
                     <label style="font-size:0.85em;opacity:0.9;">AI 判台补充说明（可选）</label>
-                    <textarea id="out_ai_vision_prompt" rows="4" placeholder="用大白话写你的习惯就行，例如：&#10;· 能播出新闻、电视剧、综艺画面的，都算正常频道&#10;· 整屏只有「扫码观看」「关注公众号」「开通会员」的，算广告页&#10;· 带台标、有字幕的直播画面不要轻易关掉&#10;· 只有全黑、彩条、无信号提示的才算坏台" aria-label="AI 判台补充说明"
+                    <textarea id="out_ai_vision_prompt" rows="4" placeholder="要屏蔽：全黑、彩条、无信号、雪花；整屏扫码、引流去别的频道、关注后才能看。&#10;要放行：正在播节目里的普通商品广告（角标、贴片、片头片尾广告都算正常）。&#10;拿不准时按正常频道算。" aria-label="AI 判台补充说明"
                         style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);resize:vertical;min-height:88px;"></textarea>
                     <p style="margin:0;font-size:0.78em;opacity:0.65;">保存聚合源后，跑 AI 视觉检测时会一并参考。可写你这套源的特殊情况，比如「某源经常黑屏几秒」「垫片多但正片也有」。不写也可以，默认已经偏宽松。</p>
                 </div>
