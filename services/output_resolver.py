@@ -17,6 +17,13 @@ from services.generator import M3UGenerator
 AI_VISUAL_EXPORT_BLOCK = frozenset({"promo_loop", "invalid"})
 
 
+def detach_channel_copy(ch: Channel, **updates: Any) -> Channel:
+    """生成脱离 Session 的频道副本，避免 model_copy 后 setattr 触发 ORM 异常。"""
+    data = ch.model_dump()
+    data.update(updates)
+    return Channel(**data)
+
+
 def _parse_json_list(raw: str) -> list:
     try:
         return json.loads(raw or "[]")
@@ -113,7 +120,7 @@ def _filter_channel_list(
         if c.id in excluded_set:
             continue
         if c.url not in seen:
-            out_list.append(c.model_copy())
+            out_list.append(detach_channel_copy(c))
             seen.add(c.url)
     return out_list
 
@@ -186,14 +193,12 @@ def _expand_explicit_layout(
         ch = by_id.get(cid)
         if not ch:
             continue
-        copy = ch.model_copy()
+        group_title = ""
         for g in groups:
             if cid in (g.get("channel_ids") or []):
-                title = (g.get("title") or "").strip()
-                if title:
-                    copy.group = title
+                group_title = (g.get("title") or "").strip()
                 break
-        result.append(copy)
+        result.append(detach_channel_copy(ch, group=group_title or ch.group))
     return result
 
 
@@ -231,14 +236,11 @@ def _order_explicit_layout_members(
             ch = member_by_id.get(i)
             if not ch or i in used:
                 continue
-            copy = ch.model_copy()
-            if title:
-                copy.group = title
-            ordered.append(copy)
+            ordered.append(detach_channel_copy(ch, group=title or ch.group))
             used.add(i)
     for ch in members:
         if ch.id is not None and ch.id not in used:
-            ordered.append(ch.model_copy())
+            ordered.append(detach_channel_copy(ch))
     return ordered
 
 
@@ -283,7 +285,7 @@ def ai_vision_candidates(
 def _channels_to_preview_dicts(channels: List[Channel], session: Session) -> List[dict]:
     subs = session.exec(select(Subscription)).all()
     sub_map = {s.id: s.name or s.url for s in subs}
-    copies = [c.model_copy() for c in channels]
+    copies = [detach_channel_copy(c) for c in channels]
     copies = M3UGenerator.propagate_logos(copies)
     ids = [c.id for c in copies if c.id is not None]
     db_by_id = {}

@@ -240,10 +240,10 @@ def apply_logo_overlays_to_channels(
     """M3U 导出前应用同频道台标覆盖。"""
     out: List[Channel] = []
     for ch in channels:
-        copy = ch.model_copy()
-        native = (copy.logo or "").strip()
-        ov = overlays.get(str(copy.id))
+        native = (ch.logo or "").strip()
+        ov = overlays.get(str(ch.id))
         if ov and not native:
-            copy.logo = ov["logo"]
-        out.append(copy)
+            out.append(Channel(**{**ch.model_dump(), "logo": ov["logo"]}))
+        else:
+            out.append(Channel(**ch.model_dump()))
     return out
