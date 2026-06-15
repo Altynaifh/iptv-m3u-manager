@@ -2402,6 +2402,28 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             return ensurePreviewAggregateExcludedSet().has(Number(channelId));
         }
 
+        function normalizePreviewChannelId(channelId) {
+            const n = Number(channelId);
+            return Number.isFinite(n) ? n : channelId;
+        }
+
+        /** 将后端/缓存中的 is_enabled 规范为布尔值 */
+        function normalizeChannelEnabled(value) {
+            if (value === true || value === 1 || value === '1' || value === 'true') return true;
+            if (value === false || value === 0 || value === '0' || value === 'false' || value === null) return false;
+            if (value === undefined) return true;
+            return !!value;
+        }
+
+        function isPreviewChannelEnabled(channel) {
+            if (!channel) return true;
+            return normalizeChannelEnabled(channel.is_enabled);
+        }
+
+        function isPreviewChannelDisabled(channel) {
+            return !isPreviewChannelEnabled(channel);
+        }
+
         function buildPreviewAggregateExcludeButtonHtml(channelId, options = {}) {
             if (!window.currentPreviewOutputId) return '';
             const excluded = isPreviewAggregateExcluded(channelId);
@@ -2420,8 +2442,10 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 onclick="event.stopPropagation(); togglePreviewAggregateExclude(${channelId})" title="从当前聚合表纳入/剔除">${btnText}</button>`;
         }
 
-        function buildPreviewTableActionsHtml(c) {
-            const isDisabled = c.is_enabled === false;
+        function buildPreviewTableActionsHtml(c, enabledOverride) {
+            const isDisabled = enabledOverride !== undefined
+                ? !normalizeChannelEnabled(enabledOverride)
+                : isPreviewChannelDisabled(c);
             const toggleClass = isDisabled
                 ? 'preview-table-actions__btn preview-table-actions__btn--enable'
                 : 'preview-table-actions__btn preview-table-actions__btn--disable';
@@ -2556,7 +2580,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         function buildMobileAggregateCardHtml(c, epgCellId) {
             const image = c.visualImage || c.check_image;
             const isSelected = window.selectedChannelIds.has(c.id);
-            const isDisabled = c.is_enabled === false;
+            const isDisabled = isPreviewChannelDisabled(c);
             const statusText = buildChannelAvailabilityText(c);
             let checkTimeHtml = '';
             if (c.check_date) {
@@ -2604,7 +2628,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             }
             const epgCellId = `epg_grp_${rowIndex}`;
             return `
-                    <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
+                    <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${isPreviewChannelDisabled(c) ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
                         <td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>
                         <td style="padding: 10px;"><span class="channel-logo-slot channel-logo-slot--table">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span></td>
                         <td style="padding: 10px;">${c.name}</td>
@@ -2705,7 +2729,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 html = batch.map((c, idx) => {
                     const image = c.visualImage || c.check_image;
                     const isSelected = window.selectedChannelIds.has(c.id);
-                    const isDisabled = c.is_enabled === false;
+                    const isDisabled = isPreviewChannelDisabled(c);
 
                     // 状态文字
                     let statusText = '-';
@@ -2840,7 +2864,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     }
 
                     return `
-                    <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${c.is_enabled === false ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
+                    <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${isPreviewChannelDisabled(c) ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
                         ${window.lastRenderShowActions ? `<td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>` : ''}
                         <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo"><span class="channel-logo-slot channel-logo-slot--table">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span></td>
                         <td style="padding: 10px;" data-label="名称：">${c.name}</td>
@@ -3507,22 +3531,6 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
 
-        function normalizePreviewChannelId(channelId) {
-            const n = Number(channelId);
-            return Number.isFinite(n) ? n : channelId;
-        }
-
-        /** 统一判定频道是否启用（兼容布尔与 0/1） */
-        function isPreviewChannelEnabled(channel) {
-            if (!channel) return true;
-            const v = channel.is_enabled;
-            return v !== false && v !== 0 && v !== '0';
-        }
-
-        function coercePreviewChannelEnabled(value) {
-            return value !== false && value !== 0 && value !== '0';
-        }
-
         function resolvePreviewChannelById(channelId) {
             const nid = normalizePreviewChannelId(channelId);
             const match = (list) => (list || []).find(c => Number(c.id) === Number(nid));
@@ -3533,7 +3541,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
         function syncChannelEnabledInPreviewPayload(channelId, isEnabled) {
             const nid = normalizePreviewChannelId(channelId);
-            const enabled = coercePreviewChannelEnabled(isEnabled);
+            const enabled = normalizeChannelEnabled(isEnabled);
             const p = window._previewGroupPayload;
             if (p) {
                 const apply = (groups) => {
@@ -3548,29 +3556,35 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             filteredChannels.forEach(c => { if (Number(c.id) === Number(nid)) c.is_enabled = enabled; });
             window._previewGroupedDomCache = {};
             window._previewGroupSectionOffsetsByDomKey = {};
+            return enabled;
         }
 
-        function patchPreviewTableRowEnablement(tr, item) {
+        function patchPreviewTableRowEnablement(tr, item, enabledOverride) {
             if (!tr || !item) return;
-            const enable = isPreviewChannelEnabled(item);
+            const enable = enabledOverride !== undefined
+                ? normalizeChannelEnabled(enabledOverride)
+                : isPreviewChannelEnabled(item);
             const actionsTd = tr.querySelector('td .preview-table-actions')?.closest('td')
                 || Array.from(tr.querySelectorAll('td')).find(td => td.querySelector('.preview-table-actions'));
             if (actionsTd) {
-                actionsTd.innerHTML = buildPreviewTableActionsHtml(item);
+                actionsTd.innerHTML = buildPreviewTableActionsHtml(item, enable);
             } else {
                 tr.querySelectorAll('[data-channel-toggle-id]').forEach(btn => {
                     btn.innerText = enable ? '禁用' : '启用';
                     btn.classList.remove('preview-table-actions__btn--disable', 'preview-table-actions__btn--enable');
                     btn.classList.add(enable ? 'preview-table-actions__btn--disable' : 'preview-table-actions__btn--enable');
+                    btn.style.background = '';
                 });
             }
             tr.style.opacity = enable ? '1' : '0.5';
             tr.style.background = enable ? 'transparent' : 'rgba(0,0,0,0.2)';
         }
 
-        function patchMobileCardEnablement(card, item) {
+        function patchMobileCardEnablement(card, item, enabledOverride) {
             if (!card || !item) return;
-            const enable = isPreviewChannelEnabled(item);
+            const enable = enabledOverride !== undefined
+                ? normalizeChannelEnabled(enabledOverride)
+                : isPreviewChannelEnabled(item);
             const toggleBtn = card.querySelector('[data-channel-toggle-id]')
                 || card.querySelector('.mobile-channel-card__toggle-btn--disable, .mobile-channel-card__toggle-btn--enable');
             if (toggleBtn) {
@@ -3581,35 +3595,48 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             card.classList.toggle('disabled', !enable);
         }
 
-        function patchAggregateEnablementControls(channelId) {
+        function patchAggregateEnablementControls(channelId, enabledOverride) {
             const nid = normalizePreviewChannelId(channelId);
             const item = resolvePreviewChannelById(nid);
             if (!item) return;
+            if (enabledOverride !== undefined) {
+                item.is_enabled = normalizeChannelEnabled(enabledOverride);
+            }
 
-            document.querySelectorAll(`tr[data-channel-id="${nid}"]`).forEach(tr => patchPreviewTableRowEnablement(tr, item));
+            document.querySelectorAll(`tr[data-channel-id="${nid}"]`).forEach(tr => {
+                patchPreviewTableRowEnablement(tr, item, enabledOverride);
+            });
 
             document.querySelectorAll(`input.ch-checkbox[data-id="${nid}"]`).forEach(cb => {
                 const tr = cb.closest('tr');
-                if (tr && !tr.dataset.channelId) patchPreviewTableRowEnablement(tr, item);
+                if (tr && !tr.dataset.channelId) patchPreviewTableRowEnablement(tr, item, enabledOverride);
             });
 
-            document.querySelectorAll(`.mobile-channel-card[data-id="${nid}"]`).forEach(card => patchMobileCardEnablement(card, item));
+            document.querySelectorAll(`.mobile-channel-card[data-id="${nid}"]`).forEach(card => {
+                patchMobileCardEnablement(card, item, enabledOverride);
+            });
         }
 
-        function refreshAggregateEnablementUI(channelIds) {
+        function refreshAggregateEnablementUI(channelIds, enabledOverride) {
             const ids = Array.isArray(channelIds) ? channelIds : [channelIds];
-            if (window.currentPreviewOutputId && window._previewGroupPayload) {
-                ids.forEach(id => patchAggregateEnablementControls(id));
-                updatePreviewStats();
-                return;
-            }
-            ids.forEach(id => patchAggregateEnablementControls(id));
+            const overrides = Array.isArray(enabledOverride) ? enabledOverride : null;
+            ids.forEach((id, idx) => {
+                const state = overrides ? overrides[idx] : enabledOverride;
+                patchAggregateEnablementControls(id, state);
+            });
             updatePreviewStats();
         }
 
+        window._channelToggleInFlight = window._channelToggleInFlight || new Set();
+
         async function toggleChannel(id) {
+            const nid = normalizePreviewChannelId(id);
+            if (window._channelToggleInFlight.has(nid)) return;
+            window._channelToggleInFlight.add(nid);
+            const toggleBtns = document.querySelectorAll(`[data-channel-toggle-id="${nid}"]`);
+            toggleBtns.forEach(btn => { btn.disabled = true; });
             try {
-                const res = await fetch(`/channels/${id}/toggle`, {
+                const res = await fetch(`/channels/${nid}/toggle`, {
                     method: 'POST',
                     credentials: 'same-origin',
                 });
@@ -3618,19 +3645,23 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     throw new Error(errBody.detail || '操作失败');
                 }
                 const updated = await res.json();
+                const enabled = normalizeChannelEnabled(updated.is_enabled);
 
-                const enabled = coercePreviewChannelEnabled(updated.is_enabled);
-                syncChannelEnabledInPreviewPayload(id, enabled);
+                syncChannelEnabledInPreviewPayload(nid, enabled);
                 if (!enabled) {
-                    rememberDeferredInactiveChannel(id);
+                    rememberDeferredInactiveChannel(nid);
                 } else {
-                    forgetDeferredInactiveChannel(id);
+                    forgetDeferredInactiveChannel(nid);
                 }
-                refreshAggregateEnablementUI(id);
+                patchAggregateEnablementControls(nid, enabled);
+                updatePreviewStats();
                 showToast(enabled ? '频道已启用' : '频道已禁用', 'success');
                 if (typeof fetchOutputs === 'function') fetchOutputs(true);
             } catch (err) {
                 showToast('操作失败: ' + (err.message || err), 'error');
+            } finally {
+                window._channelToggleInFlight.delete(nid);
+                document.querySelectorAll(`[data-channel-toggle-id="${nid}"]`).forEach(btn => { btn.disabled = false; });
             }
         }
 
@@ -6826,8 +6857,9 @@ function removeTag(val) {
                 syncChannelEnabledInPreviewPayload(id, enable);
                 if (enable) forgetDeferredInactiveChannel(id);
                 else rememberDeferredInactiveChannel(id);
+                patchAggregateEnablementControls(id, enable);
             });
-            refreshAggregateEnablementUI(changedIds.length ? changedIds : Array.from(window.selectedChannelIds));
+            updatePreviewStats();
             updateSelectionUI();
             if (typeof fetchOutputs === 'function') fetchOutputs();
             showToast(`批量操作完成，共修改 ${changedCount} 个频道`, 'success');
