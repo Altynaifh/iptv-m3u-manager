@@ -2049,8 +2049,19 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 return { text: '已禁用', tone: 'muted', title: '频道未启用' };
             }
             const st = (c && c.ai_visual_status) ? String(c.ai_visual_status).toLowerCase() : '';
+            const hasScreenshot = !!(c && (c.visualImage || c.check_image));
             if (hasAiVisualResult(c)) {
-                if (st === 'no_image' || st === 'error') {
+                if (st === 'error') {
+                    return {
+                        text: hasScreenshot ? '检测异常' : '检测失败',
+                        tone: 'bad',
+                        title: c.ai_visual_detail || 'AI 视觉检测失败',
+                    };
+                }
+                if (st === 'no_image') {
+                    if (hasScreenshot) {
+                        return { text: '有截图', tone: 'ok', title: c.ai_visual_detail || '有画面截图，AI 未识别为有效节目' };
+                    }
                     return { text: '无截图', tone: 'muted', title: c.ai_visual_detail || 'AI 视觉：无可用画面' };
                 }
                 if (isAiVisualStatusValid(st)) {

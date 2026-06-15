@@ -1,26 +1,83 @@
 """OpenAI 兼容 Chat Completions 客户端。"""
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any, List
 
 import aiohttp
+
+
+def _repair_json_text(text: str) -> str:
+    """修补模型常见 JSON 瑕疵（尾逗号、弯引号等）。"""
+    t = (text or "").strip()
+    t = t.replace("\u201c", '"').replace("\u201d", '"').replace("\u2018", "'").replace("\u2019", "'")
+    t = re.sub(r",\s*}", "}", t)
+    t = re.sub(r",\s*]", "]", t)
+    return t
+
+
+def _extract_results_regex(text: str) -> List[dict]:
+    """从非标准 JSON 文本中抽取视觉检测结果。"""
+    results: List[dict] = []
+    pattern = re.compile(
+        r'\{\s*"channel_id"\s*:\s*(\d+)\s*,\s*"status"\s*:\s*"([^"]+)"\s*,\s*"detail"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}',
+        re.DOTALL,
+    )
+    for m in pattern.finditer(text):
+        detail = m.group(3).replace('\\"', '"')
+        results.append({
+            "channel_id": int(m.group(1)),
+            "status": m.group(2),
+            "detail": detail,
+        })
+    if results:
+        return results
+    # 兼容仅含 status、用 slot 序号的情况
+    slot_pat = re.compile(
+        r'"slot"\s*:\s*(\d+)\s*,\s*"status"\s*:\s*"([^"]+)"\s*,\s*"detail"\s*:\s*"((?:[^"\\]|\\.)*)"',
+        re.DOTALL,
+    )
+    for m in slot_pat.finditer(text):
+        results.append({
+            "slot": int(m.group(1)),
+            "status": m.group(2),
+            "detail": m.group(3).replace('\\"', '"'),
+        })
+    return results
 
 
 def _extract_json_object(text: str) -> Any:
     text = (text or "").strip()
     if not text:
         raise ValueError("模型返回为空")
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
+
+    candidates: List[str] = [text, _repair_json_text(text)]
     m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if m:
-        return json.loads(m.group(1).strip())
+        block = m.group(1).strip()
+        candidates.extend([block, _repair_json_text(block)])
     start = text.find("{")
     end = text.rfind("}")
     if start >= 0 and end > start:
-        return json.loads(text[start : end + 1])
+        slice_text = text[start : end + 1]
+        candidates.extend([slice_text, _repair_json_text(slice_text)])
+
+    last_err: Exception | None = None
+    seen = set()
+    for cand in candidates:
+        if not cand or cand in seen:
+            continue
+        seen.add(cand)
+        try:
+            return json.loads(cand)
+        except json.JSONDecodeError as e:
+            last_err = e
+
+    fallback = _extract_results_regex(text)
+    if fallback:
+        return {"results": fallback}
+
+    if last_err:
+        raise ValueError(str(last_err))
     raise ValueError("无法解析 JSON")
 
 

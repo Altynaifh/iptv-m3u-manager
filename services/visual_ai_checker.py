@@ -68,13 +68,17 @@ def _resolve_result_channel_id(
 
 
 def _decode_data_url(data_url: str) -> Optional[bytes]:
+    """解析 data URL 或纯 base64 截图，供拼图使用。"""
     if not data_url:
         return None
-    s = data_url.strip()
+    s = data_url.strip().replace("\n", "").replace("\r", "").replace(" ", "")
     if "," in s:
         s = s.split(",", 1)[1]
+    pad = len(s) % 4
+    if pad:
+        s += "=" * (4 - pad)
     try:
-        return base64.b64decode(s)
+        return base64.b64decode(s, validate=False)
     except Exception:
         return None
 
@@ -174,8 +178,12 @@ class VisualAiChecker:
 
             if not any(s[2] for s in slots):
                 for ch in batch:
-                    ch.ai_visual_status = "no_image"
-                    ch.ai_visual_detail = "无截图"
+                    if ch.check_image:
+                        ch.ai_visual_status = "error"
+                        ch.ai_visual_detail = "截图数据无法解析，未送入拼图"
+                    else:
+                        ch.ai_visual_status = "no_image"
+                        ch.ai_visual_detail = "无截图"
                     ch.ai_visual_date = datetime.utcnow()
                     session.add(ch)
                 session.commit()
