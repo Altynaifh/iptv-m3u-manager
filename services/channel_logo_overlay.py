@@ -156,30 +156,15 @@ def load_same_channel_clusters(
     return []
 
 
-def _donor_logo_url(donor: Channel, source_type: str) -> str:
-    if source_type == "logo":
-        return (donor.logo or "").strip()
-    img = donor.check_image or ""
-    if not img:
-        return ""
-    if img.startswith("data:"):
-        return img
-    return f"data:image/jpeg;base64,{img}"
-
-
 def pick_logo_donor(
     channels_by_id: Dict[int, Channel],
     cluster: List[int],
-) -> Optional[Tuple[Channel, str]]:
-    """在集群内选取可提供台标的频道（优先自带 logo，其次截图）。"""
+) -> Optional[Channel]:
+    """在集群内选取带正式台标 URL 的频道；无则返回 None。"""
     for cid in cluster:
         ch = channels_by_id.get(cid)
         if ch and (ch.logo or "").strip():
-            return ch, "logo"
-    for cid in cluster:
-        ch = channels_by_id.get(cid)
-        if ch and ch.check_image:
-            return ch, "screenshot"
+            return ch
     return None
 
 
@@ -193,11 +178,10 @@ def compute_logo_overlays(
     for cluster in same_channel_clusters:
         if len(cluster) < 2:
             continue
-        picked = pick_logo_donor(by_id, cluster)
-        if not picked:
+        donor = pick_logo_donor(by_id, cluster)
+        if not donor:
             continue
-        donor, source_type = picked
-        logo_url = _donor_logo_url(donor, source_type)
+        logo_url = (donor.logo or "").strip()
         if not logo_url:
             continue
         for cid in cluster:
@@ -208,7 +192,6 @@ def compute_logo_overlays(
                 "logo": logo_url,
                 "source_id": donor.id,
                 "source_name": donor.name or "",
-                "source_type": source_type,
             }
     return overlays
 
@@ -227,7 +210,6 @@ def apply_logo_overlays_to_dicts(
             d["logo_overlay"] = {
                 "source_id": ov["source_id"],
                 "source_name": ov["source_name"],
-                "source_type": ov["source_type"],
             }
         else:
             d["logo_overlay"] = None

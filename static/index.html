@@ -2397,8 +2397,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         function getChannelLogoTooltip(channel) {
             const overlay = channel && channel.logo_overlay;
             if (overlay && overlay.source_name) {
-                const via = overlay.source_type === 'screenshot' ? '截图' : '台标';
-                return `AI 同频道覆盖：来自「${overlay.source_name}」的${via}`;
+                return `AI 同频道覆盖：来自「${overlay.source_name}」的台标`;
             }
             const native = (channel && channel.logo_native != null ? channel.logo_native : channel && channel.logo) || '';
             if ((native || '').trim()) return '自带台标';
