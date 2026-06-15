@@ -1,0 +1,249 @@
+"""AI 排序同频道识别与台标覆盖（预览 / M3U 共用）。"""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+from models import Channel
+
+
+_NAME_CHAR_MAP = str.maketrans(
+    "臺亞際聞歡樂精採視廣電",
+    "台亚洲闻欢乐精采视广电",
+)
+
+
+def normalize_channel_name_key(name: str) -> str:
+    """仅按名称归一化，用于跨 tvg_id 写法聚类。"""
+    n = name or ""
+    n = re.sub(r"^\[[^\]]+\]", "", n)
+    n = re.sub(r"\[.*?\]|【.*?】|（.*?）|\(.*?\)", "", n)
+    n = n.translate(_NAME_CHAR_MAP)
+    n = re.sub(r"\s+", "", n).lower()
+    for token in ("4gtv", "hd", "fhd", "sd", "字幕", "多音轨", "音轨", "geo-blocked"):
+        n = n.replace(token, "")
+    return n
+
+
+def normalize_channel_identity(name: str, tvg_id: str = "") -> str:
+    """用于启发式聚类的频道身份键。"""
+    tid = (tvg_id or "").strip().lower()
+    if tid:
+        return f"tvg:{tid}"
+    n = normalize_channel_name_key(name)
+    return f"name:{n}" if n else ""
+
+
+def merge_same_channel_clusters(cluster_lists: List[List[int]]) -> List[List[int]]:
+    parent: Dict[int, int] = {}
+
+    def find(x: int) -> int:
+        parent.setdefault(x, x)
+        if parent[x] != x:
+            parent[x] = find(parent[x])
+        return parent[x]
+
+    def unite(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for cluster in cluster_lists:
+        ids = [int(x) for x in cluster]
+        if len(ids) < 2:
+            continue
+        first = ids[0]
+        for cid in ids[1:]:
+            unite(first, cid)
+
+    buckets: Dict[int, List[int]] = {}
+    for cid in parent:
+        root = find(cid)
+        buckets.setdefault(root, []).append(cid)
+    return [sorted(v) for v in buckets.values() if len(v) >= 2]
+
+
+def heuristic_same_channel_clusters(channels: List[Channel]) -> List[List[int]]:
+    """按 tvg_id 与归一化名称将候选频道聚为同频道集群（可交叉合并）。"""
+    by_tvg: Dict[str, List[int]] = {}
+    by_name: Dict[str, List[int]] = {}
+    cluster_lists: List[List[int]] = []
+    for ch in channels:
+        if ch.id is None:
+            continue
+        tid = (ch.tvg_id or "").strip().lower()
+        if tid:
+            by_tvg.setdefault(tid, []).append(ch.id)
+        name_key = normalize_channel_name_key(ch.name or "")
+        if name_key:
+            by_name.setdefault(name_key, []).append(ch.id)
+    for ids in by_tvg.values():
+        if len(ids) >= 2:
+            cluster_lists.append(ids)
+    for ids in by_name.values():
+        if len(ids) >= 2:
+            cluster_lists.append(ids)
+    return merge_same_channel_clusters(cluster_lists)
+
+
+def parse_same_channels_from_parsed(
+    parsed: Any,
+    allowed_ids: Set[int],
+) -> List[List[int]]:
+    """从 LLM 原始 JSON 解析 same_channels。"""
+    raw = []
+    if isinstance(parsed, dict):
+        raw = parsed.get("same_channels") or []
+    clusters: List[List[int]] = []
+    for item in raw:
+        ids: List[int] = []
+        if isinstance(item, list):
+            candidates = item
+        elif isinstance(item, dict):
+            candidates = item.get("channel_ids") or item.get("ids") or []
+        else:
+            continue
+        for cid in candidates:
+            try:
+                i = int(cid)
+            except (TypeError, ValueError):
+                continue
+            if i in allowed_ids and i not in ids:
+                ids.append(i)
+        if len(ids) >= 2:
+            clusters.append(ids)
+    return clusters
+
+
+def load_same_channel_clusters(
+    out_layout_meta: str,
+    channels: List[Channel],
+    *,
+    layout_mode: str = "rules",
+) -> List[List[int]]:
+    """读取 layout_meta 中 AI 标注的集群，并与启发式结果合并。"""
+    allowed = {c.id for c in channels if c.id is not None}
+    ai_clusters: List[List[int]] = []
+    try:
+        meta = json.loads(out_layout_meta or "{}")
+    except json.JSONDecodeError:
+        meta = {}
+    for item in meta.get("same_channels") or []:
+        ids: List[int] = []
+        if isinstance(item, list):
+            candidates = item
+        elif isinstance(item, dict):
+            candidates = item.get("channel_ids") or item.get("ids") or []
+        else:
+            continue
+        for cid in candidates:
+            try:
+                i = int(cid)
+            except (TypeError, ValueError):
+                continue
+            if i in allowed and i not in ids:
+                ids.append(i)
+        if len(ids) >= 2:
+            ai_clusters.append(ids)
+
+    merged = merge_same_channel_clusters(ai_clusters + heuristic_same_channel_clusters(channels))
+    if merged:
+        return merged
+    if (layout_mode or "rules") == "explicit":
+        return heuristic_same_channel_clusters(channels)
+    return []
+
+
+def _donor_logo_url(donor: Channel, source_type: str) -> str:
+    if source_type == "logo":
+        return (donor.logo or "").strip()
+    img = donor.check_image or ""
+    if not img:
+        return ""
+    if img.startswith("data:"):
+        return img
+    return f"data:image/jpeg;base64,{img}"
+
+
+def pick_logo_donor(
+    channels_by_id: Dict[int, Channel],
+    cluster: List[int],
+) -> Optional[Tuple[Channel, str]]:
+    """在集群内选取可提供台标的频道（优先自带 logo，其次截图）。"""
+    for cid in cluster:
+        ch = channels_by_id.get(cid)
+        if ch and (ch.logo or "").strip():
+            return ch, "logo"
+    for cid in cluster:
+        ch = channels_by_id.get(cid)
+        if ch and ch.check_image:
+            return ch, "screenshot"
+    return None
+
+
+def compute_logo_overlays(
+    channels: List[Channel],
+    same_channel_clusters: List[List[int]],
+) -> Dict[str, Dict[str, Any]]:
+    """为无台标频道生成同频道覆盖映射。"""
+    by_id = {c.id: c for c in channels if c.id is not None}
+    overlays: Dict[str, Dict[str, Any]] = {}
+    for cluster in same_channel_clusters:
+        if len(cluster) < 2:
+            continue
+        picked = pick_logo_donor(by_id, cluster)
+        if not picked:
+            continue
+        donor, source_type = picked
+        logo_url = _donor_logo_url(donor, source_type)
+        if not logo_url:
+            continue
+        for cid in cluster:
+            ch = by_id.get(cid)
+            if not ch or (ch.logo or "").strip():
+                continue
+            overlays[str(cid)] = {
+                "logo": logo_url,
+                "source_id": donor.id,
+                "source_name": donor.name or "",
+                "source_type": source_type,
+            }
+    return overlays
+
+
+def apply_logo_overlays_to_dicts(
+    channel_dicts: List[dict],
+    overlays: Dict[str, Dict[str, Any]],
+) -> None:
+    """写入预览 JSON 字段：logo_native / logo / logo_overlay。"""
+    for d in channel_dicts:
+        native = (d.get("logo") or "").strip()
+        d["logo_native"] = native
+        ov = overlays.get(str(d.get("id")))
+        if ov:
+            d["logo"] = ov["logo"]
+            d["logo_overlay"] = {
+                "source_id": ov["source_id"],
+                "source_name": ov["source_name"],
+                "source_type": ov["source_type"],
+            }
+        else:
+            d["logo_overlay"] = None
+
+
+def apply_logo_overlays_to_channels(
+    channels: List[Channel],
+    overlays: Dict[str, Dict[str, Any]],
+) -> List[Channel]:
+    """M3U 导出前应用同频道台标覆盖。"""
+    out: List[Channel] = []
+    for ch in channels:
+        copy = ch.model_copy()
+        native = (copy.logo or "").strip()
+        ov = overlays.get(str(copy.id))
+        if ov and not native:
+            copy.logo = ov["logo"]
+        out.append(copy)
+    return out

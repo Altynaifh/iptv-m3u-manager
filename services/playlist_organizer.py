@@ -8,6 +8,11 @@ from sqlmodel import Session
 from models import Channel, OutputSource
 from services.llm_client import LlmClient, _extract_json_object
 from services.llm_settings import load_llm_blocks
+from services.channel_logo_overlay import (
+    heuristic_same_channel_clusters,
+    merge_same_channel_clusters,
+    parse_same_channels_from_parsed,
+)
 from services.output_resolver import aggregate_channels, organize_candidates
 
 # 标准组名顺序（与社区 M3U / EPG 习惯一致）
@@ -38,10 +43,15 @@ ORGANIZE_SYSTEM = """你是中国 IPTV 节目表编排助手。输入是候选�
 - 港澳台：同系列合并（如多种「翡翠台」写法视为同一节目族，排在港澳台组内相邻位置）。
 - 地方台、数字频道：按名称或频道重要性合理排序。
 
-【输出】仅 JSON，无其它文字：
-{"groups":[{"title":"分组名（必须与上述标准名一致）","channel_ids":[整数,...]}]}
+【同频道识别】不同 id 但实际为同一套节目的频道（名称写法、tvg_id、订阅源不同但内容相同），写入 same_channels：
+- 每组 channel_ids 至少 2 个整数
+- 同一 channel_id 最多出现在一个 same_channels 组
+- 示例：「TVBS新闻台」与「TVBS新闻 [4gTV]」应归为同组
 
-规则：每个 channel_id 必须且最多出现一次；输入列表中的频道须全部写入某一组；title 必须使用上述标准分组名之一。"""
+【输出】仅 JSON，无其它文字：
+{"groups":[{"title":"分组名（必须与上述标准名一致）","channel_ids":[整数,...]}],"same_channels":[{"channel_ids":[整数,...]}]}
+
+规则：每个 channel_id 在 groups 中必须且最多出现一次；输入列表中的频道须全部写入某一组；title 必须使用上述标准分组名之一；same_channels 可为空数组。"""
 
 
 def _build_organize_system(custom_prompt: str | None) -> str:
@@ -170,6 +180,9 @@ class PlaylistOrganizer:
         raw = await client.chat_text(system_prompt, user)
         parsed = _extract_json_object(raw)
         layout = validate_layout(parsed, allowed, preserve_group_order=bool(custom_prompt))
+        ai_same = parse_same_channels_from_parsed(parsed, allowed)
+        heuristic_same = heuristic_same_channel_clusters(channels)
+        same_channels = merge_same_channel_clusters(ai_same + heuristic_same)
 
         out.layout_mode = "explicit"
         out.channel_layout = json.dumps(layout, ensure_ascii=False)
@@ -178,7 +191,8 @@ class PlaylistOrganizer:
                 "organized_at": datetime.utcnow().isoformat(),
                 "model": text["model"],
                 "channel_count": sum(len(g["channel_ids"]) for g in layout["groups"]),
-                "prompt_version": "standard-cn-groups-v1+custom" if custom_prompt else "standard-cn-groups-v1",
+                "same_channels": same_channels,
+                "prompt_version": "standard-cn-groups-v1+custom+same-channel" if custom_prompt else "standard-cn-groups-v1+same-channel",
                 "custom_prompt": custom_prompt or None,
             },
             ensure_ascii=False,

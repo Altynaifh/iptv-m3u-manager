@@ -1458,6 +1458,7 @@ textarea {
 }
 
 .channel-logo-slot {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1490,6 +1491,30 @@ textarea {
 
 .channel-logo-slot__img--broken {
     display: none;
+}
+
+.channel-logo-slot--ai-overlay {
+    border-color: rgba(139, 92, 246, 0.55);
+    box-shadow: inset 0 0 0 1px rgba(139, 92, 246, 0.25);
+}
+
+.channel-logo-slot__ai-badge {
+    position: absolute;
+    right: -4px;
+    bottom: -4px;
+    font-size: 8px;
+    line-height: 1;
+    padding: 1px 3px;
+    border-radius: 3px;
+    background: rgba(139, 92, 246, 0.92);
+    color: #fff;
+    font-weight: 600;
+    pointer-events: none;
+}
+
+.mobile-channel-card__logo-wrap {
+    position: relative;
+    flex-shrink: 0;
 }
 
 

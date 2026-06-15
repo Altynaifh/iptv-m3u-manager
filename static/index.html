@@ -2394,11 +2394,42 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
 
-        function mobileCardLogoHtml(logo) {
-            const src = (logo || '').trim();
-            if (!src) return '';
+        function getChannelLogoTooltip(channel) {
+            const overlay = channel && channel.logo_overlay;
+            if (overlay && overlay.source_name) {
+                const via = overlay.source_type === 'screenshot' ? '截图' : '台标';
+                return `AI 同频道覆盖：来自「${overlay.source_name}」的${via}`;
+            }
+            const native = (channel && channel.logo_native != null ? channel.logo_native : channel && channel.logo) || '';
+            if ((native || '').trim()) return '自带台标';
+            if ((channel && channel.logo || '').trim()) return '自带台标';
+            return '无台标';
+        }
+
+        function channelLogoSlotHtml(channel, extraClass) {
+            const src = ((channel && channel.logo) || '').trim();
+            const overlay = channel && channel.logo_overlay;
+            const cls = ['channel-logo-slot', extraClass || 'channel-logo-slot--table'];
+            if (overlay) cls.push('channel-logo-slot--ai-overlay');
+            const title = getChannelLogoTooltip(channel).replace(/"/g, '&quot;');
+            const badge = overlay
+                ? '<span class="channel-logo-slot__ai-badge" aria-hidden="true">AI</span>'
+                : '';
+            if (!src) {
+                return `<span class="${cls.join(' ')}" title="${title}" aria-label="${title}">${badge}</span>`;
+            }
             const safe = src.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-            return `<img class="mobile-channel-card__logo" src="${safe}" alt="" onerror="this.remove()">`;
+            return `<span class="${cls.join(' ')}" title="${title}" aria-label="${title}">${badge}<img class="channel-logo-slot__img" src="${safe}" alt="" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');"></span>`;
+        }
+
+        function mobileCardLogoHtml(channel) {
+            if (typeof channel === 'string') {
+                const src = (channel || '').trim();
+                if (!src) return '';
+                const safe = src.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+                return `<img class="mobile-channel-card__logo" src="${safe}" alt="" onerror="this.remove()">`;
+            }
+            return channelLogoSlotHtml(channel, 'channel-logo-slot--card mobile-channel-card__logo-wrap');
         }
 
         function ensurePreviewAggregateExcludedSet() {
@@ -2620,7 +2651,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             return `
                     <div class="mobile-channel-card ${isDisabled ? 'disabled' : ''} ${isSelected ? 'selected' : ''} ${isPreviewAggregateExcluded(c.id) ? 'preview-aggregate-excluded' : ''}"
                          data-id="${c.id}" onclick="handleMobileCardClick(event, ${c.id})">
-                        ${mobileCardLogoHtml(c.logo)}
+                        ${mobileCardLogoHtml(c)}
                         <div class="mobile-channel-card__bg ${!image ? 'mobile-channel-card__bg--empty' : ''}">
                             ${mobilePreviewBgInnerHtml(c, image)}
                         </div>
@@ -2652,7 +2683,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             return `
                     <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${isPreviewChannelDisabled(c) ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
                         <td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>
-                        <td style="padding: 10px;"><span class="channel-logo-slot channel-logo-slot--table">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span></td>
+                        <td style="padding: 10px;">${channelLogoSlotHtml(c)}</td>
                         <td style="padding: 10px;">${c.name}</td>
                         <td style="padding: 10px;"><span style="font-size: 0.8em; opacity: 0.6;">${c.tvg_id || '-'}</span></td>
                         ${window.currentEPGUrl ? `<td id="${epgCellId}" style="padding: 10px;">${previewEpgSnapshotSpan(c)}</td>` : ''}
@@ -2778,7 +2809,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     return `
                     <div class="mobile-channel-card ${isDisabled ? 'disabled' : ''} ${isSelected ? 'selected' : ''}" 
                          data-id="${c.id}" onclick="handleMobileCardClick(event, ${c.id})">
-                        ${mobileCardLogoHtml(c.logo)}
+                        ${mobileCardLogoHtml(c)}
                         <!-- 背景预览图 -->
                         <div class="mobile-channel-card__bg ${!image ? 'mobile-channel-card__bg--empty' : ''}">
                             ${image
@@ -2888,7 +2919,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     return `
                     <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${isPreviewChannelDisabled(c) ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
                         ${window.lastRenderShowActions ? `<td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>` : ''}
-                        <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo"><span class="channel-logo-slot channel-logo-slot--table">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span></td>
+                        <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo">${channelLogoSlotHtml(c)}</td>
                         <td style="padding: 10px;" data-label="名称：">${c.name}</td>
                         <td style="padding: 10px;" data-label="TVG："><span style="font-size: 0.8em; opacity: 0.6;">${c.tvg_id || '-'}</span></td>
                         ${window.currentEPGUrl ? `

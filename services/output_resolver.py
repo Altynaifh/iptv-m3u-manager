@@ -6,6 +6,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from sqlmodel import Session, select
 
 from models import Channel, OutputSource, Subscription
+from services.channel_logo_overlay import (
+    apply_logo_overlays_to_channels,
+    apply_logo_overlays_to_dicts,
+    compute_logo_overlays,
+    load_same_channel_clusters,
+)
 from services.generator import M3UGenerator
 
 AI_VISUAL_EXPORT_BLOCK = frozenset({"promo_loop", "invalid"})
@@ -246,9 +252,14 @@ def export_m3u_channels(
 
     if (layout_mode or "rules") == "explicit":
         ordered = _order_explicit_layout_members(members, channel_layout)
-        return [c for c in ordered if c.is_enabled]
+        enabled = [c for c in ordered if c.is_enabled]
+    else:
+        enabled = [c for c in members if c.is_enabled]
 
-    return [c for c in members if c.is_enabled]
+    overlays = _resolve_logo_overlays(out, members)
+    if overlays:
+        return apply_logo_overlays_to_channels(enabled, overlays)
+    return enabled
 
 
 def organize_candidates(
@@ -307,11 +318,27 @@ def _bucket_by_group_title(channels: List[Channel]) -> List[Tuple[str, List[Chan
     return [(t, buckets[t]) for t in order]
 
 
-def _groups_to_payload(groups: List[Tuple[str, List[Channel]]], session: Session) -> List[dict]:
-    return [
-        {"title": title, "channels": _channels_to_preview_dicts(chs, session)}
-        for title, chs in groups
-    ]
+def _groups_to_payload(
+    groups: List[Tuple[str, List[Channel]]],
+    session: Session,
+    *,
+    logo_overlays: Optional[Dict] = None,
+) -> List[dict]:
+    payload = []
+    for title, chs in groups:
+        dicts = _channels_to_preview_dicts(chs, session)
+        apply_logo_overlays_to_dicts(dicts, logo_overlays or {})
+        payload.append({"title": title, "channels": dicts})
+    return payload
+
+
+def _resolve_logo_overlays(out: OutputSource, members: List[Channel]) -> Dict:
+    clusters = load_same_channel_clusters(
+        out.layout_meta or "{}",
+        members,
+        layout_mode=(out.layout_mode or "rules"),
+    )
+    return compute_logo_overlays(members, clusters)
 
 
 def preview_export_groups(
@@ -323,9 +350,12 @@ def preview_export_groups(
     sub_ids, regex, keywords, excluded_ids, layout_mode, channel_layout = _output_config(out, draft)
     mode = (layout_mode or "rules").strip()
     manual_list = filter_candidates(session, out, draft, enabled_only=False)
-    manual_groups = _groups_to_payload(_bucket_by_group_title(manual_list), session)
+    all_channels = aggregate_channels(session, out, draft)
+    logo_overlays = _resolve_logo_overlays(out, all_channels)
+    manual_groups = _groups_to_payload(
+        _bucket_by_group_title(manual_list), session, logo_overlays=logo_overlays
+    )
     if mode == "explicit":
-        all_channels = aggregate_channels(session, out, draft)
         try:
             layout = json.loads(channel_layout or "{}")
         except json.JSONDecodeError:
@@ -354,11 +384,11 @@ def preview_export_groups(
         return {
             "layout_mode": mode,
             "manual_groups": manual_groups,
-            "ai_groups": _groups_to_payload(ai_groups, session) if ai_groups else [],
+            "ai_groups": _groups_to_payload(ai_groups, session, logo_overlays=logo_overlays) if ai_groups else [],
             "ai_groups_stale": not bool(ai_groups),
         }
     return {
         "layout_mode": "rules",
-        "manual_groups": _groups_to_payload(_bucket_by_group_title(aggregate_channels(session, out, draft)), session),
+        "manual_groups": manual_groups,
         "ai_groups": [],
     }
