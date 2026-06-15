@@ -391,7 +391,9 @@
                             <button id="refresh_preview_btn" class="btn btn-sm toolbar-btn preview-toolbar-refresh-btn" onclick="forceRefreshAggregatePreview()"
                                 style="background: #6366f1; display: none;" title="重新生成预览数据（忽略服务端缓存）">刷新预览</button>
                         </div>
+                    </div>
 
+                    <div class="preview-toolbar-secondary-row">
                         <div class="preview-toolbar-select-group">
                             <button class="btn btn-sm toolbar-btn btn-primary" onclick="toggleSelectAll(true)"
                                 id="sel_all_btn" style="display: none;">全选</button>
@@ -402,17 +404,16 @@
                             <button class="btn btn-sm toolbar-btn btn-danger-soft" onclick="selectByStatus(false)"
                                 style="display: none;" id="sel_disabled_btn">全选禁用</button>
                         </div>
-                    </div>
-
-                    <div class="preview-batch-action-row">
-                        <button class="btn btn-sm toolbar-btn" onclick="batchSetStatus(true)"
-                            style="background: #059669; display: none;" id="batch_enable_btn">启用选中</button>
-                        <button class="btn btn-sm toolbar-btn" onclick="batchSetStatus(false)"
-                            style="background: #b91c1c; display: none;" id="batch_disable_btn">禁用选中</button>
-                        <button class="btn btn-sm toolbar-btn preview-aggregate-batch-btn" onclick="batchPreviewAggregateExclude(true)"
-                            style="display: none;" id="batch_exclude_btn">剔除选中</button>
-                        <button class="btn btn-sm toolbar-btn preview-aggregate-batch-btn" onclick="batchPreviewAggregateExclude(false)"
-                            style="display: none;" id="batch_restore_btn">恢复选中</button>
+                        <div class="preview-batch-action-row">
+                            <button class="btn btn-sm toolbar-btn" onclick="batchSetStatus(true)"
+                                style="background: #059669; display: none;" id="batch_enable_btn">启用选中</button>
+                            <button class="btn btn-sm toolbar-btn" onclick="batchSetStatus(false)"
+                                style="background: #b91c1c; display: none;" id="batch_disable_btn">禁用选中</button>
+                            <button class="btn btn-sm toolbar-btn preview-aggregate-batch-btn" onclick="batchPreviewAggregateExclude(true)"
+                                style="display: none;" id="batch_exclude_btn">剔除选中</button>
+                            <button class="btn btn-sm toolbar-btn preview-aggregate-batch-btn" onclick="batchPreviewAggregateExclude(false)"
+                                style="display: none;" id="batch_restore_btn">恢复选中</button>
+                        </div>
                     </div>
                 </div>
             </div>

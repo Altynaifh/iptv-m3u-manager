@@ -520,35 +520,13 @@ body.auth-locked .console-panel {
     flex: 0 0 auto;
 }
 
-/* PC/平板：搜索框勿撑满整行，避免后续按钮被无故挤到下一行 */
-@media (min-width: 769px) {
-    .preview-toolbar-main-row {
-        flex-wrap: wrap;
-        row-gap: 8px;
-    }
-
-    .preview-toolbar-search {
-        flex: 0 1 220px;
-        min-width: 160px;
-        max-width: 280px;
-    }
-
-    .preview-toolbar-refresh-row {
-        flex: 0 0 auto;
-        flex-wrap: nowrap;
-        gap: 8px;
-    }
-
-    .preview-toolbar-select-group {
-        flex: 0 0 auto;
-        width: auto;
-        flex-wrap: nowrap;
-        gap: 8px;
-    }
-
-    .preview-toolbar-main-row > .toolbar-btn {
-        flex: 0 0 auto;
-    }
+.preview-toolbar-secondary-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
 }
 
 .preview-batch-action-row {
@@ -556,7 +534,47 @@ body.auth-locked .console-panel {
     flex-wrap: wrap;
     gap: 10px;
     align-items: center;
-    width: 100%;
+}
+
+/* PC/平板：第一行搜索+检测，第二行全选与批量左右分布 */
+@media (min-width: 769px) {
+    .preview-toolbar-main-row {
+        flex-wrap: nowrap;
+        gap: 8px;
+    }
+
+    .preview-toolbar-search {
+        flex: 1 1 auto;
+        min-width: 160px;
+        max-width: none;
+    }
+
+    .preview-toolbar-main-row > .toolbar-btn,
+    .preview-toolbar-refresh-row {
+        flex: 0 0 auto;
+    }
+
+    .preview-toolbar-refresh-row {
+        flex-wrap: nowrap;
+        gap: 8px;
+    }
+
+    .preview-toolbar-secondary-row {
+        flex-wrap: nowrap;
+        gap: 10px;
+    }
+
+    .preview-toolbar-select-group {
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+        gap: 8px;
+    }
+
+    .preview-batch-action-row {
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+        margin-left: auto;
+    }
 }
 
 .icon-spin {
@@ -2049,6 +2067,13 @@ body.sub-bulk-float-active {
         width: 100% !important;
     }
 
+    .preview-toolbar-secondary-row {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        width: 100% !important;
+    }
+
     /* 批量操作：启用/禁用/剔除 三个按钮固定同一行 */
     .preview-batch-action-row {
         display: flex !important;
@@ -2689,9 +2714,15 @@ body.sub-bulk-float-active {
     }
 
     .preview-toolbar-main-row,
+    .preview-toolbar-secondary-row,
     .preview-batch-action-row {
         flex-wrap: wrap !important;
         align-items: center !important;
+    }
+
+    .preview-batch-action-row {
+        width: auto !important;
+        margin-left: auto !important;
     }
 
     .preview-batch-action-row .toolbar-btn {
