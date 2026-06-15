@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 from models import Channel, OutputSource
+
+_logo_reachability_cache: Dict[str, bool] = {}
 
 _EPG_MISS_TITLES = frozenset({"无节目信息", "无 EPG 链接", ""})
 
@@ -159,6 +162,28 @@ def load_same_channel_clusters(
     return []
 
 
+def is_logo_url_reachable(url: str, *, timeout: float = 5.0) -> bool:
+    """检测台标 URL 是否可访问（结果按 URL 缓存）。"""
+    raw = quote_logo_url((url or "").strip())
+    if not raw:
+        return False
+    if raw in _logo_reachability_cache:
+        return _logo_reachability_cache[raw]
+    ok = False
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    for method, extra in (("HEAD", {}), ("GET", {"Range": "bytes=0-0"})):
+        try:
+            req = Request(raw, method=method, headers={**headers, **extra})
+            with urlopen(req, timeout=timeout) as resp:
+                ok = getattr(resp, "status", 200) < 400
+            if ok:
+                break
+        except Exception:
+            continue
+    _logo_reachability_cache[raw] = ok
+    return ok
+
+
 def quote_logo_url(url: str) -> str:
     """台标 URL 路径含中文时做百分号编码，避免浏览器加载失败。"""
     raw = (url or "").strip()
@@ -192,23 +217,150 @@ def layout_channel_order(channel_layout: str) -> Dict[int, int]:
     return order
 
 
+def _donor_rank(cid: int, layout_order: Optional[Dict[int, int]]) -> int:
+    return layout_order.get(cid, cid) if layout_order else cid
+
+
+def _score_cluster_donor(
+    *,
+    epg_ok: bool,
+    logo_ok: bool,
+    rank: int,
+) -> Tuple[int, int]:
+    """分数越高越优先；同分则布局更靠前。"""
+    score = (2 if epg_ok else 0) + (2 if logo_ok else 0)
+    return (-score, rank)
+
+
+def _resolve_reachable_logo(logo: str, epg_logo: str = "") -> str:
+    """优先原生台标，不可达时回退 EPG 台标。"""
+    primary = quote_logo_url((logo or "").strip())
+    if primary and is_logo_url_reachable(primary):
+        return primary
+    fallback = quote_logo_url((epg_logo or "").strip())
+    if fallback and is_logo_url_reachable(fallback):
+        return fallback
+    return ""
+
+
+def pick_validated_cluster_donor_channel(
+    channels_by_id: Dict[int, Channel],
+    cluster: List[int],
+    *,
+    layout_order: Optional[Dict[int, int]] = None,
+    epg_url: Optional[str] = None,
+) -> Optional[Channel]:
+    """同频道集群：优先 EPG 已匹配且台标可达的频道作为供体。"""
+    from services.epg import EPGManager
+
+    ranked: List[Tuple[Tuple[int, int], Channel]] = []
+    for cid in cluster:
+        ch = channels_by_id.get(cid)
+        if not ch:
+            continue
+        epg_ok = False
+        epg_logo = ""
+        if epg_url:
+            prog = EPGManager.lookup_program_sync(
+                epg_url,
+                "",
+                effective_tvg_name_channel(ch),
+                ch.logo,
+            )
+            epg_ok = epg_program_matched(prog.get("title"))
+            epg_logo = prog.get("logo") or ""
+        logo_ok = bool(_resolve_reachable_logo(ch.logo or "", epg_logo))
+        key = _score_cluster_donor(
+            epg_ok=epg_ok,
+            logo_ok=logo_ok,
+            rank=_donor_rank(cid, layout_order),
+        )
+        ranked.append((key, ch))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: item[0])
+    best_score = -ranked[0][0][0]
+    if best_score <= 0:
+        for _key, ch in ranked:
+            if (ch.logo or "").strip():
+                return ch
+    return ranked[0][1]
+
+
+def pick_validated_cluster_donor_dict(
+    by_id: Dict[int, dict],
+    cluster: List[int],
+    *,
+    layout_order: Optional[Dict[int, int]] = None,
+) -> Optional[dict]:
+    """预览 dict 版：用已算好的 epg_program / logo 选验证通过的供体。"""
+    ranked: List[Tuple[Tuple[int, int], dict]] = []
+    for cid in cluster:
+        ch = by_id.get(cid)
+        if not ch:
+            continue
+        epg_ok = epg_program_matched(ch.get("epg_program"))
+        logo_ok = bool(
+            _resolve_reachable_logo(ch.get("logo") or "", ch.get("epg_logo") or "")
+        )
+        key = _score_cluster_donor(
+            epg_ok=epg_ok,
+            logo_ok=logo_ok,
+            rank=_donor_rank(cid, layout_order),
+        )
+        ranked.append((key, ch))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: item[0])
+    best_score = -ranked[0][0][0]
+    if best_score <= 0:
+        for _key, ch in ranked:
+            if (ch.get("logo") or "").strip():
+                return ch
+    return ranked[0][1]
+
+
 def pick_canonical_logo_donor(
     channels_by_id: Dict[int, Channel],
     cluster: List[int],
     *,
     layout_order: Optional[Dict[int, int]] = None,
+    epg_url: Optional[str] = None,
 ) -> Optional[Channel]:
-    """在集群内选主台标源：优先 AI 布局中更靠前且有 logo 的频道。"""
+    """在集群内选主台标源（验证优先，回退布局顺序）。"""
+    donor = pick_validated_cluster_donor_channel(
+        channels_by_id, cluster, layout_order=layout_order, epg_url=epg_url
+    )
+    if donor:
+        return donor
     candidates: List[tuple] = []
     for cid in cluster:
         ch = channels_by_id.get(cid)
         if ch and (ch.logo or "").strip():
-            rank = layout_order.get(cid, cid) if layout_order else cid
-            candidates.append((rank, ch))
+            candidates.append((_donor_rank(cid, layout_order), ch))
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0])
     return candidates[0][1]
+
+
+def _donor_reachable_logo_channel(ch: Channel, epg_url: Optional[str] = None) -> str:
+    from services.epg import EPGManager
+
+    epg_logo = ""
+    if epg_url:
+        prog = EPGManager.lookup_program_sync(
+            epg_url,
+            "",
+            effective_tvg_name_channel(ch),
+            ch.logo,
+        )
+        epg_logo = prog.get("logo") or ""
+    return _resolve_reachable_logo(ch.logo or "", epg_logo)
+
+
+def _donor_reachable_logo_dict(ch: dict) -> str:
+    return _resolve_reachable_logo(ch.get("logo") or "", ch.get("epg_logo") or "")
 
 
 def compute_logo_overlays(
@@ -216,24 +368,30 @@ def compute_logo_overlays(
     same_channel_clusters: List[List[int]],
     *,
     layout_order: Optional[Dict[int, int]] = None,
+    epg_url: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """同频道集群：仅对 logo 为空的成员，使用布局靠前且有台标频道的 URL。"""
+    """同频道集群：从验证通过的供体覆盖不可达/缺失台标。"""
     by_id = {c.id: c for c in channels if c.id is not None}
     overlays: Dict[str, Dict[str, Any]] = {}
     for cluster in same_channel_clusters:
         if len(cluster) < 2:
             continue
-        donor = pick_canonical_logo_donor(by_id, cluster, layout_order=layout_order)
+        donor = pick_canonical_logo_donor(
+            by_id, cluster, layout_order=layout_order, epg_url=epg_url
+        )
         if not donor or donor.id is None:
             continue
-        logo_url = quote_logo_url(donor.logo or "")
+        logo_url = _donor_reachable_logo_channel(donor, epg_url)
         if not logo_url:
             continue
         for cid in cluster:
             if cid == donor.id:
                 continue
             ch = by_id.get(cid)
-            if not ch or (ch.logo or "").strip():
+            if not ch:
+                continue
+            native = quote_logo_url(ch.logo or "")
+            if native and is_logo_url_reachable(native):
                 continue
             overlays[str(cid)] = {
                 "logo": logo_url,
@@ -247,8 +405,10 @@ def augment_logo_overlays_from_tvg_name(
     logo_overlays: Dict[str, Dict[str, Any]],
     tvg_name_overlays: Dict[str, Dict[str, Any]],
     members_by_id: Dict[int, Channel],
+    *,
+    epg_url: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """tvg-name 已做同频道覆盖时，从同一供体补台标（含原生 URL 非空但可能失效）。"""
+    """tvg-name 已覆盖时，从同一验证供体补台标。"""
     out = dict(logo_overlays or {})
     for cid_str, tvg_ov in (tvg_name_overlays or {}).items():
         if cid_str in out:
@@ -257,39 +417,17 @@ def augment_logo_overlays_from_tvg_name(
         if donor_id is None:
             continue
         donor = members_by_id.get(int(donor_id))
-        if not donor or not (donor.logo or "").strip():
+        if not donor:
+            continue
+        logo_url = _donor_reachable_logo_channel(donor, epg_url)
+        if not logo_url:
             continue
         out[cid_str] = {
-            "logo": quote_logo_url(donor.logo or ""),
+            "logo": logo_url,
             "source_id": donor_id,
             "source_name": tvg_ov.get("source_name") or donor.name or "",
         }
     return out
-
-
-def sync_preview_logos_from_tvg_name_overlays(payload: dict) -> None:
-    """预览 JSON：按 tvg_name_overlay 从同一供体同步台标。"""
-    by_id = _payload_channel_maps(payload)
-    for ch in by_id.values():
-        if ch.get("logo_overlay"):
-            continue
-        tvg_ov = ch.get("tvg_name_overlay")
-        if not tvg_ov:
-            continue
-        donor_id = tvg_ov.get("source_id")
-        if donor_id is None:
-            continue
-        donor = by_id.get(int(donor_id))
-        logo_url = quote_logo_url((donor.get("logo") or "").strip()) if donor else ""
-        if not logo_url:
-            continue
-        if "logo_native" not in ch:
-            ch["logo_native"] = (ch.get("logo") or "").strip()
-        ch["logo"] = logo_url
-        ch["logo_overlay"] = {
-            "source_id": donor_id,
-            "source_name": tvg_ov.get("source_name") or (donor.get("name") if donor else "") or "",
-        }
 
 
 def epg_program_matched(title: Optional[str]) -> bool:
@@ -314,14 +452,19 @@ def pick_tvg_name_donor(
     cluster: List[int],
     *,
     layout_order: Optional[Dict[int, int]] = None,
+    epg_url: Optional[str] = None,
 ) -> Optional[Channel]:
-    """在集群内选主 tvg-name 源：布局靠前且有有效 tvg-name 的频道。"""
+    """在集群内选主 tvg-name 源（验证优先）。"""
+    donor = pick_validated_cluster_donor_channel(
+        channels_by_id, cluster, layout_order=layout_order, epg_url=epg_url
+    )
+    if donor and effective_tvg_name_channel(donor):
+        return donor
     candidates: List[tuple] = []
     for cid in cluster:
         ch = channels_by_id.get(cid)
         if ch and effective_tvg_name_channel(ch):
-            rank = layout_order.get(cid, cid) if layout_order else cid
-            candidates.append((rank, ch))
+            candidates.append((_donor_rank(cid, layout_order), ch))
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0])
@@ -335,7 +478,11 @@ def pick_tvg_name_donor_dict(
     layout_order: Optional[Dict[int, int]] = None,
     require_epg_match: bool = False,
 ) -> Optional[dict]:
-    """预览 dict 版主 tvg-name 源；可选要求已匹配 EPG。"""
+    """预览 dict 版主 tvg-name 源（验证优先）。"""
+    if not require_epg_match:
+        donor = pick_validated_cluster_donor_dict(by_id, cluster, layout_order=layout_order)
+        if donor and effective_tvg_name_dict(donor):
+            return donor
     candidates: List[tuple] = []
     for cid in cluster:
         ch = by_id.get(cid)
@@ -343,8 +490,7 @@ def pick_tvg_name_donor_dict(
             continue
         if require_epg_match and not epg_program_matched(ch.get("epg_program")):
             continue
-        rank = layout_order.get(cid, cid) if layout_order else cid
-        candidates.append((rank, ch))
+        candidates.append((_donor_rank(cid, layout_order), ch))
     if not candidates:
         return None
     candidates.sort(key=lambda item: item[0])
@@ -356,14 +502,17 @@ def compute_tvg_name_overlays(
     same_channel_clusters: List[List[int]],
     *,
     layout_order: Optional[Dict[int, int]] = None,
+    epg_url: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """同频道集群：仅对无显式 tvg_name 的成员，使用主源 tvg-name。"""
+    """同频道集群：从验证供体覆盖 tvg-name（无显式 tvg_name 的成员）。"""
     by_id = {c.id: c for c in channels if c.id is not None}
     overlays: Dict[str, Dict[str, Any]] = {}
     for cluster in same_channel_clusters:
         if len(cluster) < 2:
             continue
-        donor = pick_tvg_name_donor(by_id, cluster, layout_order=layout_order)
+        donor = pick_tvg_name_donor(
+            by_id, cluster, layout_order=layout_order, epg_url=epg_url
+        )
         if not donor or donor.id is None:
             continue
         tvg_name = effective_tvg_name_channel(donor)
@@ -433,35 +582,19 @@ def apply_tvg_name_overlays_to_channels(
     return out
 
 
-def prepare_preview_tvg_names(
+def _channel_native_logo_dict(ch: dict) -> str:
+    if ch.get("logo_native") is not None:
+        return quote_logo_url((ch.get("logo_native") or "").strip())
+    return quote_logo_url((ch.get("logo") or "").strip())
+
+
+def apply_validated_cluster_overlays_to_preview(
     payload: dict,
     out: OutputSource,
     members: List[Channel],
+    epg_url: Optional[str],
 ) -> None:
-    """EPG 查询前：对无显式 tvg_name 成员做同频道覆盖。"""
-    clusters = load_same_channel_clusters(
-        out.layout_meta or "{}",
-        members,
-        layout_mode=(out.layout_mode or "rules"),
-    )
-    if not clusters:
-        return
-    order = layout_channel_order(out.channel_layout or "{}")
-    overlays = compute_tvg_name_overlays(members, clusters, layout_order=order or None)
-    by_id = _payload_channel_maps(payload)
-    for cid_str, ov in overlays.items():
-        ch = by_id.get(int(cid_str))
-        if ch:
-            _apply_tvg_name_overlay_to_dict(ch, ov)
-
-
-def fix_epg_mismatch_via_tvg_name(
-    payload: dict,
-    out: OutputSource,
-    members: List[Channel],
-    epg_url: str,
-) -> None:
-    """EPG 首次查询后：未匹配成员改用同集群已匹配成员的 tvg-name 并重新查询。"""
+    """EPG 首轮后：每集群选验证供体，统一覆盖 tvg-name 与可达台标。"""
     from services.epg import EPGManager
 
     if not epg_url or not EPGManager.ensure_parsed_cache_sync(epg_url):
@@ -479,40 +612,59 @@ def fix_epg_mismatch_via_tvg_name(
     for cluster in clusters:
         if len(cluster) < 2:
             continue
-        donor = pick_tvg_name_donor_dict(
-            by_id, cluster, layout_order=order or None, require_epg_match=True
-        )
+        donor = pick_validated_cluster_donor_dict(by_id, cluster, layout_order=order or None)
         if not donor:
             continue
-        donor_tvg_name = effective_tvg_name_dict(donor)
-        if not donor_tvg_name:
-            continue
         donor_id = donor.get("id")
+        donor_tvg_name = effective_tvg_name_dict(donor)
+        donor_logo = _donor_reachable_logo_dict(donor)
+        donor_name = donor.get("name") or ""
+        if not donor_tvg_name and not donor_logo:
+            continue
+
         for cid in cluster:
             if cid == donor_id:
                 continue
             ch = by_id.get(cid)
-            if not ch or epg_program_matched(ch.get("epg_program")):
+            if not ch:
                 continue
-            current = effective_tvg_name_dict(ch)
-            if current == donor_tvg_name:
-                continue
-            _apply_tvg_name_overlay_to_dict(
-                ch,
-                {
-                    "tvg_name": donor_tvg_name,
-                    "source_id": donor_id,
-                    "source_name": donor.get("name") or "",
-                },
-            )
-            prog = EPGManager.lookup_program_sync(
-                epg_url,
-                "",
-                effective_tvg_name_dict(ch),
-                ch.get("logo"),
-            )
-            ch["epg_program"] = prog.get("title")
-            ch["epg_logo"] = prog.get("logo")
+
+            if donor_tvg_name and not epg_program_matched(ch.get("epg_program")):
+                current = effective_tvg_name_dict(ch)
+                if current != donor_tvg_name:
+                    _apply_tvg_name_overlay_to_dict(
+                        ch,
+                        {
+                            "tvg_name": donor_tvg_name,
+                            "source_id": donor_id,
+                            "source_name": donor_name,
+                        },
+                    )
+                prog = EPGManager.lookup_program_sync(
+                    epg_url,
+                    "",
+                    effective_tvg_name_dict(ch),
+                    ch.get("logo"),
+                )
+                ch["epg_program"] = prog.get("title")
+                ch["epg_logo"] = prog.get("logo")
+
+            if donor_logo:
+                current_logo = _channel_native_logo_dict(ch)
+                display_logo = quote_logo_url((ch.get("logo") or "").strip())
+                need_logo = (
+                    not display_logo
+                    or not is_logo_url_reachable(display_logo)
+                    or not is_logo_url_reachable(current_logo)
+                )
+                if need_logo:
+                    if "logo_native" not in ch:
+                        ch["logo_native"] = (ch.get("logo") or "").strip()
+                    ch["logo"] = donor_logo
+                    ch["logo_overlay"] = {
+                        "source_id": donor_id,
+                        "source_name": donor_name,
+                    }
 
 
 def apply_logo_overlays_to_dicts(

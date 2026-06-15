@@ -121,17 +121,12 @@ def _enrich_preview_epg(
     out=None,
     members=None,
 ) -> dict:
-    """生成预览节目表快照：先同频道覆盖 tvg-name，再查 EPG，未匹配则换 tvg-name 重查。"""
+    """生成预览节目表快照：先查 EPG，再按验证供体统一覆盖同频道 tvg-name/台标。"""
     from services.channel_logo_overlay import (
+        apply_validated_cluster_overlays_to_preview,
         effective_tvg_name_dict,
-        fix_epg_mismatch_via_tvg_name,
-        prepare_preview_tvg_names,
-        sync_preview_logos_from_tvg_name_overlays,
     )
     from services.epg import EPGManager
-
-    if out is not None and members:
-        prepare_preview_tvg_names(payload, out, members)
 
     if epg_url and EPGManager.ensure_parsed_cache_sync(epg_url):
         for key in ("manual_groups", "ai_groups"):
@@ -147,8 +142,7 @@ def _enrich_preview_epg(
                     ch["epg_logo"] = prog.get("logo")
         payload["epg_snapshot_at"] = datetime.utcnow().isoformat()
         if out is not None and members:
-            fix_epg_mismatch_via_tvg_name(payload, out, members, epg_url)
-    sync_preview_logos_from_tvg_name_overlays(payload)
+            apply_validated_cluster_overlays_to_preview(payload, out, members, epg_url)
     return payload
 
 
