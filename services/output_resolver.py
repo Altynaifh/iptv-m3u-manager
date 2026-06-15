@@ -317,6 +317,12 @@ def _apply_cluster_media_overlays_to_channels(
         result = apply_logo_overlays_to_channels(result, logo_ov, tvg_linked_ids=tvg_linked)
     if tvg_ov:
         result = apply_tvg_name_overlays_to_channels(result, tvg_ov)
+    if out.epg_url:
+        from services.channel_logo_overlay import apply_validated_cluster_overlays_to_channels
+
+        result = apply_validated_cluster_overlays_to_channels(
+            result, out, members, out.epg_url
+        )
     return result
 
 

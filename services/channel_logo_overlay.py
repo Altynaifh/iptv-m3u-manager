@@ -871,13 +871,89 @@ def apply_logo_overlays_to_channels(
     *,
     tvg_linked_ids: Optional[Set[int]] = None,
 ) -> List[Channel]:
-    """M3U 导出前应用同频道台标覆盖。"""
-    linked = tvg_linked_ids or set()
+    """M3U 导出前应用同频道台标覆盖（与预览一致：overlay 已判定需覆盖则写入）。"""
+    _ = tvg_linked_ids  # 保留参数以兼容旧调用
     out: List[Channel] = []
     for ch in channels:
         ov = overlays.get(str(ch.id))
-        if ov and (not (ch.logo or "").strip() or ch.id in linked):
+        if ov:
             out.append(Channel(**{**ch.model_dump(), "logo": quote_logo_url(ov["logo"])}))
         else:
             out.append(Channel(**ch.model_dump()))
     return out
+
+
+def apply_validated_cluster_overlays_to_channels(
+    channels: List[Channel],
+    out: OutputSource,
+    members: List[Channel],
+    epg_url: Optional[str],
+) -> List[Channel]:
+    """M3U 导出：EPG 验证后统一覆盖同频道 tvg-name 与不可达台标（与预览口径一致）。"""
+    from services.epg import EPGManager
+
+    if not epg_url or not EPGManager.ensure_parsed_cache_sync(epg_url):
+        return channels
+
+    clusters = load_same_channel_clusters(
+        out.layout_meta or "{}",
+        members,
+        layout_mode=(out.layout_mode or "rules"),
+    )
+    if not clusters:
+        return channels
+
+    order = layout_channel_order(out.channel_layout or "{}")
+    members_by_id = {c.id: c for c in members if c.id is not None}
+    export_ids = {c.id for c in channels if c.id is not None}
+    updated: Dict[int, Channel] = {
+        c.id: Channel(**c.model_dump()) for c in channels if c.id is not None
+    }
+
+    for cluster in clusters:
+        if len(cluster) < 2:
+            continue
+        epg_donor, logo_donor, donor_logo = pick_cluster_media_donors_channel(
+            members_by_id,
+            cluster,
+            layout_order=order or None,
+            epg_url=epg_url,
+        )
+        if not epg_donor or epg_donor.id is None:
+            continue
+        donor_tvg_name = effective_tvg_name_channel(epg_donor)
+        if not donor_tvg_name and not donor_logo:
+            continue
+
+        for cid in cluster:
+            if cid not in export_ids or cid not in updated:
+                continue
+            ch = updated[cid]
+
+            if donor_tvg_name:
+                prog = EPGManager.lookup_program_sync(
+                    epg_url,
+                    ch.tvg_id or "",
+                    effective_tvg_name_channel(ch),
+                    ch.logo,
+                )
+                if not epg_program_matched(prog.get("title")):
+                    current_tvg = effective_tvg_name_channel(ch)
+                    if current_tvg != donor_tvg_name:
+                        ch = Channel(**{**ch.model_dump(), "tvg_name": donor_tvg_name})
+                        updated[cid] = ch
+
+            if donor_logo:
+                native = quote_logo_url((ch.logo or "").strip())
+                need_logo = not native or not is_logo_url_reachable(native)
+                if need_logo:
+                    ch = Channel(**{**ch.model_dump(), "logo": quote_logo_url(donor_logo)})
+                    updated[cid] = ch
+
+    out_list: List[Channel] = []
+    for ch in channels:
+        if ch.id is not None and ch.id in updated:
+            out_list.append(updated[ch.id])
+        else:
+            out_list.append(Channel(**ch.model_dump()))
+    return out_list
