@@ -114,24 +114,34 @@ def is_artifact_cache_stale(session: Session, out: OutputSource) -> bool:
     return meta.get("cache_key") != current_key
 
 
-def _enrich_preview_epg(payload: dict, epg_url: Optional[str]) -> dict:
-    """生成预览时为每个频道写入节目表快照。"""
+def _enrich_preview_epg(
+    payload: dict,
+    epg_url: Optional[str],
+    *,
+    out=None,
+    members=None,
+) -> dict:
+    """生成预览时为每个频道写入节目表快照，并按同频道集群补齐未匹配项。"""
     from services.epg import EPGManager
 
-    if not epg_url or not EPGManager.ensure_parsed_cache_sync(epg_url):
-        return payload
-    for key in ("manual_groups", "ai_groups"):
-        for sec in payload.get(key) or []:
-            for ch in sec.get("channels") or []:
-                prog = EPGManager.lookup_program_sync(
-                    epg_url,
-                    ch.get("tvg_id") or "",
-                    ch.get("name") or "",
-                    ch.get("logo"),
-                )
-                ch["epg_program"] = prog.get("title")
-                ch["epg_logo"] = prog.get("logo")
-    payload["epg_snapshot_at"] = datetime.utcnow().isoformat()
+    if epg_url and EPGManager.ensure_parsed_cache_sync(epg_url):
+        for key in ("manual_groups", "ai_groups"):
+            for sec in payload.get(key) or []:
+                for ch in sec.get("channels") or []:
+                    prog = EPGManager.lookup_program_sync(
+                        epg_url,
+                        ch.get("tvg_id") or "",
+                        ch.get("name") or "",
+                        ch.get("logo"),
+                    )
+                    ch["epg_program"] = prog.get("title")
+                    ch["epg_logo"] = prog.get("logo")
+        payload["epg_snapshot_at"] = datetime.utcnow().isoformat()
+
+    if out is not None and members:
+        from services.channel_logo_overlay import apply_epg_cluster_overlays
+
+        apply_epg_cluster_overlays(payload, out, members)
     return payload
 
 
@@ -146,8 +156,15 @@ def build_output_artifacts(session: Session, out: OutputSource) -> Dict[str, Any
     )
     _atomic_write_text(m3u_artifact_path(out.slug), m3u_content)
 
+    from services.output_resolver import aggregate_channels
+
     payload = preview_export_groups(session, out, None)
-    payload = _enrich_preview_epg(payload, out.epg_url)
+    payload = _enrich_preview_epg(
+        payload,
+        out.epg_url,
+        out=out,
+        members=aggregate_channels(session, out, None),
+    )
     _atomic_write_json_gz(preview_artifact_path(out.id), payload)
 
     cache_key = compute_preview_cache_key(session, out, None)

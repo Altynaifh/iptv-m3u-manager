@@ -7,7 +7,9 @@ import re
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from models import Channel
+from models import Channel, OutputSource
+
+_EPG_MISS_TITLES = frozenset({"无节目信息", "无 EPG 链接", ""})
 
 
 _NAME_CHAR_MAP = str.maketrans(
@@ -215,7 +217,7 @@ def compute_logo_overlays(
     *,
     layout_order: Optional[Dict[int, int]] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """同频道集群：非主源频道统一使用布局靠前频道的台标。"""
+    """同频道集群：仅对 logo 为空的成员，使用布局靠前且有台标频道的 URL。"""
     by_id = {c.id: c for c in channels if c.id is not None}
     overlays: Dict[str, Dict[str, Any]] = {}
     for cluster in same_channel_clusters:
@@ -231,10 +233,7 @@ def compute_logo_overlays(
             if cid == donor.id:
                 continue
             ch = by_id.get(cid)
-            if not ch:
-                continue
-            native = quote_logo_url(ch.logo or "")
-            if native == logo_url:
+            if not ch or (ch.logo or "").strip():
                 continue
             overlays[str(cid)] = {
                 "logo": logo_url,
@@ -242,6 +241,77 @@ def compute_logo_overlays(
                 "source_name": donor.name or "",
             }
     return overlays
+
+
+def epg_program_matched(title: Optional[str]) -> bool:
+    """EPG 是否匹配到有效节目（非占位文案）。"""
+    if title is None:
+        return False
+    return (title or "").strip() not in _EPG_MISS_TITLES
+
+
+def pick_epg_donor_dict(
+    by_id: Dict[int, dict],
+    cluster: List[int],
+    *,
+    layout_order: Optional[Dict[int, int]] = None,
+) -> Optional[dict]:
+    """在集群内选主节目源：布局靠前且已匹配到节目的频道。"""
+    candidates: List[tuple] = []
+    for cid in cluster:
+        ch = by_id.get(cid)
+        if ch and epg_program_matched(ch.get("epg_program")):
+            rank = layout_order.get(cid, cid) if layout_order else cid
+            candidates.append((rank, ch))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def apply_epg_cluster_overlays(
+    payload: dict,
+    out: OutputSource,
+    members: List[Channel],
+) -> None:
+    """预览节目表：同频道集群内，从未匹配成员覆盖有匹配成员的 EPG 快照。"""
+    clusters = load_same_channel_clusters(
+        out.layout_meta or "{}",
+        members,
+        layout_mode=(out.layout_mode or "rules"),
+    )
+    if not clusters:
+        return
+    order = layout_channel_order(out.channel_layout or "{}")
+    by_id: Dict[int, dict] = {}
+    for key in ("manual_groups", "ai_groups"):
+        for sec in payload.get(key) or []:
+            for ch in sec.get("channels") or []:
+                cid = ch.get("id")
+                if cid is not None:
+                    by_id[int(cid)] = ch
+
+    for cluster in clusters:
+        if len(cluster) < 2:
+            continue
+        donor = pick_epg_donor_dict(by_id, cluster, layout_order=order or None)
+        if not donor:
+            continue
+        donor_id = donor.get("id")
+        for cid in cluster:
+            if cid == donor_id:
+                continue
+            ch = by_id.get(cid)
+            if not ch or epg_program_matched(ch.get("epg_program")):
+                continue
+            ch["epg_program_native"] = ch.get("epg_program")
+            ch["epg_logo_native"] = ch.get("epg_logo")
+            ch["epg_program"] = donor.get("epg_program")
+            ch["epg_logo"] = donor.get("epg_logo")
+            ch["epg_overlay"] = {
+                "source_id": donor_id,
+                "source_name": donor.get("name") or "",
+            }
 
 
 def apply_logo_overlays_to_dicts(
@@ -273,7 +343,7 @@ def apply_logo_overlays_to_channels(
     out: List[Channel] = []
     for ch in channels:
         ov = overlays.get(str(ch.id))
-        if ov:
+        if ov and not (ch.logo or "").strip():
             out.append(Channel(**{**ch.model_dump(), "logo": quote_logo_url(ov["logo"])}))
         else:
             out.append(Channel(**ch.model_dump()))

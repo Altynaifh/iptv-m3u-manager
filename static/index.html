@@ -1435,11 +1435,27 @@
             return !!(c && c.epg_program != null && c.epg_program !== undefined);
         }
 
+        function getEpgSnapshotTooltip(c) {
+            const overlay = c && c.epg_overlay;
+            if (overlay && overlay.source_name) {
+                return `AI 同频道覆盖：来自「${overlay.source_name}」的节目表`;
+            }
+            if (channelHasEpgSnapshot(c) && c.epg_program && c.epg_program !== '无节目信息') {
+                return '本频道 EPG 匹配';
+            }
+            return '';
+        }
+
         function previewEpgSnapshotSpan(c, loadingHtml) {
             if (channelHasEpgSnapshot(c)) {
                 const highlight = c.epg_program && c.epg_program !== '无节目信息';
                 const safe = String(c.epg_program).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-                return `<span style="font-size: 0.85em; color: ${highlight ? 'var(--text-highlight)' : 'inherit'}; opacity: ${highlight ? '1' : '0.5'};">${safe}</span>`;
+                const tip = getEpgSnapshotTooltip(c).replace(/"/g, '&quot;');
+                const overlayMark = (c.epg_overlay && c.epg_overlay.source_name)
+                    ? '<span class="epg-overlay-mark" title="AI 同频道节目覆盖">AI</span>'
+                    : '';
+                const titleAttr = tip ? ` title="${tip}"` : '';
+                return `<span${titleAttr} style="font-size: 0.85em; color: ${highlight ? 'var(--text-highlight)' : 'inherit'}; opacity: ${highlight ? '1' : '0.5'};">${safe}${overlayMark}</span>`;
             }
             return loadingHtml || '<span style="font-size: 0.85em; color: var(--text-loading);">⏳ 加载中...</span>';
         }
