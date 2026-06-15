@@ -1636,7 +1636,11 @@
             const overlay = channel && channel.tvg_name_overlay;
             const tip = getTvgNameTooltip(channel).replace(/"/g, '&quot;');
             const mark = overlay ? ` ${buildMediaOverlayTriggerHtml(channel, 'epg-overlay-mark')}` : '';
-            return `<span title="${tip}" aria-label="${tip}" style="font-size: 0.8em; opacity: 0.6;">${safe}${mark}</span>`;
+            // 有自定义弹层时不设 title，避免与浏览器原生 tooltip 重复
+            const labelAttr = overlay
+                ? `aria-label="${tip}"`
+                : `title="${tip}" aria-label="${tip}"`;
+            return `<span ${labelAttr} style="font-size: 0.8em; opacity: 0.6;">${safe}${mark}</span>`;
         }
 
         function previewEpgSnapshotSpan(c, loadingHtml) {
@@ -2603,7 +2607,6 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
         function getChannelLogoTooltip(channel) {
-            if (channelHasMediaOverlay(channel)) return '同频道覆盖说明：悬停或点击查看';
             if (channelHasNativeLogo(channel)) return '自带台标';
             return '无台标';
         }
@@ -2615,8 +2618,10 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const slot = img.closest('.channel-logo-slot');
             if (!slot) return;
             if (!slot.querySelector('.channel-logo-slot__img:not(.channel-logo-slot__img--broken)')) {
-                slot.setAttribute('title', '无台标');
+                const hasOverlayTrigger = !!slot.querySelector('.media-overlay-trigger');
                 slot.setAttribute('aria-label', '无台标');
+                if (hasOverlayTrigger) slot.removeAttribute('title');
+                else slot.setAttribute('title', '无台标');
             }
         }
 
@@ -2635,15 +2640,18 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const overlay = channel && channel.logo_overlay;
             const cls = ['channel-logo-slot', extraClass || 'channel-logo-slot--table'];
             if (overlay) cls.push('channel-logo-slot--ai-overlay');
-            const title = getChannelLogoTooltip(channel).replace(/"/g, '&quot;');
+            const tip = getChannelLogoTooltip(channel).replace(/"/g, '&quot;');
+            const labelAttr = overlay
+                ? `aria-label="${tip}"`
+                : `title="${tip}" aria-label="${tip}"`;
             const badge = overlay
                 ? buildMediaOverlayTriggerHtml(channel, 'channel-logo-slot__ai-badge')
                 : '';
             if (!src) {
-                return `<span class="${cls.join(' ')}" title="${title}" aria-label="${title}">${badge}</span>`;
+                return `<span class="${cls.join(' ')}" ${labelAttr}>${badge}</span>`;
             }
             const safe = src.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-            return `<span class="${cls.join(' ')}" title="${title}" aria-label="${title}">${badge}<img class="channel-logo-slot__img" src="${safe}" alt="" onerror="onChannelLogoImgError(this)"></span>`;
+            return `<span class="${cls.join(' ')}" ${labelAttr}>${badge}<img class="channel-logo-slot__img" src="${safe}" alt="" onerror="onChannelLogoImgError(this)"></span>`;
         }
 
         function mobileCardLogoHtml(channel) {
