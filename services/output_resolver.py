@@ -10,6 +10,7 @@ from services.channel_logo_overlay import (
     apply_logo_overlays_to_channels,
     apply_logo_overlays_to_dicts,
     apply_tvg_name_overlays_to_channels,
+    augment_logo_overlays_from_tvg_name,
     compute_logo_overlays,
     compute_tvg_name_overlays,
     layout_channel_order,
@@ -281,11 +282,14 @@ def _apply_cluster_media_overlays_to_channels(
     out: OutputSource,
     members: List[Channel],
 ) -> List[Channel]:
+    members_by_id = {c.id: c for c in members if c.id is not None}
     logo_ov = _resolve_logo_overlays(out, members)
     tvg_ov = _resolve_tvg_name_overlays(out, members)
+    logo_ov = augment_logo_overlays_from_tvg_name(logo_ov, tvg_ov, members_by_id)
+    tvg_linked = {int(k) for k in tvg_ov.keys()}
     result = channels
     if logo_ov:
-        result = apply_logo_overlays_to_channels(result, logo_ov)
+        result = apply_logo_overlays_to_channels(result, logo_ov, tvg_linked_ids=tvg_linked)
     if tvg_ov:
         result = apply_tvg_name_overlays_to_channels(result, tvg_ov)
     return result
@@ -387,7 +391,12 @@ def preview_export_groups(
     mode = (layout_mode or "rules").strip()
     manual_list = filter_candidates(session, out, draft, enabled_only=False)
     all_channels = aggregate_channels(session, out, draft)
+    members_by_id = {c.id: c for c in all_channels if c.id is not None}
     logo_overlays = _resolve_logo_overlays(out, all_channels)
+    tvg_name_overlays = _resolve_tvg_name_overlays(out, all_channels)
+    logo_overlays = augment_logo_overlays_from_tvg_name(
+        logo_overlays, tvg_name_overlays, members_by_id
+    )
     manual_groups = _groups_to_payload(
         _bucket_by_group_title(manual_list), session, logo_overlays=logo_overlays
     )

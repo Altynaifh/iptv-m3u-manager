@@ -126,6 +126,7 @@ def _enrich_preview_epg(
         effective_tvg_name_dict,
         fix_epg_mismatch_via_tvg_name,
         prepare_preview_tvg_names,
+        sync_preview_logos_from_tvg_name_overlays,
     )
     from services.epg import EPGManager
 
@@ -147,6 +148,7 @@ def _enrich_preview_epg(
         payload["epg_snapshot_at"] = datetime.utcnow().isoformat()
         if out is not None and members:
             fix_epg_mismatch_via_tvg_name(payload, out, members, epg_url)
+    sync_preview_logos_from_tvg_name_overlays(payload)
     return payload
 
 

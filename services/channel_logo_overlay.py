@@ -243,6 +243,55 @@ def compute_logo_overlays(
     return overlays
 
 
+def augment_logo_overlays_from_tvg_name(
+    logo_overlays: Dict[str, Dict[str, Any]],
+    tvg_name_overlays: Dict[str, Dict[str, Any]],
+    members_by_id: Dict[int, Channel],
+) -> Dict[str, Dict[str, Any]]:
+    """tvg-name 已做同频道覆盖时，从同一供体补台标（含原生 URL 非空但可能失效）。"""
+    out = dict(logo_overlays or {})
+    for cid_str, tvg_ov in (tvg_name_overlays or {}).items():
+        if cid_str in out:
+            continue
+        donor_id = tvg_ov.get("source_id")
+        if donor_id is None:
+            continue
+        donor = members_by_id.get(int(donor_id))
+        if not donor or not (donor.logo or "").strip():
+            continue
+        out[cid_str] = {
+            "logo": quote_logo_url(donor.logo or ""),
+            "source_id": donor_id,
+            "source_name": tvg_ov.get("source_name") or donor.name or "",
+        }
+    return out
+
+
+def sync_preview_logos_from_tvg_name_overlays(payload: dict) -> None:
+    """预览 JSON：按 tvg_name_overlay 从同一供体同步台标。"""
+    by_id = _payload_channel_maps(payload)
+    for ch in by_id.values():
+        if ch.get("logo_overlay"):
+            continue
+        tvg_ov = ch.get("tvg_name_overlay")
+        if not tvg_ov:
+            continue
+        donor_id = tvg_ov.get("source_id")
+        if donor_id is None:
+            continue
+        donor = by_id.get(int(donor_id))
+        logo_url = quote_logo_url((donor.get("logo") or "").strip()) if donor else ""
+        if not logo_url:
+            continue
+        if "logo_native" not in ch:
+            ch["logo_native"] = (ch.get("logo") or "").strip()
+        ch["logo"] = logo_url
+        ch["logo_overlay"] = {
+            "source_id": donor_id,
+            "source_name": tvg_ov.get("source_name") or (donor.get("name") if donor else "") or "",
+        }
+
+
 def epg_program_matched(title: Optional[str]) -> bool:
     """EPG 是否匹配到有效节目（非占位文案）。"""
     if title is None:
@@ -490,12 +539,15 @@ def apply_logo_overlays_to_dicts(
 def apply_logo_overlays_to_channels(
     channels: List[Channel],
     overlays: Dict[str, Dict[str, Any]],
+    *,
+    tvg_linked_ids: Optional[Set[int]] = None,
 ) -> List[Channel]:
     """M3U 导出前应用同频道台标覆盖。"""
+    linked = tvg_linked_ids or set()
     out: List[Channel] = []
     for ch in channels:
         ov = overlays.get(str(ch.id))
-        if ov and not (ch.logo or "").strip():
+        if ov and (not (ch.logo or "").strip() or ch.id in linked):
             out.append(Channel(**{**ch.model_dump(), "logo": quote_logo_url(ov["logo"])}))
         else:
             out.append(Channel(**ch.model_dump()))
