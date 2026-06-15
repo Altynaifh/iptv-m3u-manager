@@ -1480,12 +1480,19 @@ textarea {
     width: 56px;
     height: 40px;
     flex-shrink: 0;
-    background: rgba(255, 255, 255, 0.92);
-    border-color: rgba(255, 255, 255, 0.35);
 }
 
+/* 移动端预览台标：透明底，仅显示 logo 图本身 */
 .mobile-channel-card__logo-wrap.channel-logo-slot--card {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    border-radius: 0;
+}
+
+.mobile-channel-card__logo-wrap.channel-logo-slot--card.channel-logo-slot--ai-overlay {
+    border: none;
+    box-shadow: none;
 }
 
 .channel-logo-slot__img {
