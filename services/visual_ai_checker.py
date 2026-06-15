@@ -30,7 +30,8 @@ SYSTEM_PROMPT = """你是 IPTV 频道画面质检员。根据 2x2 拼图判断�
 - no_image：该槽位无图或无法辨认。
 
 **拿不准时一律输出 ok**，detail 可写你看到的画面类型。
-只输出 JSON：{"results":[{"channel_id":数字,"status":"...","detail":"简短中文"}]}"""
+只输出 JSON：{"results":[{"channel_id":数字,"status":"...","detail":"简短中文"}]}
+detail 勿含英文双引号 "，改用中文引号「」或省略；必须合法 JSON，禁止 markdown 代码块。"""
 
 
 def _resolve_vision_prompt(
