@@ -1866,7 +1866,9 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             return !!(c && (c.visualImage || c.check_image));
         }
 
-        /** 预览会话内固定分组布局，避免禁用后立即掉进「未启用」折叠区 */
+        const AI_INACTIVE_POOL_TITLE = '无效频道';
+
+        /** 预览会话内固定分组布局，避免禁用后立即掉进无效频道折叠区 */
         function isAggregatePreviewSessionActive() {
             const modal = document.getElementById('channel_modal');
             const visible = modal && modal.style.display === 'flex';
@@ -1900,19 +1902,14 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 && window._aggregatePreviewDeferredInactiveIds.has(Number(channelId)));
         }
 
-        function shouldDeferInactivePoolDuringPreview() {
-            return isAggregatePreviewSessionActive() || window._aggregatePreviewSessionActive === true;
-        }
-
-        /** AI 分组内排序：启用在上；有图未启用与启用同组并排在组内底部；无图未启用不进组 */
+        /** AI 分组内排序：启用在上；有图未启用与启用同组并排在组内底部；无图且已禁用收入无效频道区 */
         function partitionAiGroupChannelsForDisplay(channels) {
             const main = [];
             const noImageDisabled = [];
-            const deferInactivePool = shouldDeferInactivePoolDuringPreview();
             (channels || []).forEach(c => {
                 const disabled = c.is_enabled === false;
                 if (disabled && !channelHasPreviewImage(c)) {
-                    if (deferInactivePool || isDeferredInactiveChannel(c.id)) {
+                    if (isDeferredInactiveChannel(c.id)) {
                         main.push(c);
                     } else {
                         noImageDisabled.push(c);
@@ -1932,17 +1929,20 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         function reshapeAiPreviewGroupSections(aiGroups) {
             const groups = aiGroups || [];
             const pooledDisabled = [];
-            const deferInactivePool = shouldDeferInactivePoolDuringPreview();
             const reshaped = groups.map(g => {
                 const part = partitionAiGroupChannelsForDisplay(g.channels || []);
                 pooledDisabled.push(...part.noImageDisabled);
                 return { title: g.title || '未命名', channels: part.main };
             }).filter(g => (g.channels || []).length > 0 || groups.length === 1);
 
-            if (!deferInactivePool && pooledDisabled.length > 0) {
-                reshaped.push({ title: '未启用', channels: pooledDisabled, isInactivePool: true });
+            if (pooledDisabled.length > 0) {
+                reshaped.push({
+                    title: AI_INACTIVE_POOL_TITLE,
+                    channels: pooledDisabled,
+                    isInactivePool: true,
+                });
                 if (!window._previewGroupCollapsed) window._previewGroupCollapsed = new Set();
-                const poolKey = previewGroupSectionKey('未启用', reshaped.length - 1);
+                const poolKey = previewGroupSectionKey(AI_INACTIVE_POOL_TITLE, reshaped.length - 1);
                 if (!window._previewAiInactivePoolExpanded) {
                     window._previewGroupCollapsed.add(poolKey);
                 }
@@ -1955,10 +1955,10 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const willExpand = window._previewGroupCollapsed.has(key);
             if (willExpand) {
                 window._previewGroupCollapsed.delete(key);
-                if (String(key).endsWith('::未启用')) window._previewAiInactivePoolExpanded = true;
+                if (String(key).endsWith(`::${AI_INACTIVE_POOL_TITLE}`)) window._previewAiInactivePoolExpanded = true;
             } else {
                 window._previewGroupCollapsed.add(key);
-                if (String(key).endsWith('::未启用')) window._previewAiInactivePoolExpanded = false;
+                if (String(key).endsWith(`::${AI_INACTIVE_POOL_TITLE}`)) window._previewAiInactivePoolExpanded = false;
             }
             const parts = String(key).split('::');
             const targetIdx = parts.length >= 2 ? Number(parts[1]) : NaN;
@@ -1997,7 +1997,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 ? ` <span class="preview-group-section__ai-mark">AI</span>`
                 : '';
             const poolHint = isPool
-                ? ` <span class="preview-group-section__pool-hint" title="无截图且未启用的频道">无图</span>`
+                ? ` <span class="preview-group-section__pool-hint" title="无截图且已禁用的频道">无截图·已禁用</span>`
                 : '';
             const collapsed = window._previewGroupCollapsed && window._previewGroupCollapsed.has(sectionKey);
             const keyEsc = String(sectionKey).replace(/'/g, "\'");
