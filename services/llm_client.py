@@ -234,8 +234,142 @@ def _parse_vision_json(text: str) -> Any:
     raise ValueError("无法解析 JSON")
 
 
+def _find_balanced_json_object(text: str, start: int = 0) -> str | None:
+    """从 start 起截取第一个括号配平的 {...} 子串（忽略字符串内的括号）。"""
+    i = text.find("{", start)
+    if i < 0:
+        return None
+    depth = 0
+    in_str = False
+    escape = False
+    for j in range(i, len(text)):
+        ch = text[j]
+        if in_str:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[i : j + 1]
+    return None
+
+
+def _loads_json_first_value(text: str) -> Any:
+    """解析文本中第一个 JSON 值，忽略尾部多余内容。"""
+    decoder = json.JSONDecoder()
+    stripped = (text or "").lstrip()
+    if not stripped:
+        raise json.JSONDecodeError("Expecting value", text or "", 0)
+    obj, _end = decoder.raw_decode(stripped)
+    return obj
+
+
+def _collect_json_object_candidates(text: str) -> List[str]:
+    """收集 AI 文本回复里可能出现的 JSON 对象候选串。"""
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    out: List[str] = []
+    seen: set[str] = set()
+
+    def add(cand: str) -> None:
+        c = (cand or "").strip()
+        if c and c not in seen:
+            seen.add(c)
+            out.append(c)
+
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw, re.IGNORECASE)
+    if m:
+        add(m.group(1))
+
+    pos = 0
+    while pos < len(raw):
+        obj = _find_balanced_json_object(raw, pos)
+        if not obj:
+            break
+        add(obj)
+        nxt = raw.find(obj, pos)
+        if nxt < 0:
+            break
+        pos = nxt + len(obj)
+
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start >= 0 and end > start:
+        add(raw[start : end + 1])
+    add(raw)
+    return out
+
+
+def _extract_organize_layout_fallback(text: str) -> dict | None:
+    """AI 排序 JSON 宽松回退：分别抽取 groups / same_channels 数组。"""
+    raw = text or ""
+    groups: list = []
+    same_channels: list = []
+
+    for m in re.finditer(
+        r'\{\s*"title"\s*:\s*"((?:[^"\\]|\\.)*)"\s*,\s*"channel_ids"\s*:\s*\[([^\]]*)\]\s*\}',
+        raw,
+    ):
+        title = m.group(1).replace('\\"', '"')
+        ids = [int(x) for x in re.findall(r"\d+", m.group(2))]
+        if ids:
+            groups.append({"title": title, "channel_ids": ids})
+
+    for m in re.finditer(r'\{\s*"channel_ids"\s*:\s*\[([^\]]*)\]\s*\}', raw):
+        ids = [int(x) for x in re.findall(r"\d+", m.group(1))]
+        if len(ids) >= 2:
+            same_channels.append({"channel_ids": ids})
+
+    if not groups:
+        return None
+    layout: dict = {"groups": groups}
+    if same_channels:
+        layout["same_channels"] = same_channels
+    return layout
+
+
 def _extract_json_object(text: str) -> Any:
-    return _parse_vision_json(text)
+    """解析通用 JSON 对象（AI 排序等）；优先配平截取，避免尾部 Extra data。"""
+    raw = (text or "").strip()
+    if not raw:
+        raise ValueError("模型返回为空")
+
+    last_err: Exception | None = None
+    last_context = ""
+    for cand in _collect_json_object_candidates(raw):
+        for variant in (cand, _repair_json_text(cand)):
+            if not variant:
+                continue
+            for loader in (json.loads, _loads_json_first_value):
+                try:
+                    return loader(variant)
+                except json.JSONDecodeError as e:
+                    last_err = e
+                    last_context = _json_error_context(variant, e)
+
+    fallback = _extract_organize_layout_fallback(raw)
+    if fallback:
+        print(
+            "[LLM] 排序 JSON 宽松解析成功，"
+            f"groups={len(fallback.get('groups') or [])} "
+            f"same_channels={len(fallback.get('same_channels') or [])}"
+            + (f"；原错误: {last_context}" if last_context else "")
+        )
+        return fallback
+
+    if last_err:
+        raise ValueError(last_context or str(last_err))
+    raise ValueError("无法解析 JSON")
 
 
 class LlmClient:
