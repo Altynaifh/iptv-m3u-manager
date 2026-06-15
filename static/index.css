@@ -1477,9 +1477,15 @@ textarea {
 }
 
 .channel-logo-slot--card {
-    width: 44px;
-    height: 44px;
+    width: 56px;
+    height: 40px;
     flex-shrink: 0;
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(255, 255, 255, 0.35);
+}
+
+.mobile-channel-card__logo-wrap.channel-logo-slot--card {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 .channel-logo-slot__img {
@@ -1526,8 +1532,10 @@ textarea {
 }
 
 .mobile-channel-card__logo-wrap {
-    position: relative;
-    flex-shrink: 0;
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 10;
 }
 
 
