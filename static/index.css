@@ -1524,6 +1524,34 @@ textarea {
     vertical-align: middle;
 }
 
+/* 同频道覆盖来源：订阅源 · 频道名 */
+.media-overlay-from {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 10px;
+    line-height: 1.25;
+    color: #a78bfa;
+    opacity: 0.92;
+    vertical-align: middle;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.media-overlay-from__sep {
+    opacity: 0.55;
+}
+
+.mobile-channel-card__overlay-hint {
+    font-size: 10px;
+    line-height: 1.35;
+    color: #a78bfa;
+    opacity: 0.9;
+    margin: 2px 0 4px;
+    padding-left: 40px;
+}
+
 .channel-logo-slot__ai-badge {
     position: absolute;
     right: -4px;

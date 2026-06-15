@@ -15,6 +15,45 @@ _logo_reachability_cache: Dict[str, bool] = {}
 _EPG_MISS_TITLES = frozenset({"无节目信息", "无 EPG 链接", ""})
 
 
+def overlay_donor_fields(
+    donor: Channel,
+    *,
+    sub_map: Optional[Dict[int, str]] = None,
+) -> Dict[str, Any]:
+    """同频道覆盖供体元数据：订阅源名 + 频道名。"""
+    sub = ""
+    if sub_map is not None and donor.subscription_id is not None:
+        sub = (sub_map.get(donor.subscription_id) or "").strip()
+    return {
+        "source_id": donor.id,
+        "source_name": (donor.name or "").strip(),
+        "source_subscription": sub,
+    }
+
+
+def overlay_donor_fields_dict(donor: dict) -> Dict[str, Any]:
+    """预览 dict 版供体元数据（含 source 订阅名字段）。"""
+    return {
+        "source_id": donor.get("id"),
+        "source_name": (donor.get("name") or "").strip(),
+        "source_subscription": (donor.get("source") or "").strip(),
+    }
+
+
+def format_overlay_attribution(overlay: Optional[dict], *, kind: str) -> str:
+    """生成同频道覆盖说明（订阅源 + 频道名）。"""
+    if not overlay:
+        return ""
+    sub = (overlay.get("source_subscription") or "").strip()
+    ch = (overlay.get("source_name") or "").strip()
+    label = {"logo": "台标", "tvg_name": "tvg-name"}.get(kind, kind)
+    if sub and ch:
+        return f"AI 同频道覆盖：来自订阅「{sub}」频道「{ch}」的{label}"
+    if ch:
+        return f"AI 同频道覆盖：来自频道「{ch}」的{label}"
+    return f"AI 同频道覆盖的{label}"
+
+
 _NAME_CHAR_MAP = str.maketrans(
     "臺亞際聞歡樂精採視廣電",
     "台亚洲闻欢乐精采视广电",
@@ -481,6 +520,7 @@ def compute_logo_overlays(
     layout_order: Optional[Dict[int, int]] = None,
     epg_url: Optional[str] = None,
     validate_logos: bool = True,
+    sub_map: Optional[Dict[int, str]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """同频道集群：从供体覆盖缺失/不可达台标。"""
     by_id = {c.id: c for c in channels if c.id is not None}
@@ -514,8 +554,7 @@ def compute_logo_overlays(
                 continue
             overlays[str(cid)] = {
                 "logo": logo_url,
-                "source_id": logo_donor.id,
-                "source_name": logo_donor.name or "",
+                **overlay_donor_fields(logo_donor, sub_map=sub_map),
             }
     return overlays
 
@@ -529,6 +568,7 @@ def augment_logo_overlays_from_tvg_name(
     clusters: Optional[List[List[int]]] = None,
     layout_order: Optional[Dict[int, int]] = None,
     validate_logos: bool = True,
+    sub_map: Optional[Dict[int, str]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """tvg-name 已覆盖时，从集群内台标供体补台标（可与 EPG 供体不同）。"""
     out = dict(logo_overlays or {})
@@ -563,8 +603,7 @@ def augment_logo_overlays_from_tvg_name(
             if logo_url and logo_donor and logo_donor.id is not None:
                 out[cid_str] = {
                     "logo": logo_url,
-                    "source_id": logo_donor.id,
-                    "source_name": logo_donor.name or "",
+                    **overlay_donor_fields(logo_donor, sub_map=sub_map),
                 }
             continue
         donor_id = tvg_ov.get("source_id")
@@ -579,10 +618,12 @@ def augment_logo_overlays_from_tvg_name(
             logo_url = quote_logo_url(donor.logo or "")
         if not logo_url:
             continue
+        meta = overlay_donor_fields(donor, sub_map=sub_map)
         out[cid_str] = {
             "logo": logo_url,
             "source_id": donor_id,
-            "source_name": tvg_ov.get("source_name") or donor.name or "",
+            "source_name": tvg_ov.get("source_name") or meta["source_name"],
+            "source_subscription": tvg_ov.get("source_subscription") or meta["source_subscription"],
         }
     return out
 
@@ -675,6 +716,7 @@ def compute_tvg_name_overlays(
     layout_order: Optional[Dict[int, int]] = None,
     epg_url: Optional[str] = None,
     validate_cluster_media: bool = True,
+    sub_map: Optional[Dict[int, str]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """同频道集群：从供体覆盖 tvg-name（无显式 tvg_name 的成员）。"""
     by_id = {c.id: c for c in channels if c.id is not None}
@@ -702,8 +744,7 @@ def compute_tvg_name_overlays(
                 continue
             overlays[str(cid)] = {
                 "tvg_name": tvg_name,
-                "source_id": donor.id,
-                "source_name": donor.name or "",
+                **overlay_donor_fields(donor, sub_map=sub_map),
             }
     return overlays
 
@@ -725,7 +766,8 @@ def _apply_tvg_name_overlay_to_dict(ch: dict, ov: Dict[str, Any]) -> None:
     ch["tvg_name"] = ov["tvg_name"]
     ch["tvg_name_overlay"] = {
         "source_id": ov["source_id"],
-        "source_name": ov["source_name"],
+        "source_name": ov.get("source_name"),
+        "source_subscription": ov.get("source_subscription"),
     }
 
 
@@ -793,11 +835,9 @@ def apply_validated_cluster_overlays_to_preview(
         )
         if not epg_donor:
             continue
-        epg_donor_id = epg_donor.get("id")
+        epg_donor_meta = overlay_donor_fields_dict(epg_donor)
         donor_tvg_name = effective_tvg_name_dict(epg_donor)
-        epg_donor_name = epg_donor.get("name") or ""
-        logo_donor_id = logo_donor.get("id") if logo_donor else epg_donor_id
-        logo_donor_name = (logo_donor or epg_donor).get("name") or ""
+        logo_donor_meta = overlay_donor_fields_dict(logo_donor or epg_donor)
         if not donor_tvg_name and not donor_logo:
             continue
 
@@ -811,11 +851,7 @@ def apply_validated_cluster_overlays_to_preview(
                 if current != donor_tvg_name:
                     _apply_tvg_name_overlay_to_dict(
                         ch,
-                        {
-                            "tvg_name": donor_tvg_name,
-                            "source_id": epg_donor_id,
-                            "source_name": epg_donor_name,
-                        },
+                        {"tvg_name": donor_tvg_name, **epg_donor_meta},
                     )
                 prog = EPGManager.lookup_program_sync(
                     epg_url,
@@ -838,10 +874,7 @@ def apply_validated_cluster_overlays_to_preview(
                     if "logo_native" not in ch:
                         ch["logo_native"] = (ch.get("logo") or "").strip()
                     ch["logo"] = donor_logo
-                    ch["logo_overlay"] = {
-                        "source_id": logo_donor_id,
-                        "source_name": logo_donor_name,
-                    }
+                    ch["logo_overlay"] = logo_donor_meta
 
 
 def apply_logo_overlays_to_dicts(
@@ -857,7 +890,8 @@ def apply_logo_overlays_to_dicts(
             d["logo"] = quote_logo_url(ov["logo"])
             d["logo_overlay"] = {
                 "source_id": ov["source_id"],
-                "source_name": ov["source_name"],
+                "source_name": ov.get("source_name"),
+                "source_subscription": ov.get("source_subscription"),
             }
         else:
             d["logo_overlay"] = None

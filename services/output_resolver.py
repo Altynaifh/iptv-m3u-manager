@@ -10,6 +10,7 @@ from services.channel_logo_overlay import (
     apply_logo_overlays_to_channels,
     apply_logo_overlays_to_dicts,
     apply_tvg_name_overlays_to_channels,
+    apply_tvg_name_overlays_to_dicts,
     augment_logo_overlays_from_tvg_name,
     compute_logo_overlays,
     compute_tvg_name_overlays,
@@ -20,6 +21,12 @@ from services.channel_logo_overlay import (
 from services.generator import M3UGenerator
 
 AI_VISUAL_EXPORT_BLOCK = frozenset({"promo_loop", "invalid"})
+
+
+def _subscription_name_map(session: Session) -> Dict[int, str]:
+    """订阅 ID → 展示名（名称优先，否则 URL）。"""
+    subs = session.exec(select(Subscription)).all()
+    return {s.id: s.name or s.url for s in subs}
 
 
 def detach_channel_copy(ch: Channel, **updates: Any) -> Channel:
@@ -272,6 +279,7 @@ def _resolve_tvg_name_overlays(
     members: List[Channel],
     *,
     validate_cluster_media: bool = True,
+    sub_map: Optional[Dict[int, str]] = None,
 ) -> Dict:
     clusters = load_same_channel_clusters(
         out.layout_meta or "{}",
@@ -285,6 +293,7 @@ def _resolve_tvg_name_overlays(
         layout_order=order or None,
         epg_url=out.epg_url,
         validate_cluster_media=validate_cluster_media,
+        sub_map=sub_map,
     )
 
 
@@ -300,8 +309,8 @@ def _apply_cluster_media_overlays_to_channels(
         layout_mode=(out.layout_mode or "rules"),
     )
     order = layout_channel_order(out.channel_layout or "{}")
-    logo_ov = _resolve_logo_overlays(out, members, validate_logos=True)
-    tvg_ov = _resolve_tvg_name_overlays(out, members)
+    logo_ov = _resolve_logo_overlays(out, members, validate_logos=True, sub_map=None)
+    tvg_ov = _resolve_tvg_name_overlays(out, members, sub_map=None)
     logo_ov = augment_logo_overlays_from_tvg_name(
         logo_ov,
         tvg_ov,
@@ -310,6 +319,7 @@ def _apply_cluster_media_overlays_to_channels(
         clusters=clusters,
         layout_order=order or None,
         validate_logos=True,
+        sub_map=None,
     )
     tvg_linked = {int(k) for k in tvg_ov.keys()}
     result = channels
@@ -393,11 +403,13 @@ def _groups_to_payload(
     session: Session,
     *,
     logo_overlays: Optional[Dict] = None,
+    tvg_name_overlays: Optional[Dict] = None,
 ) -> List[dict]:
     payload = []
     for title, chs in groups:
         dicts = _channels_to_preview_dicts(chs, session)
         apply_logo_overlays_to_dicts(dicts, logo_overlays or {})
+        apply_tvg_name_overlays_to_dicts(dicts, tvg_name_overlays or {})
         payload.append({"title": title, "channels": dicts})
     return payload
 
@@ -407,6 +419,7 @@ def _resolve_logo_overlays(
     members: List[Channel],
     *,
     validate_logos: bool = True,
+    sub_map: Optional[Dict[int, str]] = None,
 ) -> Dict:
     clusters = load_same_channel_clusters(
         out.layout_meta or "{}",
@@ -420,6 +433,7 @@ def _resolve_logo_overlays(
         layout_order=order or None,
         epg_url=out.epg_url,
         validate_logos=validate_logos,
+        sub_map=sub_map,
     )
 
 
@@ -434,9 +448,12 @@ def preview_export_groups(
     manual_list = filter_candidates(session, out, draft, enabled_only=False)
     all_channels = aggregate_channels(session, out, draft)
     members_by_id = {c.id: c for c in all_channels if c.id is not None}
-    logo_overlays = _resolve_logo_overlays(out, all_channels, validate_logos=False)
+    sub_map = _subscription_name_map(session)
+    logo_overlays = _resolve_logo_overlays(
+        out, all_channels, validate_logos=False, sub_map=sub_map
+    )
     tvg_name_overlays = _resolve_tvg_name_overlays(
-        out, all_channels, validate_cluster_media=False
+        out, all_channels, validate_cluster_media=False, sub_map=sub_map
     )
     clusters = load_same_channel_clusters(
         out.layout_meta or "{}",
@@ -452,9 +469,13 @@ def preview_export_groups(
         clusters=clusters,
         layout_order=layout_order or None,
         validate_logos=False,
+        sub_map=sub_map,
     )
     manual_groups = _groups_to_payload(
-        _bucket_by_group_title(manual_list), session, logo_overlays=logo_overlays
+        _bucket_by_group_title(manual_list),
+        session,
+        logo_overlays=logo_overlays,
+        tvg_name_overlays=tvg_name_overlays,
     )
     if mode == "explicit":
         try:
@@ -485,7 +506,14 @@ def preview_export_groups(
         return {
             "layout_mode": mode,
             "manual_groups": manual_groups,
-            "ai_groups": _groups_to_payload(ai_groups, session, logo_overlays=logo_overlays) if ai_groups else [],
+            "ai_groups": _groups_to_payload(
+                ai_groups,
+                session,
+                logo_overlays=logo_overlays,
+                tvg_name_overlays=tvg_name_overlays,
+            )
+            if ai_groups
+            else [],
             "ai_groups_stale": not bool(ai_groups),
         }
     return {
