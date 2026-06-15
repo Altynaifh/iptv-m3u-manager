@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
 import os
+import threading
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 from sqlmodel import Session, select
 
+from database import engine
 from models import OutputSource, Subscription
 from services.generator import M3UGenerator
 from services.output_resolver import export_m3u_channels, preview_export_groups
@@ -187,26 +190,80 @@ def get_or_build_preview_payload(
     return build_output_artifacts(session, out)
 
 
+def _build_artifacts_sync(output_id: int) -> Dict[str, Any]:
+    """在线程池中执行：独立 Session，避免跨线程复用 ORM 会话。"""
+    with Session(engine) as session:
+        out = session.get(OutputSource, output_id)
+        if not out:
+            return {}
+        return build_output_artifacts(session, out)
+
+
 async def build_output_artifacts_async(
-    session: Session,
-    out: OutputSource,
+    output_id: int,
     *,
+    epg_url: Optional[str] = None,
     epg_refresh: bool = False,
 ) -> Dict[str, Any]:
     """后台任务入口：可选先拉 EPG，再在线程池生成产物。"""
-    if epg_refresh and out.epg_url:
+    if epg_refresh and epg_url:
         from services.epg import EPGManager, fetch_epg_cached
 
-        await fetch_epg_cached(out.epg_url, refresh=True)
-        EPGManager.ensure_parsed_cache_sync(out.epg_url, force_reload=True)
+        await fetch_epg_cached(epg_url, refresh=True)
+        EPGManager.ensure_parsed_cache_sync(epg_url, force_reload=True)
 
-    import asyncio
-
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, lambda: build_output_artifacts(session, out))
+    return await asyncio.to_thread(_build_artifacts_sync, output_id)
 
 
 _pending_rebuild_ids: set[int] = set()
+_app_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def bind_artifacts_scheduler_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """绑定应用主事件循环，供同步上下文安全入队重建任务。"""
+    global _app_loop
+    _app_loop = loop
+
+
+def _enqueue_rebuild_task(output_id: int, *, epg_refresh: bool) -> None:
+    """将重建任务提交到 Taskiq（须在运行中的事件循环内 await）。"""
+    async def _kick() -> None:
+        try:
+            await rebuild_output_artifacts_task.kiq(output_id=output_id, epg_refresh=epg_refresh)
+        except Exception as e:
+            print(f"[Artifacts] 入队重建失败 output={output_id}: {e}")
+            _pending_rebuild_ids.discard(output_id)
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_kick())
+        return
+    except RuntimeError:
+        pass
+
+    loop = _app_loop
+    if loop is not None and loop.is_running():
+        asyncio.run_coroutine_threadsafe(_kick(), loop)
+        return
+
+    # 兜底：无可用事件循环时后台线程同步重建（避免 asyncio.run 取消已入队任务）
+    def _fallback() -> None:
+        try:
+            if epg_refresh:
+                with Session(engine) as session:
+                    out = session.get(OutputSource, output_id)
+                    if out and out.epg_url:
+                        from services.epg import EPGManager
+
+                        EPGManager.ensure_parsed_cache_sync(out.epg_url, force_reload=True)
+            _build_artifacts_sync(output_id)
+            print(f"[Artifacts] 已同步重建聚合 {output_id}")
+        except Exception as e:
+            print(f"[Artifacts] 同步重建失败 output={output_id}: {e}")
+        finally:
+            _pending_rebuild_ids.discard(output_id)
+
+    threading.Thread(target=_fallback, name=f"artifacts-rebuild-{output_id}", daemon=True).start()
 
 
 def schedule_rebuild_output_artifacts(output_id: int, *, epg_refresh: bool = False) -> None:
@@ -214,19 +271,7 @@ def schedule_rebuild_output_artifacts(output_id: int, *, epg_refresh: bool = Fal
     if output_id in _pending_rebuild_ids:
         return
     _pending_rebuild_ids.add(output_id)
-    import asyncio
-
-    async def _kick() -> None:
-        try:
-            await rebuild_output_artifacts_task.kiq(output_id=output_id, epg_refresh=epg_refresh)
-        finally:
-            _pending_rebuild_ids.discard(output_id)
-
-    try:
-        loop = asyncio.get_running_loop()
-        loop.create_task(_kick())
-    except RuntimeError:
-        asyncio.run(_kick())
+    _enqueue_rebuild_task(output_id, epg_refresh=epg_refresh)
 
 
 def schedule_rebuild_all_output_artifacts(session: Session, *, epg_refresh: bool = False) -> None:
@@ -235,19 +280,30 @@ def schedule_rebuild_all_output_artifacts(session: Session, *, epg_refresh: bool
             schedule_rebuild_output_artifacts(out.id, epg_refresh=epg_refresh)
 
 
-from database import engine
 from task_broker import broker
 
 
 @broker.task
 async def rebuild_output_artifacts_task(output_id: int, epg_refresh: bool = False):
     """Taskiq：后台重建聚合静态产物。"""
+    slug = ""
     try:
         with Session(engine) as session:
             out = session.get(OutputSource, output_id)
             if not out:
                 return
-            await build_output_artifacts_async(session, out, epg_refresh=epg_refresh)
-            print(f"[Artifacts] 已重建聚合 {out.id} ({out.slug})")
+            slug = out.slug or ""
+            epg_url = out.epg_url
+        await build_output_artifacts_async(
+            output_id,
+            epg_url=epg_url,
+            epg_refresh=epg_refresh,
+        )
+        print(f"[Artifacts] 已重建聚合 {output_id} ({slug})")
+    except asyncio.CancelledError:
+        print(f"[Artifacts] 重建被取消 output={output_id}")
+        raise
+    except Exception as e:
+        print(f"[Artifacts] 重建异常 output={output_id}: {e}")
     finally:
         _pending_rebuild_ids.discard(output_id)

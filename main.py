@@ -338,6 +338,10 @@ async def on_startup():
     
     # 启动 Taskiq Broker
     await broker.startup()
+
+    from services.output_artifacts import bind_artifacts_scheduler_loop
+
+    bind_artifacts_scheduler_loop(asyncio.get_running_loop())
     
     # 纠正“僵尸任务”：将重启前仍处于运行中或等待中的任务重置为已中止
     with Session(engine) as session:

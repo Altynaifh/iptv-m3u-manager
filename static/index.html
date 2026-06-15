@@ -387,9 +387,11 @@
                             style="background: #0ea5e9; display: none;">AI 排序</button>
                         <div class="preview-toolbar-refresh-row">
                             <button id="refresh_epg_btn" class="btn btn-sm toolbar-btn preview-toolbar-refresh-btn" onclick="refreshEPG()"
-                                style="background: #10b981; display: none;">🔄 刷新节目表</button>
+                                style="background: #10b981; display: none;"
+                                title="重新查询正在播什么节目；未勾选时更新当前列表全部频道">刷新节目</button>
                             <button id="refresh_preview_btn" class="btn btn-sm toolbar-btn preview-toolbar-refresh-btn" onclick="forceRefreshAggregatePreview()"
-                                style="background: #6366f1; display: none;" title="重新生成预览数据（忽略服务端缓存）">刷新预览</button>
+                                style="background: #6366f1; display: none;"
+                                title="从服务端重新拉取频道列表（含截图、AI 结果、启用状态，忽略缓存）">同步数据</button>
                         </div>
                     </div>
 
@@ -1473,21 +1475,24 @@
                 updatePreviewGroupModeTabs(data);
                 if (savedMode) window._previewGroupDisplayMode = savedMode;
                 applyPreviewGroupDisplay({ preserveView: true, priorViewState: viewState, forceRender: true });
-                showToast('预览已重新生成', 'success');
+                showToast('频道列表已同步（含截图、AI 结果、启用状态）', 'success');
             } catch (e) {
-                showToast('刷新预览失败: ' + e.message, 'error');
+                showToast('同步数据失败: ' + e.message, 'error');
             } finally {
                 if (btn) {
                     btn.disabled = false;
-                    btn.innerText = originalText || '刷新预览';
+                    btn.innerText = originalText || '同步数据';
                 }
             }
         }
 
         function enqueueGroupedPreviewEpg(sections, isMobile, options = {}) {
-            if (!window.currentEPGUrl || !sections || !sections.length) return;
+            if (!window.currentEPGUrl || !sections || !sections.length) return 0;
             const onlySectionIndex = options.onlySectionIndex;
+            const forceRefresh = !!options.forceRefresh;
+            const onlyIds = options.onlyChannelIds;
             let epgIdx = 0;
+            let queued = 0;
             sections.forEach((sec, si) => {
                 if (onlySectionIndex != null && si !== onlySectionIndex) {
                     epgIdx += (sec.channels || []).length;
@@ -1504,16 +1509,27 @@
                 const renderEnd = ensureGroupSectionRenderEnd(si, chs.length);
                 const slice = isMobile ? chs : chs.slice(0, renderEnd);
                 slice.forEach((c, idx) => {
+                    if (onlyIds && !onlyIds.has(c.id)) return;
                     const cellId = isMobile ? `mobile_epg_grp_${epgIdx + idx}` : `epg_grp_${epgIdx + idx}`;
-                    if (channelHasEpgSnapshot(c) && !options.forceEpg) {
-                        const cell = document.getElementById(cellId);
+                    const cell = document.getElementById(cellId);
+                    if (channelHasEpgSnapshot(c) && !forceRefresh && !options.forceEpg) {
                         if (cell) applyEpgData(cell, { program: c.epg_program, logo: c.epg_logo }, cellId);
                         return;
                     }
-                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, false, c);
+                    if (cell) {
+                        cell.innerHTML = '<span style="font-size:0.85em;color:var(--text-loading);">⏳ 更新中...</span>';
+                    }
+                    if (forceRefresh) {
+                        const dedupeKey = `${window.currentEPGUrl}_${c.tvg_id}_${c.name}`;
+                        window.epgCache.delete(dedupeKey);
+                        pendingEpgRequests.delete(dedupeKey);
+                    }
+                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, forceRefresh, c);
+                    queued += 1;
                 });
                 epgIdx += chs.length;
             });
+            return queued;
         }
 
         function buildPreviewGroupSectionDesktopHtml(sec, si) {
@@ -3035,28 +3051,69 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
         async function refreshEPG() {
-            if (!window.currentEPGUrl) return;
+            if (!window.currentEPGUrl) {
+                showToast('当前聚合源未配置节目表（EPG）', 'info');
+                return;
+            }
 
-            if (window.selectedChannelIds.size === 0) {
-                alert("请先勾选需要操作的频道！");
+            const pool = (filteredChannels && filteredChannels.length)
+                ? filteredChannels
+                : flattenAggregatePreviewChannels();
+            if (!pool.length) {
+                showToast('当前列表没有频道', 'info');
+                return;
+            }
+
+            let targets = pool;
+            if (window.selectedChannelIds.size > 0) {
+                targets = pool.filter(c => window.selectedChannelIds.has(c.id));
+            }
+            if (!targets.length) {
+                showToast('请先勾选要刷新的频道', 'info');
                 return;
             }
 
             const btn = document.getElementById('refresh_epg_btn');
-            btn.innerText = '正在更新...';
-            btn.disabled = true;
+            const originalText = btn ? btn.innerText : '';
+            if (btn) {
+                btn.innerText = '更新中...';
+                btn.disabled = true;
+            }
 
-            // window.forceRefreshEPG = true; // 不再全部强制
-            window.refreshSelectedOnly = true;
+            const targetIds = new Set(targets.map(c => c.id));
+            const isMobile = window.innerWidth <= 768;
+            const sections = getActivePreviewGroupSections();
+            let queued = 0;
+            if (sections.length > 0) {
+                queued = enqueueGroupedPreviewEpg(sections, isMobile, {
+                    forceRefresh: true,
+                    onlyChannelIds: targetIds,
+                });
+            } else {
+                window.refreshSelectedOnly = true;
+                targets.forEach((c) => {
+                    const dedupeKey = `${window.currentEPGUrl}_${c.tvg_id}_${c.name}`;
+                    window.epgCache.delete(dedupeKey);
+                    pendingEpgRequests.delete(dedupeKey);
+                });
+                renderOffset = 0;
+                renderBaseTable(document.getElementById('channel_list'), window.lastRenderShowActions);
+                window.refreshSelectedOnly = false;
+                queued = targets.length;
+            }
 
-            renderOffset = 0;
-            document.getElementById('channel_list_container').scrollTop = 0;
-            renderBaseTable(document.getElementById('channel_list'), window.lastRenderShowActions);
+            if (queued > 0) {
+                showToast(`正在刷新 ${queued} 个频道的节目信息`, 'info');
+            } else {
+                showToast('所选频道未在当前展开的分组中，请先展开分组或取消折叠', 'info');
+            }
 
-            window.refreshSelectedOnly = false;
-
-            btn.innerText = '🔄 刷新节目表';
-            btn.disabled = false;
+            if (btn) {
+                setTimeout(() => {
+                    btn.innerText = originalText || '刷新节目';
+                    btn.disabled = false;
+                }, 1200);
+            }
         }
 
         async function checkPageConnectivity() {
