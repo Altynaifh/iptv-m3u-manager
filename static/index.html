@@ -389,9 +389,6 @@
                             <button id="refresh_epg_btn" class="btn btn-sm toolbar-btn preview-toolbar-refresh-btn" onclick="refreshEPG()"
                                 style="background: #10b981; display: none;"
                                 title="重新查询正在播什么节目；未勾选时更新当前列表全部频道">刷新节目</button>
-                            <button id="refresh_preview_btn" class="btn btn-sm toolbar-btn preview-toolbar-refresh-btn" onclick="forceRefreshAggregatePreview()"
-                                style="background: #6366f1; display: none;"
-                                title="从服务端重新拉取频道列表（含截图、AI 结果、启用状态，忽略缓存）">同步数据</button>
                         </div>
                     </div>
 
@@ -848,7 +845,10 @@
                     setTimeout(() => {
                         fetchSubs(true);
                         fetchOutputs(true);
-                        if (typeof searchChannels === 'function' && document.getElementById('channel_modal').style.display === 'flex') {
+                        const modalOpen = document.getElementById('channel_modal')?.style.display === 'flex';
+                        if (modalOpen && window.currentPreviewOutputId) {
+                            scheduleAggregatePreviewReload({ force: true, silent: true, delay: 800 });
+                        } else if (typeof searchChannels === 'function' && modalOpen) {
                             searchChannels();
                         }
                     }, 1000);
@@ -1457,35 +1457,6 @@
             return data;
         }
 
-        async function forceRefreshAggregatePreview() {
-            const oid = window.currentPreviewOutputId;
-            if (!oid) return;
-            const btn = document.getElementById('refresh_preview_btn');
-            const originalText = btn ? btn.innerText : '';
-            if (btn) {
-                btn.disabled = true;
-                btn.innerText = '生成中...';
-            }
-            try {
-                const viewState = captureAggregatePreviewViewState();
-                const savedMode = window._previewGroupDisplayMode;
-                invalidatePreviewRenderCaches();
-                const data = await fetchAggregateExportPreview(oid, { force: true });
-                window._previewGroupPayload = normalizePreviewPayloadChannels(data);
-                updatePreviewGroupModeTabs(data);
-                if (savedMode) window._previewGroupDisplayMode = savedMode;
-                applyPreviewGroupDisplay({ preserveView: true, priorViewState: viewState, forceRender: true });
-                showToast('频道列表已同步（含截图、AI 结果、启用状态）', 'success');
-            } catch (e) {
-                showToast('同步数据失败: ' + e.message, 'error');
-            } finally {
-                if (btn) {
-                    btn.disabled = false;
-                    btn.innerText = originalText || '同步数据';
-                }
-            }
-        }
-
         function enqueueGroupedPreviewEpg(sections, isMobile, options = {}) {
             if (!window.currentEPGUrl || !sections || !sections.length) return 0;
             const onlySectionIndex = options.onlySectionIndex;
@@ -1636,7 +1607,6 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const checkAiVisionBtn = document.getElementById('check_ai_vision_btn');
             const checkAiOrganizeBtn = document.getElementById('check_ai_organize_btn');
             const refreshBtn = document.getElementById('refresh_epg_btn');
-            const refreshPreviewBtn = document.getElementById('refresh_preview_btn');
 
             // 批量按钮
             const selAllBtn = document.getElementById('sel_all_btn');
@@ -1659,7 +1629,6 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 checkAiOrganizeBtn.style.display = (showCheckBtn && previewOutput && previewOutput.enable_ai_organize) ? 'block' : 'none';
             }
             if (refreshBtn) refreshBtn.style.display = displayStyle;
-            if (refreshPreviewBtn) refreshPreviewBtn.style.display = displayStyle;
 
             if (selAllBtn) selAllBtn.style.display = displayStyle;
             if (selInvBtn) selInvBtn.style.display = displayStyle;
@@ -3373,35 +3342,44 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             window._currentOutputAutoDisableOnCheck = out && out.auto_disable_on_check !== false;
         }
 
-        async function reloadCurrentAggregatePreview() {
+        async function reloadCurrentAggregatePreview(options = {}) {
             const oid = window.currentPreviewOutputId;
-            if (!oid) return;
+            if (!oid) return false;
+            const modal = document.getElementById('channel_modal');
+            if (!modal || modal.style.display !== 'flex') return false;
             const out = (typeof allOutputs !== 'undefined' && allOutputs) ? allOutputs.find(o => o.id === oid) : null;
-            if (!out) return;
+            if (!out) return false;
             setCurrentOutputAutoDisableFlag(out);
             const viewState = captureAggregatePreviewViewState();
             const savedMode = window._previewGroupDisplayMode;
             try {
                 invalidatePreviewRenderCaches();
-                const data = await fetchAggregateExportPreview(oid);
+                const data = await fetchAggregateExportPreview(oid, {
+                    force: !!options.force,
+                    epg_refresh: !!options.epg_refresh,
+                });
                 window._previewGroupPayload = normalizePreviewPayloadChannels(data);
                 updatePreviewGroupModeTabs(data);
                 if (savedMode) window._previewGroupDisplayMode = savedMode;
                 applyPreviewGroupDisplay({ preserveView: true, priorViewState: viewState, forceRender: true });
+                updatePreviewStats();
+                if (!options.silent) {
+                    showToast('频道列表已更新', 'success');
+                }
+                return true;
             } catch (e) {
                 console.error('reloadCurrentAggregatePreview failed', e);
+                if (!options.silent) {
+                    showToast('预览刷新失败: ' + e.message, 'error');
+                }
+                return false;
             }
         }
 
-        async function refreshAfterAggregateTask(task) {
-            if (!task || task.status !== 'success') return;
-            if (!isAggregatePreviewTaskName(task.name)) return;
-            const map = window._previewTaskOutputMap || {};
-            const linkedOid = map[task.id];
-            const shouldReloadPreview = document.getElementById('channel_modal')?.style.display === 'flex'
-                && window.currentPreviewOutputId
-                && (!linkedOid || linkedOid === window.currentPreviewOutputId);
-            if (!shouldReloadPreview) return;
+        function scheduleAggregatePreviewReload(options = {}) {
+            const delay = options.delay != null
+                ? options.delay
+                : (options.force ? 600 : 300);
             if (_aggregatePreviewRefreshTimer) {
                 clearTimeout(_aggregatePreviewRefreshTimer);
                 _aggregatePreviewRefreshTimer = null;
@@ -3414,16 +3392,37 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 }
                 _aggregatePreviewRefreshInFlight = true;
                 try {
-                    if (typeof fetchOutputs === 'function') await fetchOutputs(true);
-                    await reloadCurrentAggregatePreview();
+                    if (options.fetchOutputs && typeof fetchOutputs === 'function') {
+                        await fetchOutputs(true);
+                    }
+                    await reloadCurrentAggregatePreview(options);
+                } catch (e) {
+                    console.error('scheduleAggregatePreviewReload failed', e);
                 } finally {
                     _aggregatePreviewRefreshInFlight = false;
                     if (_aggregatePreviewRefreshPending) {
                         _aggregatePreviewRefreshPending = false;
-                        refreshAfterAggregateTask(task);
+                        scheduleAggregatePreviewReload(options);
                     }
                 }
-            }, 800);
+            }, delay);
+        }
+
+        async function refreshAfterAggregateTask(task) {
+            if (!task || task.status !== 'success') return;
+            if (!isAggregatePreviewTaskName(task.name)) return;
+            const map = window._previewTaskOutputMap || {};
+            const linkedOid = map[task.id];
+            const shouldReloadPreview = document.getElementById('channel_modal')?.style.display === 'flex'
+                && window.currentPreviewOutputId
+                && (!linkedOid || linkedOid === window.currentPreviewOutputId);
+            if (!shouldReloadPreview) return;
+            scheduleAggregatePreviewReload({
+                force: true,
+                silent: true,
+                fetchOutputs: true,
+                delay: 1200,
+            });
         }
 
         function flattenAggregatePreviewChannels() {
@@ -3736,6 +3735,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 const actionLabel = enabled ? '启用' : '禁用';
                 showToast(`频道已${actionLabel}`, 'success');
                 if (typeof fetchOutputs === 'function') fetchOutputs(true);
+                scheduleAggregatePreviewReload({ force: true, silent: true, delay: 450 });
             } catch (err) {
                 showToast('操作失败: ' + (err.message || err), 'error');
             } finally {
@@ -6939,6 +6939,7 @@ function removeTag(val) {
             if (typeof fetchOutputs === 'function') fetchOutputs(true);
             if (changedCount > 0) {
                 showToast(`已批量${actionName} ${changedCount} 个频道`, 'success');
+                scheduleAggregatePreviewReload({ force: true, silent: true, delay: 450 });
             } else {
                 showToast(`选中频道均已${actionName}`, 'info');
             }

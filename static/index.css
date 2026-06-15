@@ -2347,7 +2347,7 @@ body.sub-bulk-float-active {
         box-shadow: 0 0 20px rgba(236, 72, 153, 0.4) !important;
     }
 
-    /* 刷新节目表 / 刷新预览：同一样式，一行两列 */
+    /* 刷新节目表 */
     .preview-toolbar-refresh-row {
         width: 100% !important;
         flex-wrap: nowrap !important;
@@ -2355,7 +2355,6 @@ body.sub-bulk-float-active {
     }
 
     #refresh_epg_btn,
-    #refresh_preview_btn,
     .preview-toolbar-refresh-btn {
         flex: 1 1 0 !important;
         min-width: 0 !important;
@@ -2370,7 +2369,6 @@ body.sub-bulk-float-active {
     }
 
     #refresh_epg_btn:hover,
-    #refresh_preview_btn:hover,
     .preview-toolbar-refresh-btn:hover {
         background: rgba(16, 185, 129, 0.15) !important;
         box-shadow: 0 0 20px rgba(16, 185, 129, 0.3) !important;
@@ -2498,7 +2496,6 @@ body.sub-bulk-float-active {
     }
 
     [data-theme="light"] #refresh_epg_btn,
-    [data-theme="light"] #refresh_preview_btn,
     [data-theme="light"] .preview-toolbar-refresh-btn {
         border-color: #059669 !important;
         color: #059669 !important;
