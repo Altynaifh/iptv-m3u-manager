@@ -68,6 +68,9 @@ class OutputSource(SQLModel, table=True):
     layout_mode: str = Field(default="rules")  # rules | explicit
     channel_layout: str = Field(default='{"groups":[]}')
     layout_meta: str = Field(default="{}")
+    preview_cache_key: Optional[str] = Field(default=None)  # 预览缓存指纹
+    preview_cache_json: Optional[str] = Field(default=None)  # 预览缓存 JSON
+    preview_cache_at: Optional[datetime] = Field(default=None)  # 预览缓存生成时间
 
 class AppSettings(SQLModel, table=True):
     """全站 LLM 配置（单行 id=1）"""

@@ -144,7 +144,17 @@
             </div>
 
             <div class="glass-card">
-                <h2>📋 当前订阅</h2>
+                <div class="sub-list-header">
+                    <label id="sub_list_toolbar" class="sub-list-select-all sub-item__select preview-group-section__select" title="全选 / 取消全选" hidden onclick="handleSubSelectAllClick(event)">
+                        <input type="checkbox" id="sub_select_all" class="preview-group-section__select-input" tabindex="-1" readonly onclick="event.preventDefault();" aria-label="全选订阅">
+                        <span class="preview-group-section__select-box" aria-hidden="true"></span>
+                    </label>
+                    <h2>📋 当前订阅</h2>
+                    <div class="sub-list-header__actions">
+                        <input type="file" id="sub_import_file" accept=".txt,text/plain" hidden onchange="importSubscriptionsFromFile(event)">
+                        <button type="button" class="btn btn-sm sub-list-header__import-btn" onclick="triggerSubImport()" title="每行一条：完整为 名称、URL、UA、自动更新(分钟) 制表符分隔；也可仅 URL">导入</button>
+                    </div>
+                </div>
                 <div id="sub_list">加载中...</div>
             </div>
         </section>
@@ -371,6 +381,8 @@
                             style="background: #0ea5e9; display: none;">AI 排序</button>
                         <button id="refresh_epg_btn" class="btn btn-sm toolbar-btn" onclick="refreshEPG()"
                             style="background: #10b981; display: none;">🔄 刷新节目表</button>
+                        <button id="refresh_preview_btn" class="btn btn-sm toolbar-btn" onclick="forceRefreshAggregatePreview()"
+                            style="background: #6366f1; display: none;" title="重新生成预览数据（忽略服务端缓存）">刷新预览</button>
 
                         <div class="preview-toolbar-select-group">
                             <button class="btn btn-sm toolbar-btn btn-primary" onclick="toggleSelectAll(true)"
@@ -413,6 +425,16 @@
     </div>
 
     <div id="toast-container"></div>
+    <div id="sub_bulk_float" class="sub-bulk-float" role="toolbar" aria-label="订阅批量操作">
+        <span id="sub_bulk_count" class="sub-bulk-float__count">已选 0 个</span>
+        <div class="sub-bulk-float__actions">
+            <button type="button" class="btn btn-sm toolbar-btn sub-bulk-float__btn" style="background: #f59e0b;" onclick="batchDisableSelectedSubs()">禁用</button>
+            <button type="button" class="btn btn-sm toolbar-btn sub-bulk-float__btn" style="background: #10b981;" onclick="batchRefreshSelectedSubs()">刷新</button>
+            <button type="button" class="btn btn-sm toolbar-btn sub-bulk-float__btn" style="background: #3b82f6;" onclick="batchViewSelectedSubs()">查看</button>
+            <button type="button" class="btn btn-sm toolbar-btn sub-bulk-float__btn" style="background: #6366f1;" onclick="exportSelectedSubs()">导出</button>
+        </div>
+        <button type="button" class="sub-bulk-float__close" onclick="clearSubSelection()" title="取消选择" aria-label="取消选择">&times;</button>
+    </div>
 
     <!-- 任务中心挂载点 -->
     <div class="navbar-tools">
@@ -1348,6 +1370,206 @@
         let filteredChannels = [];
         let renderOffset = 0;
         const RENDER_SIZE = 100;
+        const GROUP_SECTION_RENDER_SIZE = 50;
+
+        window._previewGroupedDomCache = {};
+        window._previewGroupSectionOffsets = {};
+        window._previewGroupSectionOffsetsByDomKey = {};
+        window._previewExportCacheMeta = null;
+
+        function invalidatePreviewRenderCaches() {
+            window._previewGroupedDomCache = {};
+            window._previewGroupSectionOffsets = {};
+            window._previewGroupSectionOffsetsByDomKey = {};
+        }
+
+        function snapshotPreviewGroupSectionOffsets(domKey) {
+            if (!domKey) return;
+            window._previewGroupSectionOffsetsByDomKey[domKey] = { ...window._previewGroupSectionOffsets };
+        }
+
+        function restorePreviewGroupSectionOffsets(domKey) {
+            const saved = domKey && window._previewGroupSectionOffsetsByDomKey[domKey];
+            window._previewGroupSectionOffsets = saved ? { ...saved } : {};
+        }
+
+        function buildPreviewDomCacheKey(sections) {
+            const mode = window._previewGroupDisplayMode || 'manual';
+            const sectionsKey = (sections || []).map((sec, si) => {
+                const title = sec.title || '未命名';
+                const ids = (sec.channels || []).map(c => c.id).join(',');
+                return `${previewGroupSectionKey(title, si)}|${ids}`;
+            }).join('||');
+            return `${mode}::${sectionsKey}`;
+        }
+
+        function ensureGroupSectionRenderEnd(si, total) {
+            if (window._previewGroupSectionOffsets[si] == null) {
+                window._previewGroupSectionOffsets[si] = Math.min(GROUP_SECTION_RENDER_SIZE, total);
+            }
+            return window._previewGroupSectionOffsets[si];
+        }
+
+        function resetGroupSectionRenderOffsets(sectionCount) {
+            window._previewGroupSectionOffsets = {};
+            for (let i = 0; i < sectionCount; i++) {
+                window._previewGroupSectionOffsets[i] = null;
+            }
+        }
+
+        async function fetchAggregateExportPreview(outputId, options = {}) {
+            const force = !!options.force;
+            const url = `/outputs/${outputId}/export-preview${force ? '?force=1' : ''}`;
+            const res = await fetch(url);
+            if (!res.ok) throw new Error('export-preview 请求失败');
+            const data = await res.json();
+            window._previewExportCacheMeta = data.cache || null;
+            return data;
+        }
+
+        async function forceRefreshAggregatePreview() {
+            const oid = window.currentPreviewOutputId;
+            if (!oid) return;
+            const btn = document.getElementById('refresh_preview_btn');
+            const originalText = btn ? btn.innerText : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = '生成中...';
+            }
+            try {
+                const viewState = captureAggregatePreviewViewState();
+                const savedMode = window._previewGroupDisplayMode;
+                invalidatePreviewRenderCaches();
+                const data = await fetchAggregateExportPreview(oid, { force: true });
+                window._previewGroupPayload = data;
+                updatePreviewGroupModeTabs(data);
+                if (savedMode) window._previewGroupDisplayMode = savedMode;
+                applyPreviewGroupDisplay({ preserveView: true, priorViewState: viewState, forceRender: true });
+                showToast('预览已重新生成', 'success');
+            } catch (e) {
+                showToast('刷新预览失败: ' + e.message, 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = originalText || '刷新预览';
+                }
+            }
+        }
+
+        function enqueueGroupedPreviewEpg(sections, isMobile, options = {}) {
+            if (!window.currentEPGUrl || !sections || !sections.length) return;
+            const onlySectionIndex = options.onlySectionIndex;
+            let epgIdx = 0;
+            sections.forEach((sec, si) => {
+                if (onlySectionIndex != null && si !== onlySectionIndex) {
+                    epgIdx += (sec.channels || []).length;
+                    return;
+                }
+                const title = sec.title || '未命名';
+                const secKey = previewGroupSectionKey(title, si);
+                const collapsed = window._previewGroupCollapsed && window._previewGroupCollapsed.has(secKey);
+                if (collapsed) {
+                    epgIdx += (sec.channels || []).length;
+                    return;
+                }
+                const chs = sec.channels || [];
+                const renderEnd = ensureGroupSectionRenderEnd(si, chs.length);
+                const slice = isMobile ? chs : chs.slice(0, renderEnd);
+                slice.forEach((c, idx) => {
+                    const cellId = isMobile ? `mobile_epg_grp_${epgIdx + idx}` : `epg_grp_${epgIdx + idx}`;
+                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, false);
+                });
+                epgIdx += chs.length;
+            });
+        }
+
+        function buildPreviewGroupSectionDesktopHtml(sec, si) {
+            const title = sec.title || '未命名';
+            const chs = sec.channels || [];
+            const renderEnd = ensureGroupSectionRenderEnd(si, chs.length);
+            const visible = chs.slice(0, renderEnd);
+            const rows = visible.map((c, idx) => buildPreviewTableRowHtml(c, si * 10000 + idx)).join('');
+            const remaining = chs.length - renderEnd;
+            const loadMoreRow = remaining > 0
+                ? `<tr class="preview-group-load-more-row"><td colspan="10" style="padding:12px;text-align:center;">
+                    <button type="button" class="btn btn-sm" onclick="loadPreviewGroupSectionMore(${si})">加载本组更多 (${remaining})</button>
+                   </td></tr>`
+                : '';
+            const secKey = previewGroupSectionKey(title, si);
+            const collapsed = window._previewGroupCollapsed && window._previewGroupCollapsed.has(secKey);
+            const poolCls = sec.isInactivePool ? ' preview-group-section--inactive-pool' : '';
+            return `<section class="preview-group-section${poolCls}${collapsed ? ' is-collapsed' : ''}" data-group-title="${title.replace(/"/g, '&quot;')}" data-section-index="${si}">
+                ${buildPreviewGroupHeaderHtml(title, chs.length, secKey, { ...sec, sectionIndex: si })}
+                <div class="preview-group-section__body"${collapsed ? ' hidden' : ''}>
+                <table class="channel-table-container" style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="text-align: left; border-bottom: 2px solid var(--primary);">
+                            <th style="padding: 10px; width: 30px;"><input type="checkbox" class="preview-group-section__thead-select" data-section-index="${si}" onclick="event.stopPropagation(); togglePreviewGroupSectionSelect(${si});" title="全选本组 / 取消全选"></th>
+                            <th style="padding: 10px; width: 60px;">Logo</th>
+                            <th style="padding: 10px;">名称</th>
+                            <th style="padding: 10px;">tvg-id</th>
+${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
+<th style="padding: 10px;" class="preview-col-source-group">分组</th>
+<th style="padding: 10px;">来源</th>
+                            <th style="padding: 10px; width: 100px;">可用性</th>
+                            <th style="padding: 10px; width: 80px;">预览</th>
+                            <th style="padding: 10px; width: 80px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows || '<tr><td colspan="10" style="padding:12px;opacity:0.6;">该组暂无频道</td></tr>'}${loadMoreRow}</tbody>
+                </table>
+                </div>
+            </section>`;
+        }
+
+        function loadPreviewGroupSectionMore(si) {
+            const sections = getActivePreviewGroupSections();
+            const sec = sections[si];
+            if (!sec) return;
+            const total = (sec.channels || []).length;
+            const cur = ensureGroupSectionRenderEnd(si, total);
+            window._previewGroupSectionOffsets[si] = Math.min(cur + GROUP_SECTION_RENDER_SIZE, total);
+            rerenderPreviewGroupSection(si);
+        }
+
+        function rerenderPreviewGroupSection(si) {
+            const sections = getActivePreviewGroupSections();
+            const sec = sections[si];
+            if (!sec) return;
+            const list = document.getElementById('channel_list');
+            if (!list) return;
+            const sectionEl = list.querySelectorAll('.preview-group-section')[si];
+            if (!sectionEl) return;
+            const isMobile = sectionEl.classList.contains('preview-group-section--mobile');
+            if (isMobile) {
+                const chs = sec.channels || [];
+                const cardsHost = sectionEl.querySelector('.preview-group-section__cards');
+                if (!cardsHost) return;
+                let globalIdx = 0;
+                for (let i = 0; i < si; i++) globalIdx += (sections[i].channels || []).length;
+                cardsHost.innerHTML = chs.map((c, idx) => {
+                    const epgId = `mobile_epg_grp_${globalIdx + idx}`;
+                    return buildMobileAggregateCardHtml(c, epgId);
+                }).join('') || '<div class="preview-group-section__empty">该组暂无频道</div>';
+                enqueueGroupedPreviewEpg(sections, true, { onlySectionIndex: si });
+                return;
+            }
+            const tbody = sectionEl.querySelector('tbody');
+            if (!tbody) return;
+            const chs = sec.channels || [];
+            const renderEnd = ensureGroupSectionRenderEnd(si, chs.length);
+            const visible = chs.slice(0, renderEnd);
+            const rows = visible.map((c, idx) => buildPreviewTableRowHtml(c, si * 10000 + idx)).join('');
+            const remaining = chs.length - renderEnd;
+            const loadMoreRow = remaining > 0
+                ? `<tr class="preview-group-load-more-row"><td colspan="10" style="padding:12px;text-align:center;">
+                    <button type="button" class="btn btn-sm" onclick="loadPreviewGroupSectionMore(${si})">加载本组更多 (${remaining})</button>
+                   </td></tr>`
+                : '';
+            tbody.innerHTML = (rows || '<tr><td colspan="10" style="padding:12px;opacity:0.6;">该组暂无频道</td></tr>') + loadMoreRow;
+            syncPreviewGroupSectionCheckboxes();
+            enqueueGroupedPreviewEpg(sections, false, { onlySectionIndex: si });
+        }
 
         // 多选状态
         window.selectedChannelIds = new Set();
@@ -1365,6 +1587,7 @@
             const checkAiVisionBtn = document.getElementById('check_ai_vision_btn');
             const checkAiOrganizeBtn = document.getElementById('check_ai_organize_btn');
             const refreshBtn = document.getElementById('refresh_epg_btn');
+            const refreshPreviewBtn = document.getElementById('refresh_preview_btn');
 
             // 批量按钮
             const selAllBtn = document.getElementById('sel_all_btn');
@@ -1387,6 +1610,7 @@
                 checkAiOrganizeBtn.style.display = (showCheckBtn && previewOutput && previewOutput.enable_ai_organize) ? 'block' : 'none';
             }
             if (refreshBtn) refreshBtn.style.display = displayStyle;
+            if (refreshPreviewBtn) refreshPreviewBtn.style.display = displayStyle;
 
             if (selAllBtn) selAllBtn.style.display = displayStyle;
             if (selInvBtn) selInvBtn.style.display = displayStyle;
@@ -1416,6 +1640,8 @@
                 endAggregatePreviewSession();
                 window._previewGroupPayload = null;
                 window._previewGroupDisplayMode = 'manual';
+                invalidatePreviewRenderCaches();
+                window._previewExportCacheMeta = null;
             }
 
             modal.style.setProperty('display', 'flex', 'important');
@@ -1480,9 +1706,8 @@
 
                 syncLayoutGlobalsFromOutput(out);
 
-                const res = await fetch(`/outputs/${out.id}/export-preview`);
-                if (!res.ok) throw new Error('export-preview 请求失败');
-                const data = await res.json();
+                invalidatePreviewRenderCaches();
+                const data = await fetchAggregateExportPreview(out.id);
                 window.lastRenderShowActions = true;
                 window._previewGroupPayload = data;
                 updatePreviewGroupModeTabs(data);
@@ -1517,6 +1742,7 @@
             const useGroupedPreview = showActions && groupSections.length > 0;
 
             if (useGroupedPreview) {
+                resetGroupSectionRenderOffsets(groupSections.length);
                 let globalIdx = 0;
                 if (isMobile) {
                     list.innerHTML = groupSections.map((sec, si) => {
@@ -1538,50 +1764,15 @@
                         </section>`;
                     }).join('');
                 } else {
-                    list.innerHTML = groupSections.map((sec, si) => {
-                        const title = sec.title || '未命名';
-                        const chs = sec.channels || [];
-                        const rows = chs.map((c, idx) => buildPreviewTableRowHtml(c, si * 10000 + idx)).join('');
-                        const secKey = previewGroupSectionKey(title, si);
-                        const collapsed = window._previewGroupCollapsed && window._previewGroupCollapsed.has(secKey);
-                        const poolCls = sec.isInactivePool ? ' preview-group-section--inactive-pool' : '';
-                        return `<section class="preview-group-section${poolCls}${collapsed ? ' is-collapsed' : ''}" data-group-title="${title.replace(/"/g, '&quot;')}">
-                            ${buildPreviewGroupHeaderHtml(title, chs.length, secKey, { ...sec, sectionIndex: si })}
-                            <div class="preview-group-section__body"${collapsed ? ' hidden' : ''}>
-                            <table class="channel-table-container" style="width: 100%; border-collapse: collapse;">
-                                <thead>
-                                    <tr style="text-align: left; border-bottom: 2px solid var(--primary);">
-                                        <th style="padding: 10px; width: 30px;"><input type="checkbox" class="preview-group-section__thead-select" data-section-index="${si}" onclick="event.stopPropagation(); togglePreviewGroupSectionSelect(${si});" title="全选本组 / 取消全选"></th>
-                                        <th style="padding: 10px; width: 60px;">Logo</th>
-                                        <th style="padding: 10px;">名称</th>
-                                        <th style="padding: 10px;">tvg-id</th>
-${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
-<th style="padding: 10px;" class="preview-col-source-group">分组</th>
-<th style="padding: 10px;">来源</th>
-                                        <th style="padding: 10px; width: 100px;">可用性</th>
-                                        <th style="padding: 10px; width: 80px;">预览</th>
-                                        <th style="padding: 10px; width: 80px;">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody>${rows || '<tr><td colspan="10" style="padding:12px;opacity:0.6;">该组暂无频道</td></tr>'}</tbody>
-                            </table>
-                            </div>
-                        </section>`;
-                    }).join('');
+                    list.innerHTML = groupSections.map((sec, si) => buildPreviewGroupSectionDesktopHtml(sec, si)).join('');
                 }
                 renderOffset = filteredChannels.length;
                 updatePreviewStats();
                 syncPreviewGroupSectionCheckboxes();
-                if (window.currentEPGUrl) {
-                    let epgIdx = 0;
-                    groupSections.forEach(sec => {
-                        (sec.channels || []).forEach(c => {
-                            const cellId = isMobile ? `mobile_epg_grp_${epgIdx}` : `epg_grp_${epgIdx}`;
-                            enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, false);
-                            epgIdx++;
-                        });
-                    });
-                }
+                enqueueGroupedPreviewEpg(groupSections, isMobile);
+                const domKey = buildPreviewDomCacheKey(groupSections);
+                window._previewGroupedDomCache[domKey] = list.innerHTML;
+                snapshotPreviewGroupSectionOffsets(domKey);
                 return;
             }
 
@@ -1740,12 +1931,40 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
         function togglePreviewGroupCollapse(key) {
             if (!window._previewGroupCollapsed) window._previewGroupCollapsed = new Set();
-            if (window._previewGroupCollapsed.has(key)) {
+            const willExpand = window._previewGroupCollapsed.has(key);
+            if (willExpand) {
                 window._previewGroupCollapsed.delete(key);
                 if (String(key).endsWith('::未启用')) window._previewAiInactivePoolExpanded = true;
             } else {
                 window._previewGroupCollapsed.add(key);
                 if (String(key).endsWith('::未启用')) window._previewAiInactivePoolExpanded = false;
+            }
+            const parts = String(key).split('::');
+            const targetIdx = parts.length >= 2 ? Number(parts[1]) : NaN;
+            const list = document.getElementById('channel_list');
+            const sectionEl = list && Number.isFinite(targetIdx)
+                ? list.querySelectorAll('.preview-group-section')[targetIdx]
+                : null;
+            if (sectionEl) {
+                const collapsed = !willExpand;
+                sectionEl.classList.toggle('is-collapsed', collapsed);
+                const body = sectionEl.querySelector('.preview-group-section__body');
+                if (body) {
+                    if (collapsed) body.setAttribute('hidden', '');
+                    else body.removeAttribute('hidden');
+                }
+                const headerBtn = sectionEl.querySelector('.preview-group-section__title--toggle');
+                if (headerBtn) {
+                    headerBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                    const chev = headerBtn.querySelector('.preview-group-section__chevron');
+                    if (chev) chev.textContent = collapsed ? '▶' : '▼';
+                }
+                if (willExpand) {
+                    const sections = getActivePreviewGroupSections();
+                    const isMobile = sectionEl.classList.contains('preview-group-section--mobile');
+                    enqueueGroupedPreviewEpg(sections, isMobile, { onlySectionIndex: targetIdx });
+                }
+                return;
             }
             applyPreviewGroupDisplay();
         }
@@ -2970,24 +3189,27 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 } else {
                     const tbody = sectionEl.querySelector('tbody');
                     if (!tbody) return false;
-                    tbody.innerHTML = chs.map((c, idx) => buildPreviewTableRowHtml(c, si * 10000 + idx)).join('')
-                        || '<tr><td colspan="10" style="padding:12px;opacity:0.6;">该组暂无频道</td></tr>';
+                    const renderEnd = ensureGroupSectionRenderEnd(si, chs.length);
+                    const visible = chs.slice(0, renderEnd);
+                    const rows = visible.map((c, idx) => buildPreviewTableRowHtml(c, si * 10000 + idx)).join('');
+                    const remaining = chs.length - renderEnd;
+                    const loadMoreRow = remaining > 0
+                        ? `<tr class="preview-group-load-more-row"><td colspan="10" style="padding:12px;text-align:center;">
+                            <button type="button" class="btn btn-sm" onclick="loadPreviewGroupSectionMore(${si})">加载本组更多 (${remaining})</button>
+                           </td></tr>`
+                        : '';
+                    tbody.innerHTML = (rows || '<tr><td colspan="10" style="padding:12px;opacity:0.6;">该组暂无频道</td></tr>') + loadMoreRow;
                 }
                 globalIdx += chs.length;
             }
 
             renderOffset = filteredChannels.length;
             updatePreviewStats();
-            if (window.currentEPGUrl) {
-                let epgIdx = 0;
-                sections.forEach(sec => {
-                    (sec.channels || []).forEach(c => {
-                        const cellId = isMobile ? `mobile_epg_grp_${epgIdx}` : `epg_grp_${epgIdx}`;
-                        enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, false);
-                        epgIdx++;
-                    });
-                });
-            }
+            syncPreviewGroupSectionCheckboxes();
+            enqueueGroupedPreviewEpg(sections, isMobile);
+            const domKey = buildPreviewDomCacheKey(sections);
+            window._previewGroupedDomCache[domKey] = list.innerHTML;
+            snapshotPreviewGroupSectionOffsets(domKey);
             return true;
         }
 
@@ -3010,13 +3232,12 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const viewState = captureAggregatePreviewViewState();
             const savedMode = window._previewGroupDisplayMode;
             try {
-                const res = await fetch(`/outputs/${oid}/export-preview`);
-                if (!res.ok) throw new Error('export-preview 请求失败');
-                const data = await res.json();
+                invalidatePreviewRenderCaches();
+                const data = await fetchAggregateExportPreview(oid);
                 window._previewGroupPayload = data;
                 updatePreviewGroupModeTabs(data);
                 if (savedMode) window._previewGroupDisplayMode = savedMode;
-                applyPreviewGroupDisplay({ preserveView: true, priorViewState: viewState });
+                applyPreviewGroupDisplay({ preserveView: true, priorViewState: viewState, forceRender: true });
             } catch (e) {
                 console.error('reloadCurrentAggregatePreview failed', e);
             }
@@ -3191,6 +3412,8 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             apply(p.ai_groups);
             currentChannels.forEach(c => { if (c.id === channelId) c.is_enabled = isEnabled; });
             filteredChannels.forEach(c => { if (c.id === channelId) c.is_enabled = isEnabled; });
+            window._previewGroupedDomCache = {};
+            window._previewGroupSectionOffsetsByDomKey = {};
         }
 
         function patchAggregateEnablementControls(channelId) {
@@ -3250,9 +3473,288 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             }
         }
 
+        window.selectedSubIds = window.selectedSubIds || new Set();
+        window._subsListCache = [];
+
+        function toggleSubSelection(id, checked, event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            const sid = Number(id);
+            if (checked) window.selectedSubIds.add(sid);
+            else window.selectedSubIds.delete(sid);
+            syncSubItemSelectionUI();
+            updateSubBulkFloat();
+        }
+
+        function handleSubItemCardClick(event, id) {
+            if (event.target.closest('.sub-item__actions, .sub-item__select, button, a, input, label')) return;
+            const sid = Number(id);
+            toggleSubSelection(sid, !window.selectedSubIds.has(sid), null);
+        }
+
+        function getSubListSelectAllState() {
+            const subs = window._subsListCache || [];
+            if (!subs.length) return { checked: false, indeterminate: false };
+            const selectedCount = subs.filter(s => window.selectedSubIds.has(s.id)).length;
+            return {
+                checked: selectedCount === subs.length,
+                indeterminate: selectedCount > 0 && selectedCount < subs.length,
+            };
+        }
+
+        function syncSubListSelectAllUI() {
+            const input = document.getElementById('sub_select_all');
+            const label = document.getElementById('sub_list_toolbar');
+            if (!input || !label) return;
+            const state = getSubListSelectAllState();
+            input.checked = state.checked;
+            input.indeterminate = state.indeterminate;
+            label.classList.remove('is-checked', 'is-partial');
+            if (state.checked) label.classList.add('is-checked');
+            else if (state.indeterminate) label.classList.add('is-partial');
+        }
+
+        function handleSubSelectAllClick(event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            const subs = window._subsListCache || [];
+            if (!subs.length) return;
+            const state = getSubListSelectAllState();
+            if (state.checked) {
+                window.selectedSubIds.clear();
+            } else {
+                subs.forEach(s => window.selectedSubIds.add(s.id));
+            }
+            syncSubItemSelectionUI();
+            updateSubBulkFloat();
+        }
+
+        function syncSubItemSelectionUI() {
+            document.querySelectorAll('.sub-item[data-sub-id]').forEach(el => {
+                const sid = Number(el.dataset.subId);
+                const selected = window.selectedSubIds.has(sid);
+                el.classList.toggle('sub-item--selected', selected);
+                const cb = el.querySelector('.sub-item__checkbox');
+                if (cb) cb.checked = selected;
+                const label = el.querySelector('.sub-item__select');
+                if (label) label.classList.toggle('is-checked', selected);
+            });
+            syncSubListSelectAllUI();
+        }
+
+        function updateSubBulkFloat() {
+            const bar = document.getElementById('sub_bulk_float');
+            const count = window.selectedSubIds.size;
+            if (!bar) return;
+            bar.classList.toggle('is-visible', count > 0);
+            const countEl = document.getElementById('sub_bulk_count');
+            if (countEl) countEl.textContent = `已选 ${count} 个`;
+            document.body.classList.toggle('sub-bulk-float-active', count > 0);
+        }
+
+        function clearSubSelection() {
+            window.selectedSubIds.clear();
+            syncSubItemSelectionUI();
+            updateSubBulkFloat();
+        }
+
+        async function batchDisableSelectedSubs() {
+            const ids = Array.from(window.selectedSubIds);
+            if (!ids.length) return;
+            if (!confirm(`确定禁用选中的 ${ids.length} 个订阅吗？`)) return;
+            let ok = 0;
+            for (const id of ids) {
+                const sub = window._subsListCache.find(s => s.id === id);
+                if (!sub || !sub.is_enabled) continue;
+                const putRes = await fetch(`/subscriptions/${id}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...sub, is_enabled: false }),
+                });
+                if (putRes.ok) ok++;
+            }
+            showToast(ok ? `已禁用 ${ok} 个订阅` : '所选订阅均已禁用', ok ? 'success' : 'info');
+            clearSubSelection();
+            fetchSubs();
+        }
+
+        async function batchRefreshSelectedSubs() {
+            const ids = Array.from(window.selectedSubIds);
+            if (!ids.length) return;
+            showToast(`正在刷新 ${ids.length} 个订阅...`, 'info');
+            let ok = 0;
+            for (const id of ids) {
+                try {
+                    const res = await fetch(`/subscriptions/${id}/refresh`, { method: 'POST' });
+                    if (res.ok) ok++;
+                } catch (e) {
+                    console.error('batch refresh sub failed', id, e);
+                }
+            }
+            showToast(`已提交 ${ok}/${ids.length} 个刷新任务`, ok ? 'success' : 'error');
+            fetchSubs();
+        }
+
+        function batchViewSelectedSubs() {
+            const ids = Array.from(window.selectedSubIds);
+            if (!ids.length) return;
+            const first = window._subsListCache.find(s => s.id === ids[0]);
+            if (!first) return;
+            const label = (first.name || first.url || '').replace(/'/g, "\\'");
+            viewChannels(first.id, label, first.epg_url || '');
+            if (ids.length > 1) {
+                showToast(`正在预览第一个订阅（共选中 ${ids.length} 个）`, 'info');
+            }
+        }
+
+        const SUB_IMPORT_DEFAULT_UA = '';
+        const SUB_IMPORT_DEFAULT_AUTO_MINUTES = 0;
+
+        function escapeSubExportField(value) {
+            return String(value ?? '').replace(/\t/g, ' ').replace(/\r?\n/g, ' ').trim();
+        }
+
+        function formatSubscriptionExportLine(sub) {
+            return [
+                escapeSubExportField(sub.name),
+                escapeSubExportField(sub.url),
+                escapeSubExportField(sub.user_agent),
+                String(sub.auto_update_minutes ?? 0),
+            ].join('\t');
+        }
+
+        function isLikelySubscriptionUrl(text) {
+            const s = String(text || '').trim();
+            return /^https?:\/\//i.test(s) || /^git@/.test(s) || /\.m3u8?(\?|$)/i.test(s);
+        }
+
+        function parseSubscriptionImportLine(line) {
+            const trimmed = String(line || '').trim();
+            if (!trimmed || trimmed.startsWith('#')) return null;
+            if (trimmed.includes('\t')) {
+                const parts = trimmed.split('\t');
+                const url = (parts[1] || '').trim();
+                if (!url) return null;
+                const minutesRaw = parseInt((parts[3] || '0').trim(), 10);
+                return {
+                    name: (parts[0] || '').trim(),
+                    url,
+                    user_agent: (parts[2] || '').trim() || SUB_IMPORT_DEFAULT_UA,
+                    auto_update_minutes: Number.isFinite(minutesRaw) ? minutesRaw : SUB_IMPORT_DEFAULT_AUTO_MINUTES,
+                };
+            }
+            if (isLikelySubscriptionUrl(trimmed)) {
+                return {
+                    name: '',
+                    url: trimmed,
+                    user_agent: SUB_IMPORT_DEFAULT_UA,
+                    auto_update_minutes: SUB_IMPORT_DEFAULT_AUTO_MINUTES,
+                };
+            }
+            return null;
+        }
+
+        async function exportSelectedSubs() {
+            const ids = Array.from(window.selectedSubIds);
+            if (!ids.length) {
+                showToast('请先选择要导出的订阅', 'info');
+                return;
+            }
+            const lines = ['# 名称\tURL\tUA\t自动更新(分钟)'];
+            ids.forEach(id => {
+                const sub = window._subsListCache.find(s => s.id === id);
+                if (sub) lines.push(formatSubscriptionExportLine(sub));
+            });
+            if (lines.length <= 1) {
+                showToast('未找到可导出的订阅', 'error');
+                return;
+            }
+            const text = lines.join('\n');
+            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `subscriptions-${new Date().toISOString().slice(0, 10)}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(text);
+                    showToast(`已导出 ${ids.length} 条订阅（已下载并复制到剪贴板）`, 'success');
+                    return;
+                }
+            } catch (e) {
+                console.warn('clipboard export failed', e);
+            }
+            showToast(`已导出 ${ids.length} 条订阅`, 'success');
+        }
+
+        function triggerSubImport() {
+            const input = document.getElementById('sub_import_file');
+            if (input) input.click();
+        }
+
+        async function importSubscriptionsFromFile(event) {
+            const file = event.target && event.target.files && event.target.files[0];
+            if (!file) return;
+            try {
+                const text = await file.text();
+                await importSubscriptionsText(text);
+            } catch (e) {
+                showToast('读取文件失败: ' + e.message, 'error');
+            } finally {
+                event.target.value = '';
+            }
+        }
+
+        async function importSubscriptionsText(text) {
+            const lines = String(text || '').split(/\r?\n/);
+            const rows = [];
+            lines.forEach(line => {
+                const row = parseSubscriptionImportLine(line);
+                if (row && row.url) rows.push(row);
+            });
+            if (!rows.length) {
+                showToast('没有可导入的订阅行（支持仅 URL 或 名称\\tURL\\tUA\\t分钟）', 'error');
+                return;
+            }
+            if (!confirm(`将导入 ${rows.length} 条订阅，是否继续？`)) return;
+            showToast(`正在导入 ${rows.length} 条订阅...`, 'info');
+            let ok = 0;
+            let fail = 0;
+            for (const row of rows) {
+                const success = await submitSingleSub(
+                    null,
+                    row.name,
+                    row.url,
+                    row.user_agent,
+                    row.auto_update_minutes,
+                    'POST'
+                );
+                if (success) ok++;
+                else fail++;
+            }
+            if (ok > 0) {
+                fetchSubs();
+                clearSubSelection();
+            }
+            showToast(`导入完成：成功 ${ok} 条${fail ? `，失败 ${fail} 条` : ''}`, ok ? 'success' : 'error');
+        }
+
         async function fetchSubs() {
             const res = await fetch('/subscriptions/');
             const data = await res.json();
+            window._subsListCache = data;
+            const aliveIds = new Set(data.map(s => s.id));
+            window.selectedSubIds.forEach(id => {
+                if (!aliveIds.has(id)) window.selectedSubIds.delete(id);
+            });
 
             // 渲染订阅管理列表
             const list = document.getElementById('sub_list');
@@ -3261,31 +3763,44 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 const opacity = s.is_enabled ? '1' : '0.5';
                 const toggleText = s.is_enabled ? '禁用' : '启用';
                 const toggleColor = s.is_enabled ? '#f59e0b' : '#10b981';
+                const selected = window.selectedSubIds.has(s.id);
 
+                const safeName = (s.name || s.url || '').replace(/'/g, "\\'");
                 return `
-                <div id="sub_item_${s.id}" class="sub-item" style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--glass-border); padding-bottom: 8px; opacity: ${opacity};">
-                    <div style="cursor: pointer; flex-grow: 1;" onclick="viewChannels(${s.id}, '${(s.name || s.url).replace(/'/g, "\\'")}', '${s.epg_url || ''}')">
-                        <strong style="color: ${s.name ? 'inherit' : '#94a3b8'};">${s.name || '未命名订阅 (' + s.url.substring(0, 20) + '...)'}</strong>
-                        ${!s.is_enabled ? '<span style="background: #64748b; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">已禁用</span>' : ''}
-                        ${s.epg_url ? '<span style="background: #8b5cf6; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7em; margin-left: 8px;">EPG</span>' : ''}
-                        <br>
-                        <small style="opacity: 0.6;">${s.url.substring(0, 50)}...</small>
-                        <div style="font-size: 0.8em; margin-top: 4px; opacity: 0.8;">
-                            📅 ${formatDate(s.last_updated)} 
-                            <span style="color: ${statusColor}; margin-left: 8px;">
-                                ${s.last_update_status || '等待更新'}
-                            </span>
+                <div id="sub_item_${s.id}" class="sub-item${selected ? ' sub-item--selected' : ''}${s.is_enabled ? '' : ' sub-item--disabled'}" data-sub-id="${s.id}" onclick="handleSubItemCardClick(event, ${s.id})" role="button" tabindex="0" onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();handleSubItemCardClick(event, ${s.id});}">
+                    <div class="sub-item__head">
+                        <label class="sub-item__select preview-group-section__select${selected ? ' is-checked' : ''}" onclick="event.stopPropagation();">
+                            <input type="checkbox" class="preview-group-section__select-input sub-item__checkbox" ${selected ? 'checked' : ''} onchange="toggleSubSelection(${s.id}, this.checked, event)" aria-label="选择订阅">
+                            <span class="preview-group-section__select-box" aria-hidden="true"></span>
+                        </label>
+                        <div class="sub-item__info">
+                            <div class="sub-item__title-row">
+                                <strong class="sub-item__name${s.name ? '' : ' sub-item__name--muted'}">${s.name || '未命名订阅 (' + s.url.substring(0, 20) + '...)'}</strong>
+                                <span class="sub-item__badges">
+                                    ${!s.is_enabled ? '<span class="sub-item__badge sub-item__badge--off">已禁用</span>' : ''}
+                                    ${s.epg_url ? '<span class="sub-item__badge sub-item__badge--epg">EPG</span>' : ''}
+                                </span>
+                            </div>
+                            <small class="sub-item__url">${s.url.substring(0, 50)}...</small>
+                            <div class="sub-item__meta">
+                                <span>📅 ${formatDate(s.last_updated)}</span>
+                                <span class="sub-item__status" style="color: ${statusColor};">${s.last_update_status || '等待更新'}</span>
+                            </div>
                         </div>
                     </div>
-                    <div style="display: flex; gap: 8px;">
-                        <button class="btn btn-sm" style="background: ${toggleColor};" onclick="toggleSubActive(${s.id}, ${s.is_enabled})">${toggleText}</button>
-                        <button class="btn btn-sm" style="background: var(--primary);" onclick="prepareEditSub(${s.id}, '${(s.name || "").replace(/'/g, "\\'")}', '${s.url}', '${s.user_agent}', ${s.auto_update_minutes || 0}, ${s.is_enabled})">修改</button>
-                        <button class="btn btn-sm" style="background: #10b981;" onclick="refreshSub(${s.id})">刷新</button>
-                        <button class="btn btn-sm" style="background: #3b82f6;" onclick="viewChannels(${s.id}, '${(s.name || s.url).replace(/'/g, "\\'")}', '${s.epg_url || ''}')">查看</button>
-                        <button class="btn btn-sm" style="background: #ef4444;" onclick="deleteSub(${s.id})">删除</button>
+                    <div class="sub-item__actions" onclick="event.stopPropagation();">
+                        <button type="button" class="btn btn-sm" style="background: ${toggleColor};" onclick="toggleSubActive(${s.id}, ${s.is_enabled})">${toggleText}</button>
+                        <button type="button" class="btn btn-sm" style="background: var(--primary);" onclick="prepareEditSub(${s.id}, '${(s.name || "").replace(/'/g, "\\'")}', '${s.url}', '${s.user_agent}', ${s.auto_update_minutes || 0}, ${s.is_enabled})">修改</button>
+                        <button type="button" class="btn btn-sm" style="background: #10b981;" onclick="refreshSub(${s.id})">刷新</button>
+                        <button type="button" class="btn btn-sm" style="background: #3b82f6;" onclick="viewChannels(${s.id}, '${safeName}', '${s.epg_url || ''}')">查看</button>
+                        <button type="button" class="btn btn-sm" style="background: #ef4444;" onclick="deleteSub(${s.id})">删除</button>
                     </div>
                 </div>
             `}).join('') || '暂无订阅';
+            const toolbar = document.getElementById('sub_list_toolbar');
+            if (toolbar) toolbar.hidden = !data.length;
+            syncSubListSelectAllUI();
+            updateSubBulkFloat();
 
             // 聚合页面的订阅选择 (仅显示启用的)
             const selector = document.getElementById('sub_selector');
@@ -5354,6 +5869,8 @@ function removeTag(val) {
             endAggregatePreviewSession();
             window.currentPreviewOutputId = null;
             window._previewGroupPayload = null;
+            invalidatePreviewRenderCaches();
+            window._previewExportCacheMeta = null;
         }
 
         function handleModalScroll(el) {
@@ -6173,6 +6690,13 @@ function removeTag(val) {
                 if (window.lastRenderShowActions) {
                     html += ` <span style="margin-left:10px; opacity:0.6;">(已选 ${selected} 个)</span>`;
                 }
+                const cacheMeta = window._previewExportCacheMeta;
+                if (cacheMeta && window.currentPreviewOutputId) {
+                    const cacheHint = cacheMeta.hit
+                        ? '<span style="margin-left:10px;opacity:0.55;" title="服务端已缓存预览数据">· 缓存</span>'
+                        : '<span style="margin-left:10px;opacity:0.55;" title="本次已重新生成预览">· 已生成</span>';
+                    html += cacheHint;
+                }
                 statsEl.innerHTML = html;
             }
             updateAggregateBatchExcludeButtons();
@@ -6403,12 +6927,31 @@ function removeTag(val) {
                 }
             }
 
+            const listEl = document.getElementById('channel_list');
+            const domCacheKey = buildPreviewDomCacheKey(sections);
+            const canUseDomCache = !options.forceRender
+                && sections.length > 0
+                && window._previewGroupedDomCache[domCacheKey]
+                && listEl;
+            if (canUseDomCache) {
+                listEl.innerHTML = window._previewGroupedDomCache[domCacheKey];
+                restorePreviewGroupSectionOffsets(domCacheKey);
+                renderOffset = filteredChannels.length;
+                updatePreviewStats();
+                updatePreviewGroupColumnHeader();
+                syncPreviewGroupSectionCheckboxes();
+                const isMobile = window.innerWidth <= 768;
+                enqueueGroupedPreviewEpg(sections, isMobile);
+                if (preserveView) restoreAggregatePreviewViewState(priorViewState);
+                return;
+            }
+
             renderOffset = preserveView ? (priorViewState?.renderOffset || 0) : 0;
             if (!preserveView) {
                 const container = document.getElementById('channel_list_container');
                 if (container) container.scrollTop = 0;
             }
-            renderBaseTable(document.getElementById('channel_list'), true);
+            renderBaseTable(listEl, true);
             updatePreviewGroupColumnHeader();
             syncPreviewGroupSectionCheckboxes();
             if (preserveView) restoreAggregatePreviewViewState(priorViewState);

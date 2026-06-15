@@ -12,6 +12,7 @@ from services.epg import fetch_epg_cached
 from services.stream_checker import StreamChecker
 from routers.subscriptions import process_subscription_refresh
 from services.output_resolver import export_m3u_channels, filter_candidates, preview_export_groups, aggregate_channels
+from services.preview_cache import clear_output_preview_cache, get_or_build_export_preview
 import uuid
 
 router = APIRouter(tags=["outputs"])
@@ -165,7 +166,8 @@ def update_output(output_id: int, output_data: OutputSource, session: Session = 
     output.layout_mode = output_data.layout_mode or 'rules'
     output.channel_layout = output_data.channel_layout or '{"groups":[]}'
     output.layout_meta = output_data.layout_meta or '{}'
-    
+    clear_output_preview_cache(output)
+
     session.add(output)
     session.commit()
     session.refresh(output)
@@ -174,12 +176,16 @@ def update_output(output_id: int, output_data: OutputSource, session: Session = 
 
 
 @router.get("/outputs/{output_id}/export-preview")
-def export_preview_output(output_id: int, session: Session = Depends(get_session)):
-    """聚合列表预览：按导出分组（手动 / AI explicit）返回频道。"""
+def export_preview_output(
+    output_id: int,
+    force: bool = False,
+    session: Session = Depends(get_session),
+):
+    """聚合列表预览：按导出分组（手动 / AI explicit）返回频道；默认使用服务端缓存。"""
     out = session.get(OutputSource, output_id)
     if not out:
         raise HTTPException(status_code=404, detail="输出源不存在")
-    return preview_export_groups(session, out, None)
+    return get_or_build_export_preview(session, out, None, force=force)
 
 
 @router.post("/outputs/preview")
@@ -496,6 +502,7 @@ def set_layout_mode(output_id: int, data: dict, session: Session = Depends(get_s
     if mode not in ("rules", "explicit"):
         raise HTTPException(status_code=400, detail="layout_mode 无效")
     out.layout_mode = mode
+    clear_output_preview_cache(out)
     session.add(out)
     session.commit()
     return {"layout_mode": out.layout_mode}

@@ -212,7 +212,10 @@ def migrate_db():
             session.commit()
 
         for col, sql in [
-          ("auto_ai_vision_check", "ALTER TABLE outputsource ADD COLUMN auto_ai_vision_check BOOLEAN DEFAULT 0"),
+            ("preview_cache_key", "ALTER TABLE outputsource ADD COLUMN preview_cache_key VARCHAR"),
+            ("preview_cache_json", "ALTER TABLE outputsource ADD COLUMN preview_cache_json VARCHAR"),
+            ("preview_cache_at", "ALTER TABLE outputsource ADD COLUMN preview_cache_at DATETIME"),
+            ("auto_ai_vision_check", "ALTER TABLE outputsource ADD COLUMN auto_ai_vision_check BOOLEAN DEFAULT 0"),
            ("ai_organize_prompt", "ALTER TABLE outputsource ADD COLUMN ai_organize_prompt VARCHAR DEFAULT ''"),
            ("auto_ai_organize", "ALTER TABLE outputsource ADD COLUMN auto_ai_organize BOOLEAN DEFAULT 0"),
            ("enable_ai_vision", "ALTER TABLE outputsource ADD COLUMN enable_ai_vision BOOLEAN DEFAULT 0"),
