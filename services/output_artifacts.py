@@ -206,12 +206,21 @@ async def build_output_artifacts_async(
     return await loop.run_in_executor(None, lambda: build_output_artifacts(session, out))
 
 
+_pending_rebuild_ids: set[int] = set()
+
+
 def schedule_rebuild_output_artifacts(output_id: int, *, epg_refresh: bool = False) -> None:
-    """异步排队重建单个聚合产物。"""
+    """异步排队重建单个聚合产物（同一 ID 不重复入队）。"""
+    if output_id in _pending_rebuild_ids:
+        return
+    _pending_rebuild_ids.add(output_id)
     import asyncio
 
     async def _kick() -> None:
-        await rebuild_output_artifacts_task.kiq(output_id=output_id, epg_refresh=epg_refresh)
+        try:
+            await rebuild_output_artifacts_task.kiq(output_id=output_id, epg_refresh=epg_refresh)
+        finally:
+            _pending_rebuild_ids.discard(output_id)
 
     try:
         loop = asyncio.get_running_loop()
@@ -233,9 +242,12 @@ from task_broker import broker
 @broker.task
 async def rebuild_output_artifacts_task(output_id: int, epg_refresh: bool = False):
     """Taskiq：后台重建聚合静态产物。"""
-    with Session(engine) as session:
-        out = session.get(OutputSource, output_id)
-        if not out:
-            return
-        await build_output_artifacts_async(session, out, epg_refresh=epg_refresh)
-        print(f"[Artifacts] 已重建聚合 {out.id} ({out.slug})")
+    try:
+        with Session(engine) as session:
+            out = session.get(OutputSource, output_id)
+            if not out:
+                return
+            await build_output_artifacts_async(session, out, epg_refresh=epg_refresh)
+            print(f"[Artifacts] 已重建聚合 {out.id} ({out.slug})")
+    finally:
+        _pending_rebuild_ids.discard(output_id)

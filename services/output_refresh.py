@@ -52,7 +52,7 @@ async def refresh_output_task(task_id: str, output_id: int):
                 try:
                     sub = session.get(Subscription, sub_id)
                     if sub:
-                        await process_subscription_refresh(session, sub)
+                        await process_subscription_refresh(session, sub, invalidate_outputs=False)
                         p = 10 + int((i + 1) / len(sub_ids) * 40) if sub_ids else 50
                         await update_task_status(
                             task_id,
@@ -86,10 +86,15 @@ async def refresh_output_task(task_id: str, output_id: int):
                 source="manual",
                 force_check=True,
                 sync_ok=sync_ok,
+                rebuild_artifacts=False,
             )
 
             from services.output_artifacts import schedule_rebuild_output_artifacts
+            from services.output_stats import invalidate_output_runtime_cache
 
+            out = session.get(OutputSource, output_id)
+            if out:
+                invalidate_output_runtime_cache(out, schedule_rebuild=False)
             schedule_rebuild_output_artifacts(output_id, epg_refresh=bool(out and out.epg_url))
 
             if not steps:

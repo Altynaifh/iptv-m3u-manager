@@ -92,8 +92,13 @@ def get_subscription_channels(sub_id: int, session: Session = Depends(get_sessio
     channels = session.exec(select(Channel).where(Channel.subscription_id == sub_id)).all()
     return channels
 
-async def process_subscription_refresh(session: Session, sub: Subscription) -> int:
-    """同步订阅（支持 M3U/TXT/Git 混合及多地址）"""
+async def process_subscription_refresh(
+    session: Session,
+    sub: Subscription,
+    *,
+    invalidate_outputs: bool = True,
+) -> int:
+    """同步订阅（支持 M3U/TXT/Git 混合及多地址）。"""
     # 1. 记住当前已有的状态（禁用状态、检测结果），防止刷新后丢失
     old_channels = session.exec(select(Channel).where(Channel.subscription_id == sub.id)).all()
     
@@ -135,7 +140,8 @@ async def process_subscription_refresh(session: Session, sub: Subscription) -> i
     sub.last_update_status = "Success"
     session.add(sub)
     session.commit()
-    invalidate_all_output_runtime_caches(session)
+    if invalidate_outputs:
+        invalidate_all_output_runtime_caches(session)
     return len(channels_data)
 
 @router.post("/{sub_id}/refresh")

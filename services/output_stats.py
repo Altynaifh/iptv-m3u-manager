@@ -43,14 +43,12 @@ def invalidate_output_runtime_cache(out: OutputSource, *, schedule_rebuild: bool
 
 
 def invalidate_all_output_runtime_caches(session: Session) -> None:
+    """仅清除统计与磁盘产物标记，不触发重建（重建由聚合刷新结束时统一执行）。"""
     outputs = session.exec(select(OutputSource)).all()
     for out in outputs:
         invalidate_output_runtime_cache(out, schedule_rebuild=False)
         session.add(out)
     session.commit()
-    from services.output_artifacts import schedule_rebuild_all_output_artifacts
-
-    schedule_rebuild_all_output_artifacts(session)
 
 
 def compute_member_stats(

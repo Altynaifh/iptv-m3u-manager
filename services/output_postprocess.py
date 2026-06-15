@@ -126,6 +126,7 @@ async def run_output_postprocess_chain(
     source: str = "auto",
     force_check: bool = False,
     sync_ok: bool = True,
+    rebuild_artifacts: bool = True,
 ) -> List[str]:
     """按固定顺序执行：截图 -> AI 视觉 -> AI 排序，并写入汇总 last_update_status。"""
     out = session.get(OutputSource, output_id)
@@ -196,7 +197,7 @@ async def run_output_postprocess_chain(
     if out:
         from services.output_stats import invalidate_output_runtime_cache
 
-        invalidate_output_runtime_cache(out)
+        invalidate_output_runtime_cache(out, schedule_rebuild=rebuild_artifacts)
 
     if task_id:
         await update_task_status(
