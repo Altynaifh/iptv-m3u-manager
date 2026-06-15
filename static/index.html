@@ -1407,6 +1407,19 @@
             window._previewGroupSectionOffsets = saved ? { ...saved } : {};
         }
 
+        function buildPreviewChannelVisualStateKey(sections) {
+            const parts = [];
+            (sections || []).forEach(sec => {
+                (sec.channels || []).forEach(c => {
+                    if (c.id == null) return;
+                    const en = isPreviewChannelEnabled(c) ? '1' : '0';
+                    const ex = isPreviewAggregateExcluded(c.id) ? '1' : '0';
+                    parts.push(`${c.id}:${en}${ex}`);
+                });
+            });
+            return parts.join(';');
+        }
+
         function buildPreviewDomCacheKey(sections) {
             const mode = window._previewGroupDisplayMode || 'manual';
             const sectionsKey = (sections || []).map((sec, si) => {
@@ -1414,7 +1427,18 @@
                 const ids = (sec.channels || []).map(c => c.id).join(',');
                 return `${previewGroupSectionKey(title, si)}|${ids}`;
             }).join('||');
-            return `${mode}::${sectionsKey}`;
+            const visualKey = buildPreviewChannelVisualStateKey(sections);
+            return `${mode}::${sectionsKey}::${visualKey}`;
+        }
+
+        function refreshGroupedPreviewDomCacheFromDom() {
+            const list = document.getElementById('channel_list');
+            if (!list || !window._previewGroupPayload) return;
+            const sections = getActivePreviewGroupSections();
+            if (!sections.length) return;
+            const domKey = buildPreviewDomCacheKey(sections);
+            window._previewGroupedDomCache[domKey] = list.innerHTML;
+            snapshotPreviewGroupSectionOffsets(domKey);
         }
 
         function ensureGroupSectionRenderEnd(si, total) {
@@ -2809,7 +2833,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 targets.forEach(c => set.delete(Number(c.id)));
                 showToast(`已批量恢复 ${targets.length} 个频道`, 'success');
             }
-            applyPreviewGroupDisplay({ preserveView: true });
+            targets.forEach(c => patchPreviewAggregateExcludeControls(c.id));
             updatePreviewStats();
             updateAggregateBatchExcludeButtons();
             syncPreviewGroupSectionCheckboxes();
@@ -2857,8 +2881,9 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 set.add(id);
                 showToast('频道已从聚合表剔除', 'info');
             }
-            applyPreviewGroupDisplay({ preserveView: true });
+            patchPreviewAggregateExcludeControls(id);
             updatePreviewStats();
+            updateAggregateBatchExcludeButtons();
             await savePreviewAggregateExclusions();
         }
 
@@ -2904,6 +2929,13 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     </div>`;
         }
 
+        function previewTableRowStateClass(c) {
+            const selected = window.selectedChannelIds.has(c.id) ? 'card-selected' : '';
+            const disabled = isPreviewChannelDisabled(c) ? 'preview-channel-row--disabled' : '';
+            const excluded = isPreviewAggregateExcluded(c.id) ? 'preview-channel-row--excluded' : '';
+            return [selected, disabled, excluded].filter(Boolean).join(' ');
+        }
+
         function buildPreviewTableRowHtml(c, rowIndex) {
             const statusHtml = buildChannelAvailabilityHtml(c);
             const image = c.visualImage || c.check_image;
@@ -2912,8 +2944,9 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 visualHtml = `<td style="padding: 10px;">${wrapTablePreviewThumb(image, c)}</td>`;
             }
             const epgCellId = `epg_grp_${rowIndex}`;
+            const rowCls = previewTableRowStateClass(c);
             return `
-                    <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${isPreviewChannelDisabled(c) ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
+                    <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${rowCls}" style="border-bottom: 1px solid var(--glass-border);">
                         <td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>
                         <td style="padding: 10px;">${channelLogoSlotHtml(c)}</td>
                         <td style="padding: 10px;">${c.name}</td>
@@ -3148,8 +3181,9 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         }
                     }
 
+                    const rowCls = previewTableRowStateClass(c);
                     return `
-                    <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${window.selectedChannelIds.has(c.id) ? 'card-selected' : ''}" style="border-bottom: 1px solid var(--glass-border); ${isPreviewChannelDisabled(c) ? 'opacity: 0.5; background: rgba(0,0,0,0.2);' : ''} ${isPreviewAggregateExcluded(c.id) ? 'opacity: 0.45; text-decoration: line-through;' : ''}">
+                    <tr data-channel-id="${c.id}" onclick="handleCardClick(event, ${c.id})" class="${rowCls}" style="border-bottom: 1px solid var(--glass-border);">
                         ${window.lastRenderShowActions ? `<td style="padding: 10px;"><input type="checkbox" class="ch-checkbox" data-id="${c.id}" ${window.selectedChannelIds.has(c.id) ? 'checked' : ''} onchange="toggleChannelSelection(${c.id}, this.checked)"></td>` : ''}
                         <td id="logo_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="Logo">${channelLogoSlotHtml(c)}</td>
                         <td style="padding: 10px;" data-label="名称：">${c.name}</td>
@@ -3874,6 +3908,31 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             return enabled;
         }
 
+        function applyPreviewTableRowVisualState(tr, item, enabledOverride, excludedOverride) {
+            if (!tr || !item) return;
+            const enable = enabledOverride !== undefined
+                ? normalizeChannelEnabled(enabledOverride)
+                : isPreviewChannelEnabled(item);
+            const excluded = excludedOverride !== undefined
+                ? !!excludedOverride
+                : isPreviewAggregateExcluded(item.id);
+            tr.classList.toggle('preview-channel-row--disabled', !enable);
+            tr.classList.toggle('preview-channel-row--excluded', excluded);
+            if (excluded) {
+                tr.style.opacity = '';
+                tr.style.background = '';
+                tr.style.textDecoration = '';
+            } else if (!enable) {
+                tr.style.opacity = '';
+                tr.style.background = '';
+                tr.style.textDecoration = '';
+            } else {
+                tr.style.opacity = '';
+                tr.style.background = '';
+                tr.style.textDecoration = '';
+            }
+        }
+
         function patchPreviewTableRowEnablement(tr, item, enabledOverride) {
             if (!tr || !item) return;
             const enable = enabledOverride !== undefined
@@ -3891,8 +3950,44 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     btn.style.background = '';
                 });
             }
-            tr.style.opacity = enable ? '1' : '0.5';
-            tr.style.background = enable ? 'transparent' : 'rgba(0,0,0,0.2)';
+            applyPreviewTableRowVisualState(tr, item, enable);
+            patchChannelAvailabilityCells(item.id, item, enable);
+        }
+
+        function patchPreviewAggregateExcludeButtonInRow(tr, item) {
+            if (!tr || !item) return;
+            const actionsTd = tr.querySelector('td .preview-table-actions')?.closest('td')
+                || Array.from(tr.querySelectorAll('td')).find(td => td.querySelector('.preview-table-actions'));
+            if (actionsTd) {
+                actionsTd.innerHTML = buildPreviewTableActionsHtml(item);
+            }
+        }
+
+        function patchPreviewAggregateExcludeControls(channelId, excludedOverride) {
+            const nid = normalizePreviewChannelId(channelId);
+            const item = resolvePreviewChannelById(nid);
+            const excluded = excludedOverride !== undefined
+                ? !!excludedOverride
+                : isPreviewAggregateExcluded(nid);
+
+            document.querySelectorAll(`tr[data-channel-id="${nid}"]`).forEach(tr => {
+                if (item) {
+                    applyPreviewTableRowVisualState(tr, item, undefined, excluded);
+                    patchPreviewAggregateExcludeButtonInRow(tr, item);
+                }
+            });
+
+            document.querySelectorAll(`.mobile-channel-card[data-id="${nid}"]`).forEach(card => {
+                card.classList.toggle('preview-aggregate-excluded', excluded);
+                const actionsHost = card.querySelector('.mobile-channel-card__actions');
+                if (!actionsHost) return;
+                const excludeBtn = Array.from(actionsHost.querySelectorAll('.mobile-channel-card__toggle-btn'))
+                    .find(btn => !btn.hasAttribute('data-channel-toggle-id'));
+                if (excludeBtn) {
+                    excludeBtn.outerHTML = buildPreviewAggregateExcludeButtonHtml(nid, { mobile: true });
+                }
+            });
+            refreshGroupedPreviewDomCacheFromDom();
         }
 
         function channelForAvailabilityDisplay(item, enabledOverride) {
@@ -3988,7 +4083,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             document.querySelectorAll(`.mobile-channel-card[data-id="${nid}"]`).forEach(card => {
                 patchMobileCardEnablement(card, item, enabledOverride);
             });
-            patchChannelAvailabilityCells(nid, item, enabledOverride);
+            refreshGroupedPreviewDomCacheFromDom();
         }
 
         function refreshAggregateEnablementUI(channelIds, enabledOverride) {
@@ -7541,10 +7636,15 @@ function removeTag(val) {
                 return `${previewGroupSectionKey(title, si)}|${ids}`;
             }).join('||');
 
+            const structureUnchanged = previewGroupSectionsStructureUnchanged(
+                priorViewState?.groupSectionsKey,
+                nextGroupSectionsKey
+            );
             const canPatchGrouped = preserveView
                 && !searchQuery
                 && sections.length > 0
-                && previewGroupSectionsStructureUnchanged(priorViewState?.groupSectionsKey, nextGroupSectionsKey);
+                && structureUnchanged;
+            let patchGroupedFailed = false;
 
             if (canPatchGrouped) {
                 const isMobile = window.innerWidth <= 768;
@@ -7552,11 +7652,13 @@ function removeTag(val) {
                     restoreAggregatePreviewViewState(priorViewState);
                     return;
                 }
+                patchGroupedFailed = true;
             }
 
             const listEl = document.getElementById('channel_list');
             const domCacheKey = buildPreviewDomCacheKey(sections);
             const canUseDomCache = !options.forceRender
+                && !patchGroupedFailed
                 && !searchQuery
                 && sections.length > 0
                 && window._previewGroupedDomCache[domCacheKey]

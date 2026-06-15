@@ -3000,6 +3000,27 @@ body.sub-bulk-float-active {
     align-items: stretch;
 }
 
+/* 预览表：禁用 / 剔除态（用 class 避免移动端 tr opacity:1 !important 盖掉内联样式） */
+.channel-table-container tr.preview-channel-row--disabled {
+    opacity: 0.5 !important;
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.channel-table-container tr.preview-channel-row--excluded {
+    opacity: 0.45 !important;
+    text-decoration: line-through;
+}
+
+[data-theme="light"] .channel-table-container tr.preview-channel-row--disabled {
+    background: rgba(0, 0, 0, 0.05);
+    opacity: 0.6 !important;
+}
+
+.mobile-channel-card.preview-aggregate-excluded {
+    opacity: 0.55;
+    text-decoration: line-through;
+}
+
 /* 禁用状态的卡片 */
 .mobile-channel-card.disabled {
     opacity: 0.6;
