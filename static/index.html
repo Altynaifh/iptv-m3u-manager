@@ -2067,6 +2067,10 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
         /** 聚合预览「可用性」：默认频道状态；手动 Ping 时临时显示 Ping 结果 */
         function buildChannelAvailabilityParts(c) {
+            // 禁用态优先展示，避免仍显示 AI有效 / Ping 等旧状态
+            if (c && isPreviewChannelDisabled(c)) {
+                return { text: '已禁用', tone: 'muted', title: '频道未启用' };
+            }
             if (c && c.checking) {
                 return { text: 'Ping 探测中', tone: 'pending', title: '连通性检测进行中' };
             }
@@ -2076,9 +2080,6 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     return { text: `Ping ${ms}`, tone: 'ok', title: '手动 Ping 检测' };
                 }
                 return { text: 'Ping 失败', tone: 'bad', title: (c.error || '手动 Ping 未连通') };
-            }
-            if (c && isPreviewChannelDisabled(c)) {
-                return { text: '已禁用', tone: 'muted', title: '频道未启用' };
             }
             const st = (c && c.ai_visual_status) ? String(c.ai_visual_status).toLowerCase() : '';
             const hasScreenshot = !!(c && (c.visualImage || c.check_image));
@@ -3598,13 +3599,55 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             tr.style.background = enable ? 'transparent' : 'rgba(0,0,0,0.2)';
         }
 
-        function patchChannelAvailabilityCells(channelId, item) {
-            const nid = normalizePreviewChannelId(channelId);
+        function channelForAvailabilityDisplay(item, enabledOverride) {
+            const snap = Object.assign({}, item || {});
+            if (enabledOverride !== undefined) {
+                snap.is_enabled = normalizeChannelEnabled(enabledOverride);
+            } else if (item) {
+                snap.is_enabled = normalizeChannelEnabled(item.is_enabled);
+            }
+            return snap;
+        }
+
+        function findChannelStatusElements(channelId) {
+            const nid = String(normalizePreviewChannelId(channelId));
+            const found = new Set();
+            const add = (el) => { if (el) found.add(el); };
+
+            document.querySelectorAll(`[data-channel-status-id="${nid}"]`).forEach(add);
+
+            document.querySelectorAll(`.mobile-channel-card[data-id="${nid}"]`).forEach(card => {
+                card.querySelectorAll('.mobile-channel-card__row').forEach(row => {
+                    const label = row.querySelector('.mobile-channel-card__label');
+                    if (!label) return;
+                    const labelText = (label.textContent || '').replace(/\s/g, '');
+                    if (!labelText.startsWith('状态')) return;
+                    add(row.querySelector('.mobile-channel-card__value'));
+                });
+            });
+
+            document.querySelectorAll(`tr[data-channel-id="${nid}"]`).forEach(tr => {
+                add(tr.querySelector(`td[data-channel-status-id="${nid}"]`));
+                add(tr.querySelector('td[data-label="状态："]'));
+            });
+
+            document.querySelectorAll(`input.ch-checkbox[data-id="${nid}"]`).forEach(cb => {
+                const tr = cb.closest('tr');
+                if (!tr) return;
+                add(tr.querySelector(`td[data-channel-status-id="${nid}"]`));
+                add(tr.querySelector('td[data-label="状态："]'));
+            });
+
+            return Array.from(found);
+        }
+
+        function patchChannelAvailabilityCells(channelId, item, enabledOverride) {
             if (!item) return;
-            const statusText = buildChannelAvailabilityText(item);
-            const statusHtml = buildChannelAvailabilityHtml(item);
-            document.querySelectorAll(`[data-channel-status-id="${nid}"]`).forEach(el => {
-                if (el.closest('.mobile-channel-card')) {
+            const display = channelForAvailabilityDisplay(item, enabledOverride);
+            const statusText = buildChannelAvailabilityText(display);
+            const statusHtml = buildChannelAvailabilityHtml(display);
+            findChannelStatusElements(channelId).forEach(el => {
+                if (el.closest('.mobile-channel-card') || el.classList.contains('mobile-channel-card__value')) {
                     el.textContent = statusText;
                 } else {
                     el.innerHTML = statusHtml;
@@ -3626,7 +3669,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 toggleBtn.classList.add(enable ? 'mobile-channel-card__toggle-btn--disable' : 'mobile-channel-card__toggle-btn--enable');
             }
             card.classList.toggle('disabled', !enable);
-            patchChannelAvailabilityCells(item.id, item);
+            patchChannelAvailabilityCells(item.id, item, enabledOverride);
         }
 
         function patchAggregateEnablementControls(channelId, enabledOverride) {
@@ -3649,7 +3692,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             document.querySelectorAll(`.mobile-channel-card[data-id="${nid}"]`).forEach(card => {
                 patchMobileCardEnablement(card, item, enabledOverride);
             });
-            patchChannelAvailabilityCells(nid, item);
+            patchChannelAvailabilityCells(nid, item, enabledOverride);
         }
 
         function refreshAggregateEnablementUI(channelIds, enabledOverride) {
