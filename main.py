@@ -15,6 +15,7 @@ from task_broker import broker, update_task_status
 import services.llm_tasks  # noqa: F401
 import services.output_postprocess  # noqa: F401
 import services.output_refresh  # noqa: F401
+import services.output_artifacts  # noqa: F401
 import uuid
 
 app = FastAPI(title="IPTV M3U Manager")
@@ -350,6 +351,17 @@ async def on_startup():
             session.commit()
     
     asyncio.create_task(auto_update_task())
+
+    # 启动时补齐缺失的磁盘产物（后台生成，不阻塞首屏）
+    import os
+    from services.output_artifacts import m3u_artifact_path, preview_artifact_path, schedule_rebuild_output_artifacts
+
+    with Session(engine) as session:
+        for out in session.exec(select(OutputSource)).all():
+            if out.id is None:
+                continue
+            if not os.path.isfile(m3u_artifact_path(out.slug)) or not os.path.isfile(preview_artifact_path(out.id)):
+                schedule_rebuild_output_artifacts(out.id, epg_refresh=bool(out.epg_url))
 
 @app.get("/")
 def read_index():

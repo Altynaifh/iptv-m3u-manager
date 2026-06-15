@@ -26,7 +26,7 @@ FastAPI + SQLModel/SQLite + Taskiq 的 IPTV 订阅与聚合管理工具。
 
 ### 路径与目录约定
 
-- 聚合预览缓存：`services/preview_cache.py`；`GET /outputs/{id}/export-preview` 默认读缓存，`?force=1` 强制重建。
+- 聚合静态产物：`services/output_artifacts.py`；磁盘路径 `/data/artifacts/`（本地 `./data/artifacts/`），含 `exports/{slug}.m3u` 与 `previews/{id}.json.gz`；`GET /m3u/{slug}` 与 `GET /outputs/{id}/export-preview` 默认直读文件，`?force=1` / `?epg_refresh=1` 强制重建。
 - 访问控制：`services/access_auth.py` + 中间件；`/`、`/static/`、`/m3u/`、`/api/auth/login`、`/api/auth/status` 为公开路径，其余 API 在开启密码后需登录。
 - 订阅列表多选： `#sub_list` + `#sub_bulk_float`；选框复用 `preview-group-section__select` 样式类。
 

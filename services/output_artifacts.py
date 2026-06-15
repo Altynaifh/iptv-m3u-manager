@@ -1,0 +1,241 @@
+"""聚合源静态产物：M3U 与预览 JSON 落盘，读时直出。"""
+
+from __future__ import annotations
+
+import gzip
+import json
+import os
+from datetime import datetime
+from typing import Any, Dict, Optional
+
+from sqlmodel import Session, select
+
+from models import OutputSource, Subscription
+from services.generator import M3UGenerator
+from services.output_resolver import export_m3u_channels, preview_export_groups
+from services.preview_cache import compute_preview_cache_key
+
+
+def artifacts_root() -> str:
+    """产物根目录：Docker 用 /data/artifacts，本地用 ./data/artifacts。"""
+    root = "/data/artifacts" if os.path.isdir("/data") else "./data/artifacts"
+    for sub in ("exports", "previews"):
+        os.makedirs(os.path.join(root, sub), exist_ok=True)
+    return root
+
+
+def m3u_artifact_path(slug: str) -> str:
+    return os.path.join(artifacts_root(), "exports", f"{slug}.m3u")
+
+
+def preview_artifact_path(output_id: int) -> str:
+    return os.path.join(artifacts_root(), "previews", f"{output_id}.json.gz")
+
+
+def preview_meta_path(output_id: int) -> str:
+    return os.path.join(artifacts_root(), "previews", f"{output_id}.meta.json")
+
+
+def clear_output_artifacts(out: OutputSource) -> None:
+    """删除该聚合源的全部磁盘产物。"""
+    for path in (
+        m3u_artifact_path(out.slug),
+        preview_artifact_path(out.id),
+        preview_meta_path(out.id),
+    ):
+        if os.path.isfile(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def _atomic_write_text(path: str, content: str) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(content)
+    if os.path.isfile(path):
+        os.remove(path)
+    os.rename(tmp, path)
+
+
+def _atomic_write_json_gz(path: str, payload: dict) -> None:
+    tmp = path + ".tmp"
+    with gzip.open(tmp, "wt", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, default=str)
+    if os.path.isfile(path):
+        os.remove(path)
+    os.rename(tmp, path)
+
+
+def _read_preview_file(output_id: int) -> Optional[dict]:
+    path = preview_artifact_path(output_id)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _enrich_preview_epg(payload: dict, epg_url: Optional[str]) -> dict:
+    """生成预览时为每个频道写入节目表快照。"""
+    from services.epg import EPGManager
+
+    if not epg_url or not EPGManager.ensure_parsed_cache_sync(epg_url):
+        return payload
+    for key in ("manual_groups", "ai_groups"):
+        for sec in payload.get(key) or []:
+            for ch in sec.get("channels") or []:
+                prog = EPGManager.lookup_program_sync(
+                    epg_url,
+                    ch.get("tvg_id") or "",
+                    ch.get("name") or "",
+                    ch.get("logo"),
+                )
+                ch["epg_program"] = prog.get("title")
+                ch["epg_logo"] = prog.get("logo")
+    payload["epg_snapshot_at"] = datetime.utcnow().isoformat()
+    return payload
+
+
+def build_output_artifacts(session: Session, out: OutputSource) -> Dict[str, Any]:
+    """同步生成 M3U 与预览 gzip 产物，并更新 DB 元数据（不再存大 JSON）。"""
+    subs = session.exec(select(Subscription)).all()
+    sub_map = {s.id: s.name or s.url for s in subs}
+
+    filtered = export_m3u_channels(session, out)
+    m3u_content = M3UGenerator.generate_m3u(
+        filtered, sub_map, out.epg_url, out.include_source_suffix
+    )
+    _atomic_write_text(m3u_artifact_path(out.slug), m3u_content)
+
+    payload = preview_export_groups(session, out, None)
+    payload = _enrich_preview_epg(payload, out.epg_url)
+    _atomic_write_json_gz(preview_artifact_path(out.id), payload)
+
+    cache_key = compute_preview_cache_key(session, out, None)
+    meta = {
+        "output_id": out.id,
+        "slug": out.slug,
+        "cache_key": cache_key,
+        "built_at": datetime.utcnow().isoformat(),
+        "epg_snapshot_at": payload.get("epg_snapshot_at"),
+    }
+    _atomic_write_text(preview_meta_path(out.id), json.dumps(meta, ensure_ascii=False))
+
+    out.preview_cache_key = cache_key
+    out.preview_cache_json = None
+    out.preview_cache_at = datetime.utcnow()
+
+    from services.output_stats import get_or_refresh_member_stats, load_enabled_subscription_channel_pool
+
+    pool, enabled_sub_ids = load_enabled_subscription_channel_pool(session)
+    get_or_refresh_member_stats(session, out, pool, enabled_sub_ids, force=True)
+    session.add(out)
+    session.commit()
+    session.refresh(out)
+
+    payload["cache"] = {
+        "hit": False,
+        "key": cache_key,
+        "at": out.preview_cache_at.isoformat() if out.preview_cache_at else None,
+        "source": "disk",
+    }
+    return payload
+
+
+def get_or_build_m3u_file(session: Session, out: OutputSource) -> str:
+    """返回 M3U 磁盘路径；缺失时同步生成。"""
+    path = m3u_artifact_path(out.slug)
+    if os.path.isfile(path):
+        return path
+    build_output_artifacts(session, out)
+    return path
+
+
+def get_or_build_preview_payload(
+    session: Session,
+    out: OutputSource,
+    *,
+    force: bool = False,
+    epg_refresh: bool = False,
+) -> Dict[str, Any]:
+    """读取预览 gzip 产物；force/epg_refresh 时重建。"""
+    if force or epg_refresh:
+        clear_output_artifacts(out)
+
+    if not force and not epg_refresh:
+        cached = _read_preview_file(out.id)
+        if cached is not None:
+            built_at = None
+            meta_path = preview_meta_path(out.id)
+            if os.path.isfile(meta_path):
+                try:
+                    with open(meta_path, encoding="utf-8") as f:
+                        built_at = json.load(f).get("built_at")
+                except (OSError, json.JSONDecodeError):
+                    pass
+            cached["cache"] = {
+                "hit": True,
+                "at": built_at or (out.preview_cache_at.isoformat() if out.preview_cache_at else None),
+                "source": "disk",
+            }
+            return cached
+
+    return build_output_artifacts(session, out)
+
+
+async def build_output_artifacts_async(
+    session: Session,
+    out: OutputSource,
+    *,
+    epg_refresh: bool = False,
+) -> Dict[str, Any]:
+    """后台任务入口：可选先拉 EPG，再在线程池生成产物。"""
+    if epg_refresh and out.epg_url:
+        from services.epg import EPGManager, fetch_epg_cached
+
+        await fetch_epg_cached(out.epg_url, refresh=True)
+        EPGManager.ensure_parsed_cache_sync(out.epg_url, force_reload=True)
+
+    import asyncio
+
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: build_output_artifacts(session, out))
+
+
+def schedule_rebuild_output_artifacts(output_id: int, *, epg_refresh: bool = False) -> None:
+    """异步排队重建单个聚合产物。"""
+    import asyncio
+
+    async def _kick() -> None:
+        await rebuild_output_artifacts_task.kiq(output_id=output_id, epg_refresh=epg_refresh)
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_kick())
+    except RuntimeError:
+        asyncio.run(_kick())
+
+
+def schedule_rebuild_all_output_artifacts(session: Session, *, epg_refresh: bool = False) -> None:
+    for out in session.exec(select(OutputSource)).all():
+        if out.id is not None:
+            schedule_rebuild_output_artifacts(out.id, epg_refresh=epg_refresh)
+
+
+from database import engine
+from task_broker import broker
+
+
+@broker.task
+async def rebuild_output_artifacts_task(output_id: int, epg_refresh: bool = False):
+    """Taskiq：后台重建聚合静态产物。"""
+    with Session(engine) as session:
+        out = session.get(OutputSource, output_id)
+        if not out:
+            return
+        await build_output_artifacts_async(session, out, epg_refresh=epg_refresh)
+        print(f"[Artifacts] 已重建聚合 {out.id} ({out.slug})")

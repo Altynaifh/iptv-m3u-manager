@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Response
+from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 from typing import List, Dict, Any
 import json
@@ -73,6 +74,9 @@ async def create_output(out: OutputSource, session: Session = Depends(get_sessio
     session.add(out)
     session.commit()
     session.refresh(out)
+    from services.output_artifacts import schedule_rebuild_output_artifacts
+
+    schedule_rebuild_output_artifacts(out.id, epg_refresh=bool(out.epg_url))
     return out
 
 @router.get("/outputs/")
@@ -180,13 +184,20 @@ def update_output(output_id: int, output_data: OutputSource, session: Session = 
 def export_preview_output(
     output_id: int,
     force: bool = False,
+    epg_refresh: bool = False,
     session: Session = Depends(get_session),
 ):
-    """聚合列表预览：按导出分组（手动 / AI explicit）返回频道；默认使用服务端缓存。"""
+    """聚合列表预览：默认读磁盘 gzip 产物；force=1 或 epg_refresh=1 时重建。"""
     out = session.get(OutputSource, output_id)
     if not out:
         raise HTTPException(status_code=404, detail="输出源不存在")
-    return get_or_build_export_preview(session, out, None, force=force)
+    return get_or_build_export_preview(
+        session,
+        out,
+        None,
+        force=force,
+        epg_refresh=epg_refresh,
+    )
 
 
 @router.post("/outputs/preview")
@@ -442,57 +453,29 @@ async def run_output_visual_check(output_id: int, force_check: bool = False):
 
 @router.get("/m3u/{slug}")
 async def get_m3u_output(slug: str, session: Session = Depends(get_session)):
-    """下载 M3U"""
+    """下载 M3U：优先读磁盘静态文件，缺失时同步生成。"""
+    from services.output_artifacts import get_or_build_m3u_file
+
     out = session.exec(select(OutputSource).where(OutputSource.slug == slug)).first()
     if not out:
         raise HTTPException(status_code=404, detail="输出源不存在")
-    
 
     out.last_request_time = datetime.utcnow()
     session.add(out)
     session.commit()
-    session.refresh(out) # 确保状态同步
-    
-    # 检查是否启用
+
     if not out.is_enabled:
-        return Response(content="#EXTM3U\n# 频道已暂时下线，请在后台启用该聚合源后重试。", media_type="text/plain; charset=utf-8")
+        return Response(
+            content="#EXTM3U\n# 频道已暂时下线，请在后台启用该聚合源后重试。",
+            media_type="text/plain; charset=utf-8",
+        )
 
-    try:
-        sub_ids = json.loads(out.subscription_ids)
-    except:
-        sub_ids = []
-    
-    # 取出刷新的最新频道
-    enabled_subs = session.exec(select(Subscription.id).where(Subscription.is_enabled == True)).all()
-    active_sub_ids = [sid for sid in sub_ids if sid in enabled_subs] if sub_ids else enabled_subs
-
-    if active_sub_ids:
-        # 只要启用了的
-        channels = session.exec(select(Channel).where(
-            Channel.subscription_id.in_(active_sub_ids),
-            Channel.is_enabled == True
-        )).all()
-    else:
-        channels = []
-
-    subs = session.exec(select(Subscription)).all()
-    sub_map = {s.id: s.name or s.url for s in subs}
-
-    try:
-        raw_keywords = json.loads(out.keywords)
-        keywords = _normalize_keyword_rules(raw_keywords)
-    except:
-        keywords = []
-    
-    # 解析排除列表
-    try:
-        excluded_ids = json.loads(out.excluded_channel_ids or "[]")
-    except:
-        excluded_ids = []
-        
-    filtered = export_m3u_channels(session, out)
-    m3u_content = M3UGenerator.generate_m3u(filtered, sub_map, out.epg_url, out.include_source_suffix)
-    return Response(content=m3u_content, media_type="application/x-mpegurl; charset=utf-8")
+    path = get_or_build_m3u_file(session, out)
+    return FileResponse(
+        path,
+        media_type="application/x-mpegurl; charset=utf-8",
+        filename=f"{slug}.m3u",
+    )
 
 @router.post("/outputs/{output_id}/layout-mode")
 def set_layout_mode(output_id: int, data: dict, session: Session = Depends(get_session)):

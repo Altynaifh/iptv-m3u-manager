@@ -1,4 +1,4 @@
-"""聚合预览结果缓存：生成一次、按指纹复用。"""
+"""聚合预览结果缓存：草稿走实时计算，正式预览读磁盘产物。"""
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ def compute_preview_cache_key(
 
 
 def clear_output_preview_cache(out: OutputSource) -> None:
-    """清空聚合源上已存的预览缓存。"""
+    """清空聚合源上已存的预览缓存元数据。"""
     out.preview_cache_key = None
     out.preview_cache_json = None
     out.preview_cache_at = None
@@ -95,50 +95,19 @@ def get_or_build_export_preview(
     draft: Optional[Dict[str, Any]] = None,
     *,
     force: bool = False,
+    epg_refresh: bool = False,
 ) -> Dict[str, Any]:
-    """读取或生成聚合预览 JSON；结果写入 OutputSource 供后续复用。"""
+    """读取或生成聚合预览 JSON。"""
     if draft is not None:
         payload = preview_export_groups(session, out, draft)
         payload["cache"] = {"hit": False, "reason": "draft"}
         return payload
 
-    # 命中已存 JSON 时直接返回，避免低性能主机每次全量扫描频道算指纹
-    if not force and out.preview_cache_json and out.preview_cache_key:
-        try:
-            payload = json.loads(out.preview_cache_json)
-            payload["cache"] = {
-                "hit": True,
-                "key": out.preview_cache_key,
-                "at": out.preview_cache_at.isoformat() if out.preview_cache_at else None,
-            }
-            return payload
-        except json.JSONDecodeError:
-            pass
+    from services.output_artifacts import get_or_build_preview_payload
 
-    cache_key = compute_preview_cache_key(session, out, None)
-    if not force and out.preview_cache_key == cache_key and out.preview_cache_json:
-        try:
-            payload = json.loads(out.preview_cache_json)
-            payload["cache"] = {
-                "hit": True,
-                "key": cache_key,
-                "at": out.preview_cache_at.isoformat() if out.preview_cache_at else None,
-            }
-            return payload
-        except json.JSONDecodeError:
-            pass
-
-    payload = preview_export_groups(session, out, None)
-    out.preview_cache_key = cache_key
-    out.preview_cache_json = json.dumps(payload, ensure_ascii=False, default=str)
-    out.preview_cache_at = datetime.utcnow()
-    session.add(out)
-    session.commit()
-    session.refresh(out)
-
-    payload["cache"] = {
-        "hit": False,
-        "key": cache_key,
-        "at": out.preview_cache_at.isoformat() if out.preview_cache_at else None,
-    }
-    return payload
+    return get_or_build_preview_payload(
+        session,
+        out,
+        force=force,
+        epg_refresh=epg_refresh,
+    )

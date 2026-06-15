@@ -71,6 +71,46 @@ async def fetch_epg_cached(url: str, refresh: bool = False) -> str:
 class EPGManager:
     """EPG 管理器"""
     _cache: Dict[str, Dict[str, Any]] = {}
+
+    @classmethod
+    def ensure_parsed_cache_sync(cls, epg_url: str, *, force_reload: bool = False) -> bool:
+        """从磁盘 EPG XML 同步加载到内存（不触发下载），供产物生成使用。"""
+        if not epg_url:
+            return False
+        url_hash = md5(epg_url.encode()).hexdigest()
+        now_ts = datetime.now(timezone.utc).timestamp()
+        if not force_reload and url_hash in cls._cache:
+            entry = cls._cache[url_hash]
+            if now_ts - entry["timestamp"] < 3600:
+                return True
+        cache_path = os.path.join(EPG_CACHE_DIR, f"{url_hash}.xml")
+        if not os.path.exists(cache_path):
+            return False
+        parsed_data = cls._parse_epg_file(cache_path)
+        cls._cache[url_hash] = {
+            "timestamp": now_ts,
+            "programs": parsed_data["programs"],
+            "name_map": parsed_data["name_map"],
+            "logos": parsed_data["logos"],
+            "reverse_logos": parsed_data.get("reverse_logos", {}),
+        }
+        return True
+
+    @classmethod
+    def lookup_program_sync(
+        cls,
+        epg_url: str,
+        channel_id: str,
+        channel_name: str,
+        current_logo: str = None,
+    ) -> dict:
+        """同步查找当前节目（产物生成时批量调用）。"""
+        if not epg_url:
+            return {"title": "无 EPG 链接", "logo": None}
+        if not cls.ensure_parsed_cache_sync(epg_url):
+            return {"title": "无节目信息", "logo": None}
+        url_hash = md5(epg_url.encode()).hexdigest()
+        return cls._lookup_in_memory(cls._cache[url_hash], channel_id, channel_name, current_logo)
     
     @classmethod
     async def get_program(cls, epg_url: str, channel_id: str, channel_name: str, current_logo: str = None, refresh: bool = False) -> dict:

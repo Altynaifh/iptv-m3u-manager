@@ -1417,9 +1417,25 @@
             }
         }
 
+        function channelHasEpgSnapshot(c) {
+            return !!(c && c.epg_program != null && c.epg_program !== undefined);
+        }
+
+        function previewEpgSnapshotSpan(c, loadingHtml) {
+            if (channelHasEpgSnapshot(c)) {
+                const highlight = c.epg_program && c.epg_program !== '无节目信息';
+                const safe = String(c.epg_program).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+                return `<span style="font-size: 0.85em; color: ${highlight ? 'var(--text-highlight)' : 'inherit'}; opacity: ${highlight ? '1' : '0.5'};">${safe}</span>`;
+            }
+            return loadingHtml || '<span style="font-size: 0.85em; color: var(--text-loading);">⏳ 加载中...</span>';
+        }
+
         async function fetchAggregateExportPreview(outputId, options = {}) {
-            const force = !!options.force;
-            const url = `/outputs/${outputId}/export-preview${force ? '?force=1' : ''}`;
+            const params = new URLSearchParams();
+            if (options.force) params.set('force', '1');
+            if (options.epg_refresh) params.set('epg_refresh', '1');
+            const qs = params.toString();
+            const url = `/outputs/${outputId}/export-preview${qs ? '?' + qs : ''}`;
             const res = await fetch(url);
             if (!res.ok) throw new Error('export-preview 请求失败');
             const data = await res.json();
@@ -1477,7 +1493,12 @@
                 const slice = isMobile ? chs : chs.slice(0, renderEnd);
                 slice.forEach((c, idx) => {
                     const cellId = isMobile ? `mobile_epg_grp_${epgIdx + idx}` : `epg_grp_${epgIdx + idx}`;
-                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, false);
+                    if (channelHasEpgSnapshot(c) && !options.forceEpg) {
+                        const cell = document.getElementById(cellId);
+                        if (cell) applyEpgData(cell, { program: c.epg_program, logo: c.epg_logo }, cellId);
+                        return;
+                    }
+                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, false, c);
                 });
                 epgIdx += chs.length;
             });
@@ -2521,7 +2542,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         <div class="mobile-channel-card__info">
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">名称:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap"><strong>${c.name}</strong></span></div>
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">TVG:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap">${c.tvg_id || '-'}</span></div>
-                            ${window.currentEPGUrl ? `<div class="mobile-channel-card__row"><span class="mobile-channel-card__label">节目:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap" id="${epgCellId}"><span class="mobile-channel-card__epg-tag mobile-channel-card__epg-tag--empty">加载中...</span></span></div>` : ''}
+                            ${window.currentEPGUrl ? `<div class="mobile-channel-card__row"><span class="mobile-channel-card__label">节目:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap" id="${epgCellId}">${previewEpgSnapshotSpan(c, '<span class="mobile-channel-card__epg-tag mobile-channel-card__epg-tag--empty">加载中...</span>')}</span></div>` : ''}
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label preview-col-source-group-label">分组:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap"><strong>${previewChannelGroupLabel(c)}</strong></span></div>
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">来源:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap">${c.source || '未知'}</span></div>
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">状态:</span><span class="mobile-channel-card__value">${statusText}</span></div>
@@ -2549,7 +2570,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         <td style="padding: 10px;"><span class="channel-logo-slot channel-logo-slot--table">${c.logo ? `<img class="channel-logo-slot__img" src="${c.logo}" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');" alt="">` : ''}</span></td>
                         <td style="padding: 10px;">${c.name}</td>
                         <td style="padding: 10px;"><span style="font-size: 0.8em; opacity: 0.6;">${c.tvg_id || '-'}</span></td>
-                        ${window.currentEPGUrl ? `<td id="${epgCellId}" style="padding: 10px;"><span style="font-size: 0.85em; color: var(--text-loading);">⏳ 加载中...</span></td>` : ''}
+                        ${window.currentEPGUrl ? `<td id="${epgCellId}" style="padding: 10px;">${previewEpgSnapshotSpan(c)}</td>` : ''}
                         <td style="padding: 10px;">${previewChannelGroupLabel(c)}</td>
                         <td style="padding: 10px;"><span style="font-size: 0.85em; opacity: 0.7;">${c.source || '未知'}</span></td>
                         <td style="padding: 10px;">${statusHtml}</td>
@@ -2810,7 +2831,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     const isRefresh = !!window.forceRefreshEPG || (window.refreshSelectedOnly && window.selectedChannelIds.has(c.id));
                     // 移动端使用不同的 cell ID 前缀
                     const cellId = isMobileCardMode ? `mobile_epg_${renderOffset}_${idx}` : `epg_${renderOffset}_${idx}`;
-                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, isRefresh);
+                    enqueueEpgLoad(window.currentEPGUrl, c.tvg_id, c.name, cellId, c.logo, c.id, isRefresh, c);
                 });
             }
 
@@ -2884,11 +2905,16 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         window.epgCache = new Map(); // 会话级缓存
         const pendingEpgRequests = new Map(); // 请求去重
 
-        async function loadChannelEPG(epgUrl, tvgId, tvgName, cellId, currentLogo, channelId, isRefresh = false) {
+        async function loadChannelEPG(epgUrl, tvgId, tvgName, cellId, currentLogo, channelId, isRefresh = false, channelObj = null) {
             const cell = document.getElementById(cellId);
             if (!cell) return;
 
             try {
+                if (!isRefresh && channelHasEpgSnapshot(channelObj)) {
+                    applyEpgData(cell, { program: channelObj.epg_program, logo: channelObj.epg_logo }, cellId);
+                    return;
+                }
+
                 // 合并/去重 Key (缓存 Key 不应包含 refresh 状态，否则刷新后的结果无法复用)
                 const dedupeKey = `${epgUrl}_${tvgId}_${tvgName}`;
 

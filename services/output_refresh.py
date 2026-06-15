@@ -88,6 +88,10 @@ async def refresh_output_task(task_id: str, output_id: int):
                 sync_ok=sync_ok,
             )
 
+            from services.output_artifacts import schedule_rebuild_output_artifacts
+
+            schedule_rebuild_output_artifacts(output_id, epg_refresh=bool(out and out.epg_url))
+
             if not steps:
                 apply_output_update_status(
                     session,

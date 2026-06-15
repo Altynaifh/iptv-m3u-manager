@@ -32,17 +32,25 @@ def clear_output_member_stats(out: OutputSource) -> None:
     out.member_disabled = None
 
 
-def invalidate_output_runtime_cache(out: OutputSource) -> None:
+def invalidate_output_runtime_cache(out: OutputSource, *, schedule_rebuild: bool = True) -> None:
     clear_output_preview_cache(out)
     clear_output_member_stats(out)
+    from services.output_artifacts import clear_output_artifacts, schedule_rebuild_output_artifacts
+
+    clear_output_artifacts(out)
+    if schedule_rebuild and out.id is not None:
+        schedule_rebuild_output_artifacts(out.id)
 
 
 def invalidate_all_output_runtime_caches(session: Session) -> None:
     outputs = session.exec(select(OutputSource)).all()
     for out in outputs:
-        invalidate_output_runtime_cache(out)
+        invalidate_output_runtime_cache(out, schedule_rebuild=False)
         session.add(out)
     session.commit()
+    from services.output_artifacts import schedule_rebuild_all_output_artifacts
+
+    schedule_rebuild_all_output_artifacts(session)
 
 
 def compute_member_stats(

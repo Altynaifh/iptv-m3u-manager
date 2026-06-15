@@ -40,6 +40,9 @@ mkdir -p "$DATA_DIR/epg_cache"
 rm -rf /app/epg_cache
 ln -sfn "$DATA_DIR/epg_cache" /app/epg_cache
 
+# 5. 聚合静态产物（M3U / 预览 gzip）
+mkdir -p "$DATA_DIR/artifacts/exports" "$DATA_DIR/artifacts/previews"
+
 echo "Data persistence setup complete. Starting application..."
 
 # 执行传入的命令 (CMD)

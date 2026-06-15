@@ -192,6 +192,12 @@ async def run_output_postprocess_chain(
     )
     apply_output_update_status(session, output_id, status)
 
+    out = session.get(OutputSource, output_id)
+    if out:
+        from services.output_stats import invalidate_output_runtime_cache
+
+        invalidate_output_runtime_cache(out)
+
     if task_id:
         await update_task_status(
             task_id,
