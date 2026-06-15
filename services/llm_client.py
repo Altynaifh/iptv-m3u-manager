@@ -114,19 +114,30 @@ class LlmClient:
         user_text: str,
         image_data_url: str,
         temperature: float = 0.1,
+        *,
+        max_attempts: int = 3,
     ) -> Any:
+        """视觉模型返回 JSON；解析失败时重新请求，最多 max_attempts 次。"""
         content = [
             {"type": "text", "text": user_text},
             {"type": "image_url", "image_url": {"url": image_data_url}},
         ]
-        data = await self._chat(
-            [
-                {"role": "system", "content": system},
-                {"role": "user", "content": content},
-            ],
-            temperature=temperature,
-        )
-        return _extract_json_object(self._message_text(data))
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": content},
+        ]
+        last_err: Exception | None = None
+        attempts = max(1, int(max_attempts))
+        for attempt in range(1, attempts + 1):
+            try:
+                data = await self._chat(messages, temperature=temperature)
+                return _extract_json_object(self._message_text(data))
+            except ValueError as e:
+                last_err = e
+                if attempt < attempts:
+                    print(f"[LLM] 视觉 JSON 不合规，重试 {attempt}/{attempts}: {e}")
+                    continue
+        raise ValueError(str(last_err) if last_err else "无法解析 JSON")
 
     async def _chat(self, messages: List[dict], temperature: float) -> dict:
         if not self.configured():
