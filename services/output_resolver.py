@@ -288,10 +288,21 @@ def _apply_cluster_media_overlays_to_channels(
     members: List[Channel],
 ) -> List[Channel]:
     members_by_id = {c.id: c for c in members if c.id is not None}
+    clusters = load_same_channel_clusters(
+        out.layout_meta or "{}",
+        members,
+        layout_mode=(out.layout_mode or "rules"),
+    )
+    order = layout_channel_order(out.channel_layout or "{}")
     logo_ov = _resolve_logo_overlays(out, members)
     tvg_ov = _resolve_tvg_name_overlays(out, members)
     logo_ov = augment_logo_overlays_from_tvg_name(
-        logo_ov, tvg_ov, members_by_id, epg_url=out.epg_url
+        logo_ov,
+        tvg_ov,
+        members_by_id,
+        epg_url=out.epg_url,
+        clusters=clusters,
+        layout_order=order or None,
     )
     tvg_linked = {int(k) for k in tvg_ov.keys()}
     result = channels
@@ -406,8 +417,19 @@ def preview_export_groups(
     members_by_id = {c.id: c for c in all_channels if c.id is not None}
     logo_overlays = _resolve_logo_overlays(out, all_channels)
     tvg_name_overlays = _resolve_tvg_name_overlays(out, all_channels)
+    clusters = load_same_channel_clusters(
+        out.layout_meta or "{}",
+        all_channels,
+        layout_mode=(out.layout_mode or "rules"),
+    )
+    layout_order = layout_channel_order(out.channel_layout or "{}")
     logo_overlays = augment_logo_overlays_from_tvg_name(
-        logo_overlays, tvg_name_overlays, members_by_id, epg_url=out.epg_url
+        logo_overlays,
+        tvg_name_overlays,
+        members_by_id,
+        epg_url=out.epg_url,
+        clusters=clusters,
+        layout_order=layout_order or None,
     )
     manual_groups = _groups_to_payload(
         _bucket_by_group_title(manual_list), session, logo_overlays=logo_overlays
