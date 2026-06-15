@@ -238,8 +238,6 @@ def get_or_build_preview_payload(
             meta = _read_artifact_meta(out.id) or {}
             schedule_rebuild_output_artifacts(out.id, epg_refresh=False)
             # 过期 gzip 可能仍含旧启用状态；改读库内实时预览，避免前端闪回
-            from services.output_resolver import preview_export_groups
-
             payload = preview_export_groups(session, out, None)
             payload["cache"] = {
                 "hit": False,
