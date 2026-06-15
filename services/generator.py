@@ -95,6 +95,7 @@ class M3UGenerator:
             filtered = M3UGenerator.merge_members_from_preview_buckets(rule_buckets, excluded_ids)
         else:
             # 没关键字就按 URL 去重
+            excluded_set = set(excluded_ids) if excluded_ids else set()
             seen_urls = set()
             for c in channels:
                 # 跳过聚合表级别排除的频道

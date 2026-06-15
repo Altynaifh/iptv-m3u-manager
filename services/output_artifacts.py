@@ -82,6 +82,38 @@ def _read_preview_file(output_id: int) -> Optional[dict]:
         return None
 
 
+def _read_artifact_meta(output_id: int) -> Optional[dict]:
+    """读取预览产物元数据（含 cache_key）。"""
+    path = preview_meta_path(output_id)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _artifact_bundle_complete(out: OutputSource) -> bool:
+    """M3U、预览 gzip 与 meta 三者齐全才视为可直读。"""
+    return (
+        os.path.isfile(m3u_artifact_path(out.slug))
+        and os.path.isfile(preview_artifact_path(out.id))
+        and os.path.isfile(preview_meta_path(out.id))
+    )
+
+
+def is_artifact_cache_stale(session: Session, out: OutputSource) -> bool:
+    """磁盘产物是否与当前聚合配置/成员状态不一致。"""
+    if not _artifact_bundle_complete(out):
+        return True
+    meta = _read_artifact_meta(out.id)
+    if not meta or not meta.get("cache_key"):
+        return True
+    current_key = compute_preview_cache_key(session, out, None)
+    return meta.get("cache_key") != current_key
+
+
 def _enrich_preview_epg(payload: dict, epg_url: Optional[str]) -> dict:
     """生成预览时为每个频道写入节目表快照。"""
     from services.epg import EPGManager
@@ -149,11 +181,13 @@ def build_output_artifacts(session: Session, out: OutputSource) -> Dict[str, Any
     return payload
 
 
-def get_or_build_m3u_file(session: Session, out: OutputSource) -> str:
-    """返回 M3U 磁盘路径；缺失时同步生成。"""
+def get_or_build_m3u_file(session: Session, out: OutputSource, *, force: bool = False) -> str:
+    """返回 M3U 磁盘路径；缺失或缓存陈旧时同步重建（与预览同一套筛选）。"""
     path = m3u_artifact_path(out.slug)
-    if os.path.isfile(path):
+    if not force and os.path.isfile(path) and not is_artifact_cache_stale(session, out):
         return path
+    if force:
+        clear_output_artifacts(out)
     build_output_artifacts(session, out)
     return path
 
@@ -169,20 +203,14 @@ def get_or_build_preview_payload(
     if force or epg_refresh:
         clear_output_artifacts(out)
 
-    if not force and not epg_refresh:
+    if not force and not epg_refresh and not is_artifact_cache_stale(session, out):
         cached = _read_preview_file(out.id)
         if cached is not None:
-            built_at = None
-            meta_path = preview_meta_path(out.id)
-            if os.path.isfile(meta_path):
-                try:
-                    with open(meta_path, encoding="utf-8") as f:
-                        built_at = json.load(f).get("built_at")
-                except (OSError, json.JSONDecodeError):
-                    pass
+            meta = _read_artifact_meta(out.id) or {}
             cached["cache"] = {
                 "hit": True,
-                "at": built_at or (out.preview_cache_at.isoformat() if out.preview_cache_at else None),
+                "key": meta.get("cache_key"),
+                "at": meta.get("built_at") or (out.preview_cache_at.isoformat() if out.preview_cache_at else None),
                 "source": "disk",
             }
             return cached

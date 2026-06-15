@@ -18,5 +18,6 @@ def toggle_channel(channel_id: int, session: Session = Depends(get_session)):
     session.add(channel)
     session.commit()
     session.refresh(channel)
-    invalidate_all_output_runtime_caches(session)
+    # 启用/禁用会改变 M3U 导出集合，须重建静态产物以与预览一致
+    invalidate_all_output_runtime_caches(session, schedule_rebuild=True)
     return channel

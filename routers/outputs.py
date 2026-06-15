@@ -455,8 +455,12 @@ async def run_output_visual_check(output_id: int, force_check: bool = False):
             print(f"[后台检测] 聚合源 {out.id} 执行失败: {e}")
 
 @router.get("/m3u/{slug}")
-async def get_m3u_output(slug: str, session: Session = Depends(get_session)):
-    """下载 M3U：优先读磁盘静态文件，缺失时同步生成。"""
+async def get_m3u_output(
+    slug: str,
+    force: bool = False,
+    session: Session = Depends(get_session),
+):
+    """下载 M3U：直读磁盘静态文件；陈旧或 force=1 时按预览同口径重建。"""
     from services.output_artifacts import get_or_build_m3u_file
 
     out = session.exec(select(OutputSource).where(OutputSource.slug == slug)).first()
@@ -473,7 +477,7 @@ async def get_m3u_output(slug: str, session: Session = Depends(get_session)):
             media_type="text/plain; charset=utf-8",
         )
 
-    path = get_or_build_m3u_file(session, out)
+    path = get_or_build_m3u_file(session, out, force=force)
     return FileResponse(
         path,
         media_type="application/x-mpegurl; charset=utf-8",

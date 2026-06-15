@@ -42,11 +42,11 @@ def invalidate_output_runtime_cache(out: OutputSource, *, schedule_rebuild: bool
         schedule_rebuild_output_artifacts(out.id)
 
 
-def invalidate_all_output_runtime_caches(session: Session) -> None:
-    """仅清除统计与磁盘产物标记，不触发重建（重建由聚合刷新结束时统一执行）。"""
+def invalidate_all_output_runtime_caches(session: Session, *, schedule_rebuild: bool = False) -> None:
+    """清除全部聚合源的统计与磁盘产物；可选排队重建。"""
     outputs = session.exec(select(OutputSource)).all()
     for out in outputs:
-        invalidate_output_runtime_cache(out, schedule_rebuild=False)
+        invalidate_output_runtime_cache(out, schedule_rebuild=schedule_rebuild)
         session.add(out)
     session.commit()
 

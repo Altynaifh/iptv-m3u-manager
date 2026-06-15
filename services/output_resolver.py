@@ -202,23 +202,53 @@ def aggregate_channels(
     return filter_candidates(session, out, draft, enabled_only=False)
 
 
+def _order_explicit_layout_members(
+    members: List[Channel],
+    channel_layout: str,
+) -> List[Channel]:
+    """按 explicit 布局排序成员，仅保留已在聚合成员集内的频道（与预览一致）。"""
+    member_by_id = {c.id: c for c in members if c.id is not None}
+    try:
+        layout = json.loads(channel_layout or "{}")
+    except json.JSONDecodeError:
+        layout = {}
+    groups_def = layout.get("groups") or []
+    ordered: List[Channel] = []
+    used: Set[int] = set()
+    for g in groups_def:
+        title = (g.get("title") or "").strip()
+        for cid in g.get("channel_ids") or []:
+            try:
+                i = int(cid)
+            except (TypeError, ValueError):
+                continue
+            ch = member_by_id.get(i)
+            if not ch or i in used:
+                continue
+            copy = ch.model_copy()
+            if title:
+                copy.group = title
+            ordered.append(copy)
+            used.add(i)
+    for ch in members:
+        if ch.id is not None and ch.id not in used:
+            ordered.append(ch.model_copy())
+    return ordered
+
+
 def export_m3u_channels(
     session: Session,
     out: OutputSource,
     draft: Optional[Dict[str, Any]] = None,
 ) -> List[Channel]:
     members = aggregate_channels(session, out, draft)
-    enabled_members = [c for c in members if c.is_enabled]
-    _sub_ids, _regex, _keywords, excluded_ids, layout_mode, channel_layout = _output_config(out, draft)
+    _sub_ids, _regex, _keywords, _excluded_ids, layout_mode, channel_layout = _output_config(out, draft)
 
     if (layout_mode or "rules") == "explicit":
-        ordered = _expand_explicit_layout(session, channel_layout, excluded_ids)
-        ordered_enabled = [c for c in ordered if c.is_enabled]
-        ordered_ids = {c.id for c in ordered_enabled}
-        tail = [c for c in enabled_members if c.id not in ordered_ids]
-        return ordered_enabled + tail
+        ordered = _order_explicit_layout_members(members, channel_layout)
+        return [c for c in ordered if c.is_enabled]
 
-    return enabled_members
+    return [c for c in members if c.is_enabled]
 
 
 def organize_candidates(
