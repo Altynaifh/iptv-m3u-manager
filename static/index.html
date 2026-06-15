@@ -1543,7 +1543,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
         function loadPreviewGroupSectionMore(si) {
-            const sections = getActivePreviewGroupSections();
+            const sections = getDisplayPreviewGroupSections();
             const sec = sections[si];
             if (!sec) return;
             const total = (sec.channels || []).length;
@@ -1553,7 +1553,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
         function rerenderPreviewGroupSection(si) {
-            const sections = getActivePreviewGroupSections();
+            const sections = getDisplayPreviewGroupSections();
             const sec = sections[si];
             if (!sec) return;
             const list = document.getElementById('channel_list');
@@ -1740,12 +1740,41 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             }
         }
 
+        function getChannelSearchQuery() {
+            const el = document.getElementById('channel_search');
+            return (el && el.value ? el.value : '').toLowerCase().trim();
+        }
+
+        function channelMatchesSearchQuery(channel, query) {
+            if (!query) return true;
+            const name = (channel.name || '').toLowerCase();
+            const group = (channel.group || '').toLowerCase();
+            const sourceGroup = (channel.source_group || '').toLowerCase();
+            const tvgId = (channel.tvg_id || '').toLowerCase();
+            const source = (channel.source || '').toLowerCase();
+            return name.includes(query)
+                || group.includes(query)
+                || sourceGroup.includes(query)
+                || tvgId.includes(query)
+                || source.includes(query);
+        }
+
+        function getDisplayPreviewGroupSections() {
+            const sections = getActivePreviewGroupSections();
+            const query = getChannelSearchQuery();
+            if (!query) return sections;
+            return sections.map(sec => ({
+                ...sec,
+                channels: (sec.channels || []).filter(c => channelMatchesSearchQuery(c, query)),
+            })).filter(sec => (sec.channels || []).length > 0);
+        }
+
         function searchChannels() {
-            const query = document.getElementById('channel_search').value.toLowerCase().trim();
+            const query = getChannelSearchQuery();
             if (!query) {
                 filteredChannels = currentChannels;
             } else {
-                filteredChannels = currentChannels.filter(c => c.name.toLowerCase().includes(query) || c.group.toLowerCase().includes(query));
+                filteredChannels = currentChannels.filter(c => channelMatchesSearchQuery(c, query));
             }
             renderOffset = 0;
             document.getElementById('channel_list_container').scrollTop = 0;
@@ -1760,10 +1789,15 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             }
 
             const isMobile = window.innerWidth <= 768;
-            const groupSections = (showActions && window._previewGroupPayload) ? getActivePreviewGroupSections() : [];
-            const useGroupedPreview = showActions && groupSections.length > 0;
+            const groupSections = (showActions && window._previewGroupPayload) ? getDisplayPreviewGroupSections() : [];
+            const useGroupedPreview = showActions && window._previewGroupPayload && getActivePreviewGroupSections().length > 0;
 
             if (useGroupedPreview) {
+                if (!groupSections.length) {
+                    list.innerHTML = '<p style="text-align:center; padding: 20px;">暂无匹配内容</p>';
+                    updatePreviewStats();
+                    return;
+                }
                 resetGroupSectionRenderOffsets(groupSections.length);
                 let globalIdx = 0;
                 if (isMobile) {
@@ -2635,7 +2669,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
         function togglePreviewGroupSectionSelect(sectionIndex, options = {}) {
-            const sections = getActivePreviewGroupSections();
+            const sections = getDisplayPreviewGroupSections();
             const sec = sections[sectionIndex];
             if (!sec) return;
             const ids = (sec.channels || []).map(c => c.id).filter(id => id != null);
@@ -2681,7 +2715,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
         function syncPreviewGroupSectionCheckboxes() {
-            const sections = getActivePreviewGroupSections();
+            const sections = getDisplayPreviewGroupSections();
             document.querySelectorAll('.preview-group-section__select').forEach(label => {
                 const idxRaw = label.getAttribute('data-section-index');
                 const idx = idxRaw != null ? Number(idxRaw) : NaN;
@@ -6976,6 +7010,9 @@ function removeTag(val) {
         }
 
         function getPreviewStatsChannels() {
+            if (getChannelSearchQuery()) {
+                return filteredChannels;
+            }
             if (window.currentPreviewOutputId && window._previewGroupPayload) {
                 const all = flattenAggregatePreviewChannels();
                 if (all.length) return all;
@@ -6983,17 +7020,30 @@ function removeTag(val) {
             return filteredChannels;
         }
 
+        function getPreviewStatsFullPool() {
+            if (window.currentPreviewOutputId && window._previewGroupPayload) {
+                const all = flattenAggregatePreviewChannels();
+                if (all.length) return all;
+            }
+            return currentChannels;
+        }
+
         function updatePreviewStats() {
+            const searchQuery = getChannelSearchQuery();
+            const fullPool = getPreviewStatsFullPool();
             const statsPool = getPreviewStatsChannels();
-            const total = statsPool.length;
+            const total = fullPool.length;
+            const matchCount = statsPool.length;
             const enabledCount = statsPool.filter(c => isPreviewChannelEnabled(c)).length;
             const selected = filteredChannels.filter(c => window.selectedChannelIds.has(c.id)).length;
 
             const statsEl = document.getElementById('preview_stats');
             if (statsEl) {
                 const excludedCount = (window._previewAggregateExcludedIds && window.currentPreviewOutputId)
-                    ? statsPool.filter(c => isPreviewAggregateExcluded(c.id)).length : 0;
-                let html = `共 ${total} 个频道 / 已启用 ${enabledCount} 个`;
+                    ? fullPool.filter(c => isPreviewAggregateExcluded(c.id)).length : 0;
+                let html = searchQuery
+                    ? `搜索匹配 ${matchCount} / 共 ${total} 个频道 / 已启用 ${enabledCount} 个`
+                    : `共 ${total} 个频道 / 已启用 ${enabledCount} 个`;
                 if (excludedCount > 0) html += ` / 已剔除 ${excludedCount} 个`;
                 if (window.lastRenderShowActions) {
                     html += ` <span style="margin-left:10px; opacity:0.6;">(已选 ${selected} 个)</span>`;
@@ -7216,7 +7266,10 @@ function removeTag(val) {
                 (sec.channels || []).forEach(c => flat.push(c));
             });
             currentChannels = flat;
-            filteredChannels = flat;
+            const searchQuery = getChannelSearchQuery();
+            filteredChannels = searchQuery
+                ? flat.filter(c => channelMatchesSearchQuery(c, searchQuery))
+                : flat;
 
             const nextGroupSectionsKey = sections.map((sec, si) => {
                 const title = sec.title || '未命名';
@@ -7225,6 +7278,7 @@ function removeTag(val) {
             }).join('||');
 
             const canPatchGrouped = preserveView
+                && !searchQuery
                 && sections.length > 0
                 && previewGroupSectionsStructureUnchanged(priorViewState?.groupSectionsKey, nextGroupSectionsKey);
 
@@ -7239,6 +7293,7 @@ function removeTag(val) {
             const listEl = document.getElementById('channel_list');
             const domCacheKey = buildPreviewDomCacheKey(sections);
             const canUseDomCache = !options.forceRender
+                && !searchQuery
                 && sections.length > 0
                 && window._previewGroupedDomCache[domCacheKey]
                 && listEl;
