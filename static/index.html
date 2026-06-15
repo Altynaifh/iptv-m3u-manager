@@ -411,9 +411,9 @@
                                 style="background: #059669; display: none;" id="batch_enable_btn">启用选中</button>
                             <button class="btn btn-sm toolbar-btn" onclick="batchSetStatus(false)"
                                 style="background: #b91c1c; display: none;" id="batch_disable_btn">禁用选中</button>
-                            <button class="btn btn-sm toolbar-btn preview-aggregate-batch-btn" onclick="batchPreviewAggregateExclude(true)"
+                            <button class="btn btn-sm toolbar-btn preview-aggregate-batch-btn preview-aggregate-batch-btn--exclude" onclick="batchPreviewAggregateExclude(true)"
                                 style="display: none;" id="batch_exclude_btn">剔除选中</button>
-                            <button class="btn btn-sm toolbar-btn preview-aggregate-batch-btn" onclick="batchPreviewAggregateExclude(false)"
+                            <button class="btn btn-sm toolbar-btn preview-aggregate-batch-btn preview-aggregate-batch-btn--restore" onclick="batchPreviewAggregateExclude(false)"
                                 style="display: none;" id="batch_restore_btn">恢复选中</button>
                         </div>
                     </div>
@@ -2428,7 +2428,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const toggleText = isDisabled ? '启用' : '禁用';
             const copyUrl = (c.url || '').replace(/'/g, "\\'");
             return `<div class="preview-table-actions">
-                <button class="btn btn-sm ${toggleClass}" onclick="toggleChannel(${c.id})">${toggleText}</button>
+                <button type="button" class="btn btn-sm ${toggleClass}" onclick="event.stopPropagation(); toggleChannel(${c.id})">${toggleText}</button>
                 ${buildPreviewAggregateExcludeButtonHtml(c.id)}
                 <button class="btn btn-sm preview-table-actions__btn preview-table-actions__btn--copy"
                     onclick="event.stopPropagation(); copyChannelUrl('${copyUrl}')" title="复制播放链接">复制</button>
@@ -3531,10 +3531,13 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const toggleBtns = document.querySelectorAll(`button[onclick*="toggleChannel(${channelId})"]`);
             toggleBtns.forEach(btn => {
                 btn.innerText = enable ? '禁用' : '启用';
-                btn.classList.toggle('mobile-channel-card__toggle-btn--enable', !enable);
-                btn.classList.toggle('mobile-channel-card__toggle-btn--disable', enable);
-                if (!btn.classList.contains('mobile-channel-card__toggle-btn')) {
-                    btn.style.background = enable ? '#ef4444' : '#10b981';
+                if (btn.closest('.preview-table-actions')) {
+                    btn.classList.remove('preview-table-actions__btn--disable', 'preview-table-actions__btn--enable');
+                    btn.classList.add(enable ? 'preview-table-actions__btn--disable' : 'preview-table-actions__btn--enable');
+                    btn.style.background = '';
+                } else if (btn.classList.contains('mobile-channel-card__toggle-btn')) {
+                    btn.classList.toggle('mobile-channel-card__toggle-btn--enable', !enable);
+                    btn.classList.toggle('mobile-channel-card__toggle-btn--disable', enable);
                 }
                 const tr = btn.closest('tr');
                 if (tr) {
@@ -3561,11 +3564,16 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
         async function toggleChannel(id) {
             try {
-                const res = await fetch(`/channels/${id}/toggle`, { method: 'POST' });
-                if (!res.ok) throw new Error("操作失败");
+                const res = await fetch(`/channels/${id}/toggle`, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                });
+                if (!res.ok) {
+                    const errBody = await res.json().catch(() => ({}));
+                    throw new Error(errBody.detail || '操作失败');
+                }
                 const updated = await res.json();
 
-                // 更新本地数据
                 syncChannelEnabledInPreviewPayload(id, updated.is_enabled);
                 if (updated.is_enabled === false) {
                     rememberDeferredInactiveChannel(id);
@@ -3573,9 +3581,10 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     forgetDeferredInactiveChannel(id);
                 }
                 refreshAggregateEnablementUI(id);
-                if (typeof fetchOutputs === 'function') fetchOutputs();
+                showToast(updated.is_enabled ? '频道已启用' : '频道已禁用', 'success');
+                if (typeof fetchOutputs === 'function') fetchOutputs(true);
             } catch (err) {
-                alert("操作失败: " + err.message);
+                showToast('操作失败: ' + (err.message || err), 'error');
             }
         }
 

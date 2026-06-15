@@ -930,6 +930,31 @@ h2 {
     color: #fff;
 }
 
+/* 批量剔除/恢复：与行内剔除按钮同色（全端生效） */
+#batch_exclude_btn,
+.preview-aggregate-batch-btn--exclude {
+    background: #ea580c !important;
+    color: #fff !important;
+    border: none !important;
+}
+
+#batch_exclude_btn:hover,
+.preview-aggregate-batch-btn--exclude:hover {
+    filter: brightness(1.08);
+}
+
+#batch_restore_btn,
+.preview-aggregate-batch-btn--restore {
+    background: #059669 !important;
+    color: #fff !important;
+    border: none !important;
+}
+
+#batch_restore_btn:hover,
+.preview-aggregate-batch-btn--restore:hover {
+    filter: brightness(1.08);
+}
+
 input,
 textarea {
     width: 100%;
