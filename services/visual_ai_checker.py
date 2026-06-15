@@ -34,6 +34,13 @@ SYSTEM_PROMPT = """你是 IPTV 频道画面质检员。根据 2x2 拼图判断�
 只输出 JSON：{"results":[{"channel_id":数字,"status":"...","detail":"简短中文"}]}
 detail 勿含英文双引号 "，改用中文引号「」或省略；必须合法 JSON，禁止 markdown 代码块。"""
 
+# 无自定义提示词时，每批 user 消息附带的默认判定口径
+_DEFAULT_BATCH_RULES = (
+    "请逐槽位输出 results。"
+    "promo_loop 仅限整屏宣传语/扫码引流；无节目画面的广告垫片、品牌循环勿判 promo_loop。"
+    "有剧集/新闻画面即 ok；仅全黑/无信号为 invalid。"
+)
+
 
 def _resolve_vision_prompt(
     out: Optional[OutputSource] = None,
@@ -50,9 +57,39 @@ def _resolve_vision_prompt(
 
 
 def _build_vision_system(custom_prompt: str) -> str:
-    if not custom_prompt:
+    prompt = (custom_prompt or "").strip()
+    if not prompt:
         return SYSTEM_PROMPT
-    return f"{SYSTEM_PROMPT}\n\n## 用户补充判定规则（优先遵守）\n{custom_prompt}"
+    return (
+        SYSTEM_PROMPT
+        + "\n\n【用户自定义判定要求】\n"
+        + prompt
+        + "\n\n【合并规则】\n"
+        + "1. 系统默认规则仅适用于用户未明确覆盖的判定场景。\n"
+        + "2. 用户自定义要求与默认规则冲突时，以用户要求为准。\n"
+        + "3. 用户未提及的状态含义与边界，仍按系统默认规则执行。\n"
+        + "4. 输出仍为合法 JSON；status 仅限 ok / promo_loop / invalid / frozen / no_image / error。\n"
+        + "5. 程序固定将 invalid、promo_loop 判为需禁用，ok、frozen 判为可启用；"
+        + "你只负责判定 status，无法改变程序启禁策略。\n"
+    )
+
+
+def _build_vision_user_text(slot_count: int, slot_desc: str, custom_prompt: str) -> str:
+    """拼装每批拼图请求的 user 文本；有自定义时写入 user 消息，避免被硬编码默认口径覆盖。"""
+    header = (
+        f"拼图共 {slot_count} 个槽位（左上→右上→左下→右下）：\n"
+        f"{slot_desc}\n"
+    )
+    prompt = (custom_prompt or "").strip()
+    if not prompt:
+        return header + _DEFAULT_BATCH_RULES
+    return (
+        header
+        + "请逐槽位输出 results。\n\n"
+        + "【本批须遵守的用户补充判定】\n"
+        + prompt
+        + "\n\n【格式】只输出 JSON results；detail 用中文简短描述，勿用 markdown 代码块。"
+    )
 
 
 def _apply_ai_visual_enablement(ch: Channel, status: str) -> None:
@@ -198,7 +235,8 @@ class VisualAiChecker:
         total_batches = (len(unique) + BATCH_SIZE - 1) // BATCH_SIZE or 0
         done = 0
         stats = {"batches": 0, "updated": 0, "errors": 0, "disabled": 0, "enabled": 0}
-        vision_system = _build_vision_system(_resolve_vision_prompt(out, draft, custom_prompt))
+        resolved_prompt = _resolve_vision_prompt(out, draft, custom_prompt)
+        vision_system = _build_vision_system(resolved_prompt)
 
         for ch in unique:
             if _sync_stored_ai_visual_disablement(ch):
@@ -239,7 +277,7 @@ class VisualAiChecker:
                 f"slot{i+1}: channel_id={slots[i][0]} name={slots[i][1]}"
                 for i in range(len(slots))
             )
-            user_text = f"拼图共 {len(slots)} 个槽位（左上→右上→左下→右下）：\n{slot_desc}\n请逐槽位输出 results。promo_loop 仅限整屏宣传语/扫码引流；无节目画面的广告垫片、品牌循环勿判 promo_loop。有剧集/新闻画面即 ok；仅全黑/无信号为 invalid。"
+            user_text = _build_vision_user_text(len(slots), slot_desc, resolved_prompt)
 
             try:
                 parsed = await client.chat_vision_json(vision_system, user_text, collage_url)

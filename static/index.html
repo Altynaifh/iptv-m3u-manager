@@ -184,9 +184,8 @@
                 </div>
                 <div id="llm_vision_prompt_block" style="display:none;margin-bottom:12px;">
                     <label style="font-size:0.85em;opacity:0.9;">AI 判台补充说明（可选）</label>
-                    <textarea id="out_ai_vision_prompt" rows="4" placeholder="要屏蔽：全黑、彩条、无信号、雪花；整屏扫码、引流去别的频道、关注后才能看。&#10;要放行：正在播节目里的普通商品广告（角标、贴片、片头片尾广告都算正常）。&#10;拿不准时按正常频道算。" aria-label="AI 判台补充说明"
+                    <textarea id="out_ai_vision_prompt" rows="4" placeholder="可选。保存聚合源后再跑 AI 视觉会参考这里。&#10;只管怎么判画面，不管关不关频道：没信号、整屏扫码引流仍会关；有节目仍会开。&#10;例：角标广告算正常，整屏二维码算坏台。不写也行，默认偏松。" aria-label="AI 判台补充说明"
                         style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);resize:vertical;min-height:88px;"></textarea>
-                    <p style="margin:0;font-size:0.78em;opacity:0.65;">保存聚合源后，跑 AI 视觉检测时会一并参考。可写你这套源的特殊情况，比如「某源经常黑屏几秒」「垫片多但正片也有」。不写也可以，默认已经偏宽松。</p>
                 </div>
                 <div id="llm_text_config_block" style="display:none;margin-bottom:12px;">
                     <label style="font-size:0.85em;opacity:0.9;">文本 LLM（AI 排序编排）</label>
@@ -763,7 +762,13 @@
                 try {
                     const res = await fetch('/api/tasks/');
                     const data = await res.json();
-                    data.forEach(task => this.tasks.set(task.id, task));
+                    data.forEach(task => {
+                        const oldTask = this.tasks.get(task.id);
+                        this.tasks.set(task.id, task);
+                        if (task.status === 'success' && (!oldTask || oldTask.status !== 'success')) {
+                            refreshAfterAggregateTask(task);
+                        }
+                    });
                     this.render();
                     this.updateBadge();
                 } catch (e) {
@@ -821,6 +826,7 @@
             handleUpdate(task) {
                 const oldTask = this.tasks.get(task.id);
                 const isStatusChange = oldTask && oldTask.status !== task.status;
+                const reachedSuccess = task.status === 'success' && (!oldTask || oldTask.status !== 'success');
 
                 // 如果任务不存在或者状态/进度有变，则更新
                 this.tasks.set(task.id, { ...oldTask, ...task });
@@ -860,7 +866,7 @@
                     }
                 }
 
-                if (isStatusChange) {
+                if (reachedSuccess) {
                     refreshAfterAggregateTask(task);
                 }
             }
@@ -1414,7 +1420,10 @@
                     if (c.id == null) return;
                     const en = isPreviewChannelEnabled(c) ? '1' : '0';
                     const ex = isPreviewAggregateExcluded(c.id) ? '1' : '0';
-                    parts.push(`${c.id}:${en}${ex}`);
+                    const chk = c.check_status ? '1' : '0';
+                    const av = String(c.ai_visual_status || '').slice(0, 12);
+                    const epg = String(c.epg_program || '').slice(0, 20);
+                    parts.push(`${c.id}:${en}${ex}:${chk}:${av}:${epg}`);
                 });
             });
             return parts.join(';');
@@ -1704,7 +1713,7 @@
                 const title = sec.title || '未命名';
                 const secKey = previewGroupSectionKey(title, si);
                 const collapsed = window._previewGroupCollapsed && window._previewGroupCollapsed.has(secKey);
-                if (collapsed) {
+                if (collapsed && !options.includeCollapsed) {
                     epgIdx += (sec.channels || []).length;
                     return;
                 }
@@ -2146,12 +2155,16 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             window._aggregatePreviewSessionActive = true;
             window._aggregatePreviewDeferredInactiveIds = new Set();
             window._previewChannelEnableOverrides = new Map();
+            window._previewRefreshedTaskIds = new Set();
+            window._previewTaskOutputMap = {};
         }
 
         function endAggregatePreviewSession() {
             window._aggregatePreviewSessionActive = false;
             window._aggregatePreviewDeferredInactiveIds = new Set();
             window._previewChannelEnableOverrides = new Map();
+            window._previewRefreshedTaskIds = new Set();
+            stopPreviewTaskWatcher();
             window._previewReloadDeferredOptions = null;
             if (window._previewReloadDeferredTimer) {
                 clearTimeout(window._previewReloadDeferredTimer);
@@ -3507,6 +3520,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 queued = enqueueGroupedPreviewEpg(sections, isMobile, {
                     forceRefresh: true,
                     onlyChannelIds: targetIds,
+                    includeCollapsed: true,
                 });
             } else {
                 window.refreshSelectedOnly = true;
@@ -3605,6 +3619,35 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             if (!taskId || !outputId) return;
             window._previewTaskOutputMap = window._previewTaskOutputMap || {};
             window._previewTaskOutputMap[taskId] = outputId;
+            ensurePreviewTaskWatcher();
+        }
+
+        function stopPreviewTaskWatcher() {
+            if (window._previewTaskWatcherInterval) {
+                clearInterval(window._previewTaskWatcherInterval);
+                window._previewTaskWatcherInterval = null;
+            }
+        }
+
+        function ensurePreviewTaskWatcher() {
+            if (window._previewTaskWatcherInterval) return;
+            window._previewTaskWatcherInterval = setInterval(async () => {
+                const modal = document.getElementById('channel_modal');
+                if (!modal || modal.style.display !== 'flex' || !window.currentPreviewOutputId) {
+                    stopPreviewTaskWatcher();
+                    return;
+                }
+                const map = window._previewTaskOutputMap || {};
+                const hasPending = Object.keys(map).some((id) => {
+                    const t = taskCenter.tasks.get(id);
+                    return t && (t.status === 'pending' || t.status === 'running');
+                });
+                if (!hasPending) {
+                    stopPreviewTaskWatcher();
+                    return;
+                }
+                await taskCenter.loadTasks();
+            }, 2500);
         }
 
         function getAggregatePreviewScrollRoots() {
@@ -3821,18 +3864,28 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         async function refreshAfterAggregateTask(task) {
             if (!task || task.status !== 'success') return;
             if (!isAggregatePreviewTaskName(task.name)) return;
+            const modal = document.getElementById('channel_modal');
+            if (!modal || modal.style.display !== 'flex' || !window.currentPreviewOutputId) return;
             const map = window._previewTaskOutputMap || {};
             const linkedOid = map[task.id];
-            const shouldReloadPreview = document.getElementById('channel_modal')?.style.display === 'flex'
-                && window.currentPreviewOutputId
-                && (!linkedOid || linkedOid === window.currentPreviewOutputId);
-            if (!shouldReloadPreview) return;
+            if (linkedOid && linkedOid !== window.currentPreviewOutputId) return;
+
+            window._previewRefreshedTaskIds = window._previewRefreshedTaskIds || new Set();
+            if (window._previewRefreshedTaskIds.has(task.id)) return;
+            window._previewRefreshedTaskIds.add(task.id);
+
+            if (task.name && task.name.includes('AI 整理')) {
+                window._previewGroupDisplayMode = 'ai';
+            }
+            window._previewChannelEnableOverrides = new Map();
+
             scheduleAggregatePreviewReload({
                 force: true,
                 silent: true,
                 fetchOutputs: true,
-                delay: 1200,
+                delay: 600,
             });
+            stopPreviewTaskWatcher();
         }
 
         function flattenAggregatePreviewChannels() {
@@ -7728,6 +7781,7 @@ function removeTag(val) {
                 nextGroupSectionsKey
             );
             const canPatchGrouped = preserveView
+                && !options.forceRender
                 && !searchQuery
                 && sections.length > 0
                 && structureUnchanged;
