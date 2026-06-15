@@ -1460,11 +1460,170 @@
             return ch || sub || '';
         }
 
-        function getTvgNameTooltip(channel) {
-            const overlay = channel && channel.tvg_name_overlay;
-            if (overlay && (overlay.source_name || overlay.source_subscription)) {
-                return formatOverlayAttribution(overlay, 'tvg_name');
+        function channelHasMediaOverlay(channel) {
+            return !!(channel && (channel.logo_overlay || channel.tvg_name_overlay));
+        }
+
+        function buildChannelOverlayTip(channel) {
+            const lines = [];
+            if (channel && channel.logo_overlay) {
+                lines.push(formatOverlayAttribution(channel.logo_overlay, 'logo'));
             }
+            if (channel && channel.tvg_name_overlay) {
+                lines.push(formatOverlayAttribution(channel.tvg_name_overlay, 'tvg_name'));
+            }
+            return lines.join('\n');
+        }
+
+        function escapeOverlayTipAttr(text) {
+            return String(text || '')
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;');
+        }
+
+        function escapeOverlayHtml(text) {
+            return String(text || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        function isMediaOverlayMobileUi() {
+            return window.matchMedia('(hover: none), (max-width: 768px)').matches;
+        }
+
+        let _mediaOverlayHideTimer = null;
+        let _mediaOverlayPopoverHover = false;
+
+        function ensureMediaOverlayPopoverEl() {
+            let pop = document.getElementById('media_overlay_popover');
+            if (pop) return pop;
+            pop = document.createElement('div');
+            pop.id = 'media_overlay_popover';
+            pop.className = 'media-overlay-popover';
+            pop.hidden = true;
+            pop.setAttribute('role', 'tooltip');
+            pop.addEventListener('mouseenter', () => { _mediaOverlayPopoverHover = true; });
+            pop.addEventListener('mouseleave', () => {
+                _mediaOverlayPopoverHover = false;
+                if (!isMediaOverlayMobileUi()) scheduleHideMediaOverlayPopover();
+            });
+            document.body.appendChild(pop);
+
+            let bd = document.getElementById('media_overlay_popover_backdrop');
+            if (!bd) {
+                bd = document.createElement('div');
+                bd.id = 'media_overlay_popover_backdrop';
+                bd.className = 'media-overlay-popover-backdrop';
+                bd.hidden = true;
+                bd.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    hideMediaOverlayPopover();
+                });
+                document.body.appendChild(bd);
+            }
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') hideMediaOverlayPopover();
+            });
+            return pop;
+        }
+
+        function scheduleHideMediaOverlayPopover() {
+            clearTimeout(_mediaOverlayHideTimer);
+            _mediaOverlayHideTimer = setTimeout(() => {
+                if (_mediaOverlayPopoverHover || window._mediaOverlayPopoverPinned) return;
+                hideMediaOverlayPopover();
+            }, 120);
+        }
+
+        function positionMediaOverlayPopover(anchor, pop) {
+            const rect = anchor.getBoundingClientRect();
+            const margin = 8;
+            pop.classList.remove('media-overlay-popover--modal');
+            pop.style.position = 'fixed';
+            pop.style.maxWidth = 'min(320px, calc(100vw - 24px))';
+            pop.hidden = false;
+            const popRect = pop.getBoundingClientRect();
+            let left = rect.left;
+            let top = rect.bottom + margin;
+            if (left + popRect.width > window.innerWidth - 12) {
+                left = Math.max(12, window.innerWidth - popRect.width - 12);
+            }
+            if (top + popRect.height > window.innerHeight - 12) {
+                top = Math.max(12, rect.top - popRect.height - margin);
+            }
+            pop.style.left = `${left}px`;
+            pop.style.top = `${top}px`;
+        }
+
+        function showMediaOverlayPopover(anchor, tip, options = {}) {
+            const text = (tip || '').trim();
+            if (!text || !anchor) return;
+            const pop = ensureMediaOverlayPopoverEl();
+            const bd = document.getElementById('media_overlay_popover_backdrop');
+            const lines = text.split('\n').filter(Boolean);
+            pop.innerHTML = lines.map((line) => (
+                `<div class="media-overlay-popover__line">${escapeOverlayHtml(line)}</div>`
+            )).join('');
+            window._mediaOverlayPopoverPinned = !!options.pinned;
+
+            if (isMediaOverlayMobileUi() || options.pinned) {
+                pop.classList.add('media-overlay-popover--modal');
+                pop.style.left = '';
+                pop.style.top = '';
+                pop.style.position = '';
+                pop.hidden = false;
+                if (bd) bd.hidden = false;
+                return;
+            }
+
+            if (bd) bd.hidden = true;
+            positionMediaOverlayPopover(anchor, pop);
+        }
+
+        function hideMediaOverlayPopover() {
+            clearTimeout(_mediaOverlayHideTimer);
+            const pop = document.getElementById('media_overlay_popover');
+            const bd = document.getElementById('media_overlay_popover_backdrop');
+            if (pop) pop.hidden = true;
+            if (bd) bd.hidden = true;
+            window._mediaOverlayPopoverPinned = false;
+            _mediaOverlayPopoverHover = false;
+        }
+
+        function onMediaOverlayTriggerClick(ev) {
+            ev.stopPropagation();
+            ev.preventDefault();
+            const btn = ev.currentTarget;
+            const tip = btn.getAttribute('data-overlay-tip') || '';
+            if (!tip || !isMediaOverlayMobileUi()) return;
+            showMediaOverlayPopover(btn, tip, { pinned: true });
+        }
+
+        function onMediaOverlayTriggerHover(ev, enter) {
+            if (isMediaOverlayMobileUi()) return;
+            const btn = ev.currentTarget;
+            const tip = btn.getAttribute('data-overlay-tip') || '';
+            clearTimeout(_mediaOverlayHideTimer);
+            if (enter) {
+                showMediaOverlayPopover(btn, tip, { pinned: false });
+            } else {
+                scheduleHideMediaOverlayPopover();
+            }
+        }
+
+        function buildMediaOverlayTriggerHtml(channel, extraClass) {
+            const tip = buildChannelOverlayTip(channel);
+            if (!tip) return '';
+            const tipEsc = escapeOverlayTipAttr(tip);
+            const cls = ['media-overlay-trigger', extraClass || 'epg-overlay-mark'].filter(Boolean).join(' ');
+            return `<button type="button" class="${cls}" data-overlay-tip="${tipEsc}" aria-label="同频道覆盖说明" onclick="onMediaOverlayTriggerClick(event)" onmouseenter="onMediaOverlayTriggerHover(event, true)" onmouseleave="onMediaOverlayTriggerHover(event, false)">AI</button>`;
+        }
+
+        function getTvgNameTooltip(channel) {
             const native = (channel && channel.tvg_name_native != null ? channel.tvg_name_native : channel && channel.tvg_name) || '';
             if ((native || '').trim()) return '自带 tvg-name';
             if ((channel && channel.name || '').trim()) return '回退频道名';
@@ -1476,11 +1635,7 @@
             const safe = String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;');
             const overlay = channel && channel.tvg_name_overlay;
             const tip = getTvgNameTooltip(channel).replace(/"/g, '&quot;');
-            const fromBrief = overlay ? overlayAttributionBrief(overlay) : '';
-            const fromSafe = fromBrief.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-            const mark = overlay
-                ? ` <span class="epg-overlay-mark" title="${tip}" aria-label="${tip}">AI</span>${fromBrief ? `<span class="media-overlay-from" title="${tip}">← ${fromSafe}</span>` : ''}`
-                : '';
+            const mark = overlay ? ` ${buildMediaOverlayTriggerHtml(channel, 'epg-overlay-mark')}` : '';
             return `<span title="${tip}" aria-label="${tip}" style="font-size: 0.8em; opacity: 0.6;">${safe}${mark}</span>`;
         }
 
@@ -2448,10 +2603,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
         function getChannelLogoTooltip(channel) {
-            const overlay = channel && channel.logo_overlay;
-            if (overlay && (overlay.source_name || overlay.source_subscription)) {
-                return formatOverlayAttribution(overlay, 'logo');
-            }
+            if (channelHasMediaOverlay(channel)) return '同频道覆盖说明：悬停或点击查看';
             if (channelHasNativeLogo(channel)) return '自带台标';
             return '无台标';
         }
@@ -2485,31 +2637,13 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             if (overlay) cls.push('channel-logo-slot--ai-overlay');
             const title = getChannelLogoTooltip(channel).replace(/"/g, '&quot;');
             const badge = overlay
-                ? '<span class="channel-logo-slot__ai-badge" aria-hidden="true">AI</span>'
+                ? buildMediaOverlayTriggerHtml(channel, 'channel-logo-slot__ai-badge')
                 : '';
             if (!src) {
                 return `<span class="${cls.join(' ')}" title="${title}" aria-label="${title}">${badge}</span>`;
             }
             const safe = src.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
             return `<span class="${cls.join(' ')}" title="${title}" aria-label="${title}">${badge}<img class="channel-logo-slot__img" src="${safe}" alt="" onerror="onChannelLogoImgError(this)"></span>`;
-        }
-
-        function buildMediaOverlayHintHtml(channel) {
-            const bits = [];
-            if (channel && channel.logo_overlay) {
-                const brief = overlayAttributionBrief(channel.logo_overlay);
-                const tip = formatOverlayAttribution(channel.logo_overlay, 'logo').replace(/"/g, '&quot;');
-                const safe = brief.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-                if (safe) bits.push(`<span class="media-overlay-from" title="${tip}">台标←${safe}</span>`);
-            }
-            if (channel && channel.tvg_name_overlay) {
-                const brief = overlayAttributionBrief(channel.tvg_name_overlay);
-                const tip = formatOverlayAttribution(channel.tvg_name_overlay, 'tvg_name').replace(/"/g, '&quot;');
-                const safe = brief.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-                if (safe) bits.push(`<span class="media-overlay-from" title="${tip}">TVG←${safe}</span>`);
-            }
-            if (!bits.length) return '';
-            return `<div class="mobile-channel-card__overlay-hint">${bits.join('<span class="media-overlay-from__sep"> · </span>')}</div>`;
         }
 
         function mobileCardLogoHtml(channel) {
@@ -2748,7 +2882,6 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         <div class="mobile-channel-card__info">
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">名称:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap"><strong>${c.name}</strong></span></div>
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">TVG:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap">${formatTvgNameCellHtml(c)}</span></div>
-                            ${buildMediaOverlayHintHtml(c)}
                             ${window.currentEPGUrl ? `<div class="mobile-channel-card__row"><span class="mobile-channel-card__label">节目:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap" id="${epgCellId}">${previewEpgSnapshotSpan(c, '<span class="mobile-channel-card__epg-tag mobile-channel-card__epg-tag--empty">加载中...</span>')}</span></div>` : ''}
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label preview-col-source-group-label">分组:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap"><strong>${previewChannelGroupLabel(c)}</strong></span></div>
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">来源:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap">${c.source || '未知'}</span></div>
@@ -6304,6 +6437,7 @@ function removeTag(val) {
 
 
         function closePreview() {
+            hideMediaOverlayPopover();
             const modal = document.getElementById('channel_modal');
             modal.style.setProperty('display', 'none', 'important');
             document.body.style.overflow = '';

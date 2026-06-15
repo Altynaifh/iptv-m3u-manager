@@ -1524,35 +1524,79 @@ textarea {
     vertical-align: middle;
 }
 
-/* 同频道覆盖来源：订阅源 · 频道名 */
-.media-overlay-from {
-    display: inline-block;
-    margin-left: 4px;
-    font-size: 10px;
-    line-height: 1.25;
-    color: #a78bfa;
-    opacity: 0.92;
+/* 同频道覆盖：仅 AI 角标常驻，说明悬停/点击弹出 */
+.media-overlay-trigger {
+    border: none;
+    padding: 1px 3px;
+    margin: 0;
+    font: inherit;
+    line-height: 1;
+    cursor: help;
+    pointer-events: auto;
     vertical-align: middle;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
-.media-overlay-from__sep {
-    opacity: 0.55;
+.media-overlay-trigger.channel-logo-slot__ai-badge {
+    position: absolute;
+    right: -4px;
+    bottom: -4px;
+    font-size: 8px;
+    padding: 1px 3px;
+    border-radius: 3px;
+    background: rgba(139, 92, 246, 0.92);
+    color: #fff;
+    font-weight: 600;
+    z-index: 2;
 }
 
-.mobile-channel-card__overlay-hint {
-    font-size: 10px;
-    line-height: 1.35;
-    color: #a78bfa;
-    opacity: 0.9;
-    margin: 2px 0 4px;
-    padding-left: 40px;
+.media-overlay-popover {
+    position: fixed;
+    z-index: 2100;
+    max-width: min(320px, calc(100vw - 24px));
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(30, 32, 48, 0.96);
+    border: 1px solid rgba(139, 92, 246, 0.45);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+    color: #e9e7ff;
+    font-size: 12px;
+    line-height: 1.45;
+    pointer-events: auto;
 }
 
-.channel-logo-slot__ai-badge {
+.media-overlay-popover__line + .media-overlay-popover__line {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.media-overlay-popover--modal {
+    position: fixed !important;
+    left: 50% !important;
+    top: 50% !important;
+    transform: translate(-50%, -50%);
+    width: min(340px, calc(100vw - 32px));
+    max-width: none;
+    font-size: 13px;
+    padding: 14px 16px;
+}
+
+.media-overlay-popover-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 2099;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+}
+
+[data-theme="light"] .media-overlay-popover {
+    background: rgba(255, 255, 255, 0.98);
+    color: #312e81;
+    border-color: rgba(99, 102, 241, 0.35);
+}
+
+.channel-logo-slot__ai-badge:not(.media-overlay-trigger) {
     position: absolute;
     right: -4px;
     bottom: -4px;
