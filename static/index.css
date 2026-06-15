@@ -514,9 +514,41 @@ body.auth-locked .console-panel {
 
 .preview-toolbar-refresh-row {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 10px;
     align-items: center;
+    flex: 0 0 auto;
+}
+
+/* PC/平板：搜索框勿撑满整行，避免后续按钮被无故挤到下一行 */
+@media (min-width: 769px) {
+    .preview-toolbar-main-row {
+        flex-wrap: wrap;
+        row-gap: 8px;
+    }
+
+    .preview-toolbar-search {
+        flex: 0 1 220px;
+        min-width: 160px;
+        max-width: 280px;
+    }
+
+    .preview-toolbar-refresh-row {
+        flex: 0 0 auto;
+        flex-wrap: nowrap;
+        gap: 8px;
+    }
+
+    .preview-toolbar-select-group {
+        flex: 0 0 auto;
+        width: auto;
+        flex-wrap: nowrap;
+        gap: 8px;
+    }
+
+    .preview-toolbar-main-row > .toolbar-btn {
+        flex: 0 0 auto;
+    }
 }
 
 .preview-batch-action-row {
