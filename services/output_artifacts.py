@@ -120,6 +120,7 @@ def _enrich_preview_epg(
     *,
     out=None,
     members=None,
+    validate_cluster_logos: bool = True,
 ) -> dict:
     """生成预览节目表快照：先查 EPG，再按验证供体统一覆盖同频道 tvg-name/台标。"""
     from services.channel_logo_overlay import (
@@ -141,7 +142,7 @@ def _enrich_preview_epg(
                     ch["epg_program"] = prog.get("title")
                     ch["epg_logo"] = prog.get("logo")
         payload["epg_snapshot_at"] = datetime.utcnow().isoformat()
-        if out is not None and members:
+        if validate_cluster_logos and out is not None and members:
             apply_validated_cluster_overlays_to_preview(payload, out, members, epg_url)
     return payload
 
@@ -221,9 +222,10 @@ def get_or_build_preview_payload(
     if force or epg_refresh:
         clear_output_artifacts(out)
 
-    if not force and not epg_refresh and not is_artifact_cache_stale(session, out):
+    if not force and not epg_refresh:
         cached = _read_preview_file(out.id)
-        if cached is not None:
+        stale = is_artifact_cache_stale(session, out)
+        if cached is not None and not stale:
             meta = _read_artifact_meta(out.id) or {}
             cached["cache"] = {
                 "hit": True,
@@ -232,6 +234,26 @@ def get_or_build_preview_payload(
                 "source": "disk",
             }
             return cached
+        if cached is not None and stale:
+            meta = _read_artifact_meta(out.id) or {}
+            schedule_rebuild_output_artifacts(out.id, epg_refresh=False)
+            cached["cache"] = {
+                "hit": True,
+                "stale": True,
+                "rebuilding": True,
+                "key": meta.get("cache_key"),
+                "at": meta.get("built_at") or (out.preview_cache_at.isoformat() if out.preview_cache_at else None),
+                "source": "disk",
+            }
+            return cached
+
+    if not force and not _artifact_bundle_complete(out):
+        from services.output_resolver import aggregate_channels
+
+        payload = preview_export_groups(session, out, None)
+        schedule_rebuild_output_artifacts(out.id, epg_refresh=epg_refresh)
+        payload["cache"] = {"hit": False, "building": True, "source": "live"}
+        return payload
 
     return build_output_artifacts(session, out)
 

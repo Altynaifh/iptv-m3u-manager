@@ -171,32 +171,32 @@ def load_same_channel_clusters(
     return []
 
 
-def is_logo_url_reachable(url: str, *, timeout: float = 5.0) -> bool:
-    """检测台标 URL 是否可访问（结果按 URL 缓存）。"""
+def is_logo_url_reachable(url: str, *, timeout: float = 1.8) -> bool:
+    """检测台标 URL 是否可访问（结果按 URL 缓存，短超时避免阻塞预览）。"""
     raw = quote_logo_url((url or "").strip())
     if not raw:
         return False
     if raw in _logo_reachability_cache:
         return _logo_reachability_cache[raw]
     ok = False
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    for method, extra in (("HEAD", {}), ("GET", {"Range": "bytes=0-0"})):
-        try:
-            req = Request(raw, method=method, headers={**headers, **extra})
-            with urlopen(req, timeout=timeout) as resp:
-                status_ok = getattr(resp, "status", 200) < 400
-                ctype = (resp.headers.get("Content-Type") or "").lower()
-                type_ok = (
-                    not ctype
-                    or "image" in ctype
-                    or "octet-stream" in ctype
-                    or "application/binary" in ctype
-                )
-                ok = status_ok and type_ok
-            if ok:
-                break
-        except Exception:
-            continue
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Range": "bytes=0-255",
+    }
+    try:
+        req = Request(raw, method="GET", headers=headers)
+        with urlopen(req, timeout=timeout) as resp:
+            status_ok = getattr(resp, "status", 200) < 400
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            type_ok = (
+                not ctype
+                or "image" in ctype
+                or "octet-stream" in ctype
+                or "application/binary" in ctype
+            )
+            ok = status_ok and type_ok
+    except Exception:
+        ok = False
     _logo_reachability_cache[raw] = ok
     return ok
 
@@ -370,6 +370,35 @@ def _rank_cluster_members_channel(
     return ranked
 
 
+def pick_logo_donor_channel(
+    channels_by_id: Dict[int, Channel],
+    cluster: List[int],
+    *,
+    layout_order: Optional[Dict[int, int]] = None,
+) -> Tuple[Optional[Channel], str]:
+    """仅按台标可达性选供体（只检测 logo 字段，不额外查 EPG）。"""
+    ranked: List[Tuple[Tuple[int, int], Channel, str]] = []
+    for cid in cluster:
+        ch = channels_by_id.get(cid)
+        if not ch:
+            continue
+        logo_url = _resolve_reachable_logo(ch.logo or "", "")
+        key = _score_cluster_donor(
+            epg_ok=False,
+            logo_ok=bool(logo_url),
+            rank=_donor_rank(cid, layout_order),
+        )
+        ranked.append((key, ch, logo_url))
+    if not ranked:
+        return None, ""
+    ranked.sort(key=lambda item: item[0])
+    for _key, ch, logo_url in ranked:
+        if logo_url:
+            return ch, logo_url
+    ch = ranked[0][1]
+    return ch, quote_logo_url(ch.logo or "")
+
+
 def pick_cluster_media_donors_channel(
     channels_by_id: Dict[int, Channel],
     cluster: List[int],
@@ -384,30 +413,19 @@ def pick_cluster_media_donors_channel(
     if not ranked:
         return None, None, ""
     epg_donor = ranked[0][1]
-    logo_donor: Optional[Channel] = None
-    logo_url = ""
-    for _key, ch in ranked:
-        url = _donor_reachable_logo_channel(ch, epg_url)
-        if url:
-            logo_donor = ch
-            logo_url = url
-            break
+    logo_donor, logo_url = pick_logo_donor_channel(
+        channels_by_id, cluster, layout_order=layout_order
+    )
     return epg_donor, logo_donor, logo_url
 
 
-def pick_canonical_logo_donor(
+def pick_layout_logo_donor(
     channels_by_id: Dict[int, Channel],
     cluster: List[int],
     *,
     layout_order: Optional[Dict[int, int]] = None,
-    epg_url: Optional[str] = None,
 ) -> Optional[Channel]:
-    """在集群内选主台标源（验证优先，回退布局顺序）。"""
-    donor = pick_validated_cluster_donor_channel(
-        channels_by_id, cluster, layout_order=layout_order, epg_url=epg_url
-    )
-    if donor:
-        return donor
+    """仅按布局顺序选有 logo 字符串的供体（不做 HTTP 探测）。"""
     candidates: List[tuple] = []
     for cid in cluster:
         ch = channels_by_id.get(cid)
@@ -417,6 +435,24 @@ def pick_canonical_logo_donor(
         return None
     candidates.sort(key=lambda item: item[0])
     return candidates[0][1]
+
+
+def pick_canonical_logo_donor(
+    channels_by_id: Dict[int, Channel],
+    cluster: List[int],
+    *,
+    layout_order: Optional[Dict[int, int]] = None,
+    epg_url: Optional[str] = None,
+    validate_logos: bool = True,
+) -> Optional[Channel]:
+    """在集群内选主台标源（可跳过 HTTP 探测以加速预览构建）。"""
+    if validate_logos:
+        donor = pick_validated_cluster_donor_channel(
+            channels_by_id, cluster, layout_order=layout_order, epg_url=epg_url
+        )
+        if donor:
+            return donor
+    return pick_layout_logo_donor(channels_by_id, cluster, layout_order=layout_order)
 
 
 def _donor_reachable_logo_channel(ch: Channel, epg_url: Optional[str] = None) -> str:
@@ -444,16 +480,26 @@ def compute_logo_overlays(
     *,
     layout_order: Optional[Dict[int, int]] = None,
     epg_url: Optional[str] = None,
+    validate_logos: bool = True,
 ) -> Dict[str, Dict[str, Any]]:
-    """同频道集群：从验证通过的供体覆盖不可达/缺失台标。"""
+    """同频道集群：从供体覆盖缺失/不可达台标。"""
     by_id = {c.id: c for c in channels if c.id is not None}
     overlays: Dict[str, Dict[str, Any]] = {}
     for cluster in same_channel_clusters:
         if len(cluster) < 2:
             continue
-        _epg_donor, logo_donor, logo_url = pick_cluster_media_donors_channel(
-            by_id, cluster, layout_order=layout_order, epg_url=epg_url
-        )
+        logo_donor: Optional[Channel] = None
+        logo_url = ""
+        if validate_logos:
+            logo_donor, logo_url = pick_logo_donor_channel(
+                by_id, cluster, layout_order=layout_order
+            )
+        else:
+            logo_donor = pick_layout_logo_donor(
+                by_id, cluster, layout_order=layout_order
+            )
+            if logo_donor:
+                logo_url = quote_logo_url(logo_donor.logo or "")
         if not logo_donor or logo_donor.id is None or not logo_url:
             continue
         for cid in cluster:
@@ -461,7 +507,10 @@ def compute_logo_overlays(
             if not ch:
                 continue
             native = quote_logo_url(ch.logo or "")
-            if native and is_logo_url_reachable(native):
+            if validate_logos:
+                if native and is_logo_url_reachable(native):
+                    continue
+            elif native:
                 continue
             overlays[str(cid)] = {
                 "logo": logo_url,
@@ -479,6 +528,7 @@ def augment_logo_overlays_from_tvg_name(
     epg_url: Optional[str] = None,
     clusters: Optional[List[List[int]]] = None,
     layout_order: Optional[Dict[int, int]] = None,
+    validate_logos: bool = True,
 ) -> Dict[str, Dict[str, Any]]:
     """tvg-name 已覆盖时，从集群内台标供体补台标（可与 EPG 供体不同）。"""
     out = dict(logo_overlays or {})
@@ -495,20 +545,27 @@ def augment_logo_overlays_from_tvg_name(
         except (TypeError, ValueError):
             continue
         cluster = cluster_by_cid.get(cid)
+        logo_donor: Optional[Channel] = None
+        logo_url = ""
         if cluster:
-            _epg_d, logo_donor, logo_url = pick_cluster_media_donors_channel(
-                members_by_id,
-                cluster,
-                layout_order=layout_order,
-                epg_url=epg_url,
-            )
-            if not logo_url or not logo_donor or logo_donor.id is None:
-                continue
-            out[cid_str] = {
-                "logo": logo_url,
-                "source_id": logo_donor.id,
-                "source_name": logo_donor.name or "",
-            }
+            if validate_logos:
+                logo_donor, logo_url = pick_logo_donor_channel(
+                    members_by_id,
+                    cluster,
+                    layout_order=layout_order,
+                )
+            else:
+                logo_donor = pick_layout_logo_donor(
+                    members_by_id, cluster, layout_order=layout_order
+                )
+                if logo_donor:
+                    logo_url = quote_logo_url(logo_donor.logo or "")
+            if logo_url and logo_donor and logo_donor.id is not None:
+                out[cid_str] = {
+                    "logo": logo_url,
+                    "source_id": logo_donor.id,
+                    "source_name": logo_donor.name or "",
+                }
             continue
         donor_id = tvg_ov.get("source_id")
         if donor_id is None:
@@ -516,7 +573,10 @@ def augment_logo_overlays_from_tvg_name(
         donor = members_by_id.get(int(donor_id))
         if not donor:
             continue
-        logo_url = _donor_reachable_logo_channel(donor, epg_url)
+        if validate_logos:
+            logo_url = _donor_reachable_logo_channel(donor, epg_url)
+        else:
+            logo_url = quote_logo_url(donor.logo or "")
         if not logo_url:
             continue
         out[cid_str] = {
@@ -544,19 +604,13 @@ def effective_tvg_name_dict(ch: dict) -> str:
     return (ch.get("tvg_name") or ch.get("name") or "").strip()
 
 
-def pick_tvg_name_donor(
+def pick_layout_tvg_name_donor(
     channels_by_id: Dict[int, Channel],
     cluster: List[int],
     *,
     layout_order: Optional[Dict[int, int]] = None,
-    epg_url: Optional[str] = None,
 ) -> Optional[Channel]:
-    """在集群内选主 tvg-name 源（验证优先）。"""
-    donor = pick_validated_cluster_donor_channel(
-        channels_by_id, cluster, layout_order=layout_order, epg_url=epg_url
-    )
-    if donor and effective_tvg_name_channel(donor):
-        return donor
+    """仅按布局顺序选有 effective tvg-name 的供体（不做 EPG/HTTP 探测）。"""
     candidates: List[tuple] = []
     for cid in cluster:
         ch = channels_by_id.get(cid)
@@ -566,6 +620,26 @@ def pick_tvg_name_donor(
         return None
     candidates.sort(key=lambda item: item[0])
     return candidates[0][1]
+
+
+def pick_tvg_name_donor(
+    channels_by_id: Dict[int, Channel],
+    cluster: List[int],
+    *,
+    layout_order: Optional[Dict[int, int]] = None,
+    epg_url: Optional[str] = None,
+    validate_cluster_media: bool = True,
+) -> Optional[Channel]:
+    """在集群内选主 tvg-name 源（可跳过 EPG/台标验证以加速预览）。"""
+    if validate_cluster_media:
+        donor = pick_validated_cluster_donor_channel(
+            channels_by_id, cluster, layout_order=layout_order, epg_url=epg_url
+        )
+        if donor and effective_tvg_name_channel(donor):
+            return donor
+    return pick_layout_tvg_name_donor(
+        channels_by_id, cluster, layout_order=layout_order
+    )
 
 
 def pick_tvg_name_donor_dict(
@@ -600,15 +674,20 @@ def compute_tvg_name_overlays(
     *,
     layout_order: Optional[Dict[int, int]] = None,
     epg_url: Optional[str] = None,
+    validate_cluster_media: bool = True,
 ) -> Dict[str, Dict[str, Any]]:
-    """同频道集群：从验证供体覆盖 tvg-name（无显式 tvg_name 的成员）。"""
+    """同频道集群：从供体覆盖 tvg-name（无显式 tvg_name 的成员）。"""
     by_id = {c.id: c for c in channels if c.id is not None}
     overlays: Dict[str, Dict[str, Any]] = {}
     for cluster in same_channel_clusters:
         if len(cluster) < 2:
             continue
         donor = pick_tvg_name_donor(
-            by_id, cluster, layout_order=layout_order, epg_url=epg_url
+            by_id,
+            cluster,
+            layout_order=layout_order,
+            epg_url=epg_url,
+            validate_cluster_media=validate_cluster_media,
         )
         if not donor or donor.id is None:
             continue

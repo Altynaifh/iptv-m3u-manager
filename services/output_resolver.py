@@ -267,7 +267,12 @@ def export_m3u_channels(
     return enabled
 
 
-def _resolve_tvg_name_overlays(out: OutputSource, members: List[Channel]) -> Dict:
+def _resolve_tvg_name_overlays(
+    out: OutputSource,
+    members: List[Channel],
+    *,
+    validate_cluster_media: bool = True,
+) -> Dict:
     clusters = load_same_channel_clusters(
         out.layout_meta or "{}",
         members,
@@ -279,6 +284,7 @@ def _resolve_tvg_name_overlays(out: OutputSource, members: List[Channel]) -> Dic
         clusters,
         layout_order=order or None,
         epg_url=out.epg_url,
+        validate_cluster_media=validate_cluster_media,
     )
 
 
@@ -294,7 +300,7 @@ def _apply_cluster_media_overlays_to_channels(
         layout_mode=(out.layout_mode or "rules"),
     )
     order = layout_channel_order(out.channel_layout or "{}")
-    logo_ov = _resolve_logo_overlays(out, members)
+    logo_ov = _resolve_logo_overlays(out, members, validate_logos=True)
     tvg_ov = _resolve_tvg_name_overlays(out, members)
     logo_ov = augment_logo_overlays_from_tvg_name(
         logo_ov,
@@ -303,6 +309,7 @@ def _apply_cluster_media_overlays_to_channels(
         epg_url=out.epg_url,
         clusters=clusters,
         layout_order=order or None,
+        validate_logos=True,
     )
     tvg_linked = {int(k) for k in tvg_ov.keys()}
     result = channels
@@ -389,7 +396,12 @@ def _groups_to_payload(
     return payload
 
 
-def _resolve_logo_overlays(out: OutputSource, members: List[Channel]) -> Dict:
+def _resolve_logo_overlays(
+    out: OutputSource,
+    members: List[Channel],
+    *,
+    validate_logos: bool = True,
+) -> Dict:
     clusters = load_same_channel_clusters(
         out.layout_meta or "{}",
         members,
@@ -401,6 +413,7 @@ def _resolve_logo_overlays(out: OutputSource, members: List[Channel]) -> Dict:
         clusters,
         layout_order=order or None,
         epg_url=out.epg_url,
+        validate_logos=validate_logos,
     )
 
 
@@ -415,8 +428,10 @@ def preview_export_groups(
     manual_list = filter_candidates(session, out, draft, enabled_only=False)
     all_channels = aggregate_channels(session, out, draft)
     members_by_id = {c.id: c for c in all_channels if c.id is not None}
-    logo_overlays = _resolve_logo_overlays(out, all_channels)
-    tvg_name_overlays = _resolve_tvg_name_overlays(out, all_channels)
+    logo_overlays = _resolve_logo_overlays(out, all_channels, validate_logos=False)
+    tvg_name_overlays = _resolve_tvg_name_overlays(
+        out, all_channels, validate_cluster_media=False
+    )
     clusters = load_same_channel_clusters(
         out.layout_meta or "{}",
         all_channels,
@@ -430,6 +445,7 @@ def preview_export_groups(
         epg_url=out.epg_url,
         clusters=clusters,
         layout_order=layout_order or None,
+        validate_logos=False,
     )
     manual_groups = _groups_to_payload(
         _bucket_by_group_title(manual_list), session, logo_overlays=logo_overlays
