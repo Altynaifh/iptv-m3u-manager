@@ -10,7 +10,9 @@ from services.channel_logo_overlay import (
     apply_logo_overlays_to_channels,
     apply_logo_overlays_to_dicts,
     compute_logo_overlays,
+    layout_channel_order,
     load_same_channel_clusters,
+    quote_logo_url,
 )
 from services.generator import M3UGenerator
 
@@ -346,7 +348,8 @@ def _resolve_logo_overlays(out: OutputSource, members: List[Channel]) -> Dict:
         members,
         layout_mode=(out.layout_mode or "rules"),
     )
-    return compute_logo_overlays(members, clusters)
+    order = layout_channel_order(out.channel_layout or "{}")
+    return compute_logo_overlays(members, clusters, layout_order=order or None)
 
 
 def preview_export_groups(

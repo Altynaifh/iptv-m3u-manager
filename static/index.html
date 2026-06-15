@@ -2419,8 +2419,18 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             }
         }
 
+        function safeLogoSrc(url) {
+            const raw = (url || '').trim();
+            if (!raw) return '';
+            try {
+                return new URL(raw).href;
+            } catch (e) {
+                return raw;
+            }
+        }
+
         function channelLogoSlotHtml(channel, extraClass) {
-            const src = ((channel && channel.logo) || '').trim();
+            const src = safeLogoSrc((channel && channel.logo) || '');
             const overlay = channel && channel.logo_overlay;
             const cls = ['channel-logo-slot', extraClass || 'channel-logo-slot--table'];
             if (overlay) cls.push('channel-logo-slot--ai-overlay');

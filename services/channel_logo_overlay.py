@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Dict, List, Optional, Set
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from models import Channel
 
@@ -156,44 +157,74 @@ def load_same_channel_clusters(
     return []
 
 
-def _donor_rank(ch: Channel) -> tuple:
-    """同频道集群内选主台标源：已启用、有截图优先。"""
-    return (
-        1 if ch.is_enabled else 0,
-        1 if (ch.check_image or "").strip() else 0,
-        len((ch.logo or "").strip()),
-    )
+def quote_logo_url(url: str) -> str:
+    """台标 URL 路径含中文时做百分号编码，避免浏览器加载失败。"""
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parts = urlsplit(raw)
+        path = quote(parts.path, safe="/:@!$&'()*+,;=%")
+        return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+    except Exception:
+        return raw
+
+
+def layout_channel_order(channel_layout: str) -> Dict[int, int]:
+    """读取 explicit 布局中的频道先后顺序（用于同集群台标主源）。"""
+    try:
+        layout = json.loads(channel_layout or "{}")
+    except json.JSONDecodeError:
+        return {}
+    order: Dict[int, int] = {}
+    idx = 0
+    for g in layout.get("groups") or []:
+        for cid in g.get("channel_ids") or []:
+            try:
+                i = int(cid)
+            except (TypeError, ValueError):
+                continue
+            if i not in order:
+                order[i] = idx
+                idx += 1
+    return order
 
 
 def pick_canonical_logo_donor(
     channels_by_id: Dict[int, Channel],
     cluster: List[int],
+    *,
+    layout_order: Optional[Dict[int, int]] = None,
 ) -> Optional[Channel]:
-    """在集群内选唯一主台标源；全无 logo 时返回 None。"""
-    candidates = []
+    """在集群内选主台标源：优先 AI 布局中更靠前且有 logo 的频道。"""
+    candidates: List[tuple] = []
     for cid in cluster:
         ch = channels_by_id.get(cid)
         if ch and (ch.logo or "").strip():
-            candidates.append(ch)
+            rank = layout_order.get(cid, cid) if layout_order else cid
+            candidates.append((rank, ch))
     if not candidates:
         return None
-    return max(candidates, key=_donor_rank)
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
 
 
 def compute_logo_overlays(
     channels: List[Channel],
     same_channel_clusters: List[List[int]],
+    *,
+    layout_order: Optional[Dict[int, int]] = None,
 ) -> Dict[str, Dict[str, Any]]:
-    """同频道集群：非主源频道统一使用主源台标（含自有无效 URL 的重复项）。"""
+    """同频道集群：非主源频道统一使用布局靠前频道的台标。"""
     by_id = {c.id: c for c in channels if c.id is not None}
     overlays: Dict[str, Dict[str, Any]] = {}
     for cluster in same_channel_clusters:
         if len(cluster) < 2:
             continue
-        donor = pick_canonical_logo_donor(by_id, cluster)
+        donor = pick_canonical_logo_donor(by_id, cluster, layout_order=layout_order)
         if not donor or donor.id is None:
             continue
-        logo_url = (donor.logo or "").strip()
+        logo_url = quote_logo_url(donor.logo or "")
         if not logo_url:
             continue
         for cid in cluster:
@@ -201,6 +232,9 @@ def compute_logo_overlays(
                 continue
             ch = by_id.get(cid)
             if not ch:
+                continue
+            native = quote_logo_url(ch.logo or "")
+            if native == logo_url:
                 continue
             overlays[str(cid)] = {
                 "logo": logo_url,
@@ -220,13 +254,15 @@ def apply_logo_overlays_to_dicts(
             d["logo_native"] = (d.get("logo") or "").strip()
         ov = overlays.get(str(d.get("id")))
         if ov:
-            d["logo"] = ov["logo"]
+            d["logo"] = quote_logo_url(ov["logo"])
             d["logo_overlay"] = {
                 "source_id": ov["source_id"],
                 "source_name": ov["source_name"],
             }
         else:
             d["logo_overlay"] = None
+        if d.get("logo"):
+            d["logo"] = quote_logo_url(d["logo"])
 
 
 def apply_logo_overlays_to_channels(
@@ -238,7 +274,7 @@ def apply_logo_overlays_to_channels(
     for ch in channels:
         ov = overlays.get(str(ch.id))
         if ov:
-            out.append(Channel(**{**ch.model_dump(), "logo": ov["logo"]}))
+            out.append(Channel(**{**ch.model_dump(), "logo": quote_logo_url(ov["logo"])}))
         else:
             out.append(Channel(**ch.model_dump()))
     return out
