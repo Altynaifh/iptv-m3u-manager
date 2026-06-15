@@ -285,6 +285,11 @@ def ai_vision_candidates(
 def _channels_to_preview_dicts(channels: List[Channel], session: Session) -> List[dict]:
     subs = session.exec(select(Subscription)).all()
     sub_map = {s.id: s.name or s.url for s in subs}
+    native_logos = {
+        c.id: (c.logo or "").strip()
+        for c in channels
+        if c.id is not None
+    }
     copies = [detach_channel_copy(c) for c in channels]
     copies = M3UGenerator.propagate_logos(copies)
     ids = [c.id for c in copies if c.id is not None]
@@ -301,6 +306,7 @@ def _channels_to_preview_dicts(channels: List[Channel], session: Session) -> Lis
         out.append(
             {
                 **c.model_dump(),
+                "logo_native": native_logos.get(c.id, (c.logo or "").strip()),
                 "source": sub_map.get(c.subscription_id, "Unknown"),
                 "source_group": source_group,
             }

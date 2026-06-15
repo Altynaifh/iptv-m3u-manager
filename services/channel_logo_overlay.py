@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 from models import Channel
 
@@ -156,37 +156,51 @@ def load_same_channel_clusters(
     return []
 
 
-def pick_logo_donor(
+def _donor_rank(ch: Channel) -> tuple:
+    """同频道集群内选主台标源：已启用、有截图优先。"""
+    return (
+        1 if ch.is_enabled else 0,
+        1 if (ch.check_image or "").strip() else 0,
+        len((ch.logo or "").strip()),
+    )
+
+
+def pick_canonical_logo_donor(
     channels_by_id: Dict[int, Channel],
     cluster: List[int],
 ) -> Optional[Channel]:
-    """在集群内选取带正式台标 URL 的频道；无则返回 None。"""
+    """在集群内选唯一主台标源；全无 logo 时返回 None。"""
+    candidates = []
     for cid in cluster:
         ch = channels_by_id.get(cid)
         if ch and (ch.logo or "").strip():
-            return ch
-    return None
+            candidates.append(ch)
+    if not candidates:
+        return None
+    return max(candidates, key=_donor_rank)
 
 
 def compute_logo_overlays(
     channels: List[Channel],
     same_channel_clusters: List[List[int]],
 ) -> Dict[str, Dict[str, Any]]:
-    """为无台标频道生成同频道覆盖映射。"""
+    """同频道集群：非主源频道统一使用主源台标（含自有无效 URL 的重复项）。"""
     by_id = {c.id: c for c in channels if c.id is not None}
     overlays: Dict[str, Dict[str, Any]] = {}
     for cluster in same_channel_clusters:
         if len(cluster) < 2:
             continue
-        donor = pick_logo_donor(by_id, cluster)
-        if not donor:
+        donor = pick_canonical_logo_donor(by_id, cluster)
+        if not donor or donor.id is None:
             continue
         logo_url = (donor.logo or "").strip()
         if not logo_url:
             continue
         for cid in cluster:
+            if cid == donor.id:
+                continue
             ch = by_id.get(cid)
-            if not ch or (ch.logo or "").strip():
+            if not ch:
                 continue
             overlays[str(cid)] = {
                 "logo": logo_url,
@@ -202,8 +216,8 @@ def apply_logo_overlays_to_dicts(
 ) -> None:
     """写入预览 JSON 字段：logo_native / logo / logo_overlay。"""
     for d in channel_dicts:
-        native = (d.get("logo") or "").strip()
-        d["logo_native"] = native
+        if "logo_native" not in d:
+            d["logo_native"] = (d.get("logo") or "").strip()
         ov = overlays.get(str(d.get("id")))
         if ov:
             d["logo"] = ov["logo"]
@@ -222,9 +236,8 @@ def apply_logo_overlays_to_channels(
     """M3U 导出前应用同频道台标覆盖。"""
     out: List[Channel] = []
     for ch in channels:
-        native = (ch.logo or "").strip()
         ov = overlays.get(str(ch.id))
-        if ov and not native:
+        if ov:
             out.append(Channel(**{**ch.model_dump(), "logo": ov["logo"]}))
         else:
             out.append(Channel(**ch.model_dump()))

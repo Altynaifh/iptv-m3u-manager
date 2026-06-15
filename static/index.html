@@ -2394,15 +2394,29 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
 
+        function channelHasNativeLogo(channel) {
+            return !!((channel && channel.logo_native != null ? channel.logo_native : channel && channel.logo) || '').trim();
+        }
+
         function getChannelLogoTooltip(channel) {
             const overlay = channel && channel.logo_overlay;
             if (overlay && overlay.source_name) {
                 return `AI 同频道覆盖：来自「${overlay.source_name}」的台标`;
             }
-            const native = (channel && channel.logo_native != null ? channel.logo_native : channel && channel.logo) || '';
-            if ((native || '').trim()) return '自带台标';
-            if ((channel && channel.logo || '').trim()) return '自带台标';
+            if (channelHasNativeLogo(channel)) return '自带台标';
             return '无台标';
+        }
+
+        function onChannelLogoImgError(img) {
+            if (!img) return;
+            img.classList.add('channel-logo-slot__img--broken');
+            img.removeAttribute('src');
+            const slot = img.closest('.channel-logo-slot');
+            if (!slot) return;
+            if (!slot.querySelector('.channel-logo-slot__img:not(.channel-logo-slot__img--broken)')) {
+                slot.setAttribute('title', '无台标');
+                slot.setAttribute('aria-label', '无台标');
+            }
         }
 
         function channelLogoSlotHtml(channel, extraClass) {
@@ -2418,7 +2432,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 return `<span class="${cls.join(' ')}" title="${title}" aria-label="${title}">${badge}</span>`;
             }
             const safe = src.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-            return `<span class="${cls.join(' ')}" title="${title}" aria-label="${title}">${badge}<img class="channel-logo-slot__img" src="${safe}" alt="" onerror="this.classList.add('channel-logo-slot__img--broken');this.removeAttribute('src');"></span>`;
+            return `<span class="${cls.join(' ')}" title="${title}" aria-label="${title}">${badge}<img class="channel-logo-slot__img" src="${safe}" alt="" onerror="onChannelLogoImgError(this)"></span>`;
         }
 
         function mobileCardLogoHtml(channel) {
