@@ -183,10 +183,10 @@
                     <input id="llm_vision_model" placeholder="模型 ID" style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);">
                 </div>
                 <div id="llm_vision_prompt_block" style="display:none;margin-bottom:12px;">
-                    <label style="font-size:0.85em;opacity:0.9;">AI 视觉前置提示词（可选）</label>
-                    <textarea id="out_ai_vision_prompt" rows="4" placeholder="例如：带台标的新闻画面一律判 ok；仅全屏二维码扫码页判 promo_loop。" aria-label="AI 视觉前置提示词"
+                    <label style="font-size:0.85em;opacity:0.9;">AI 判台补充说明（可选）</label>
+                    <textarea id="out_ai_vision_prompt" rows="4" placeholder="用大白话写你的习惯就行，例如：&#10;· 能播出新闻、电视剧、综艺画面的，都算正常频道&#10;· 整屏只有「扫码观看」「关注公众号」「开通会员」的，算广告页&#10;· 带台标、有字幕的直播画面不要轻易关掉&#10;· 只有全黑、彩条、无信号提示的才算坏台" aria-label="AI 判台补充说明"
                         style="width:100%;margin:6px 0;padding:10px;background:var(--input-bg);border:1px solid var(--glass-border);border-radius:8px;color:var(--text);resize:vertical;min-height:88px;"></textarea>
-                    <p style="margin:0;font-size:0.78em;opacity:0.65;">保存聚合源后，手动或自动执行 AI 视觉检测时会传给视觉 LLM，用于微调判台规则。</p>
+                    <p style="margin:0;font-size:0.78em;opacity:0.65;">保存聚合源后，跑 AI 视觉检测时会一并参考。可写你这套源的特殊情况，比如「某源经常黑屏几秒」「垫片多但正片也有」。不写也可以，默认已经偏宽松。</p>
                 </div>
                 <div id="llm_text_config_block" style="display:none;margin-bottom:12px;">
                     <label style="font-size:0.85em;opacity:0.9;">文本 LLM（AI 排序编排）</label>
