@@ -4,6 +4,7 @@ from typing import List
 from models import Subscription, Channel, TaskRecord
 from database import get_session, engine
 from services.fetcher import IPTVFetcher, fetch_subscription_task
+from services.output_stats import invalidate_all_output_runtime_caches
 from services.epg import fetch_epg_cached
 from datetime import datetime
 import uuid
@@ -134,6 +135,7 @@ async def process_subscription_refresh(session: Session, sub: Subscription) -> i
     sub.last_update_status = "Success"
     session.add(sub)
     session.commit()
+    invalidate_all_output_runtime_caches(session)
     return len(channels_data)
 
 @router.post("/{sub_id}/refresh")

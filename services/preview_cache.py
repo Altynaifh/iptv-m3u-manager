@@ -102,12 +102,21 @@ def get_or_build_export_preview(
         payload["cache"] = {"hit": False, "reason": "draft"}
         return payload
 
+    # 命中已存 JSON 时直接返回，避免低性能主机每次全量扫描频道算指纹
+    if not force and out.preview_cache_json and out.preview_cache_key:
+        try:
+            payload = json.loads(out.preview_cache_json)
+            payload["cache"] = {
+                "hit": True,
+                "key": out.preview_cache_key,
+                "at": out.preview_cache_at.isoformat() if out.preview_cache_at else None,
+            }
+            return payload
+        except json.JSONDecodeError:
+            pass
+
     cache_key = compute_preview_cache_key(session, out, None)
-    if (
-        not force
-        and out.preview_cache_key == cache_key
-        and out.preview_cache_json
-    ):
+    if not force and out.preview_cache_key == cache_key and out.preview_cache_json:
         try:
             payload = json.loads(out.preview_cache_json)
             payload["cache"] = {

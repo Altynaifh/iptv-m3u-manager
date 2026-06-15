@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlmodel import Session, select
 from models import Channel
 from database import get_session
+from services.output_stats import invalidate_all_output_runtime_caches
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -17,4 +18,5 @@ def toggle_channel(channel_id: int, session: Session = Depends(get_session)):
     session.add(channel)
     session.commit()
     session.refresh(channel)
+    invalidate_all_output_runtime_caches(session)
     return channel

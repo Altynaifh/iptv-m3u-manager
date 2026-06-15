@@ -1,7 +1,7 @@
 """聚合源频道解析：规则筛选、explicit 布局、导出 gate。"""
 import json
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlmodel import Session, select
 
@@ -87,15 +87,16 @@ def passes_ai_visual_export_gate(channel: Channel) -> bool:
     return (channel.ai_visual_status or "") not in AI_VISUAL_EXPORT_BLOCK
 
 
-def filter_candidates(
-    session: Session,
-    out: OutputSource,
-    draft: Optional[Dict[str, Any]] = None,
+def _filter_channel_list(
+    channels: List[Channel],
+    regex: str,
+    keywords: List[dict],
+    excluded_ids: List[int],
     *,
     enabled_only: bool = False,
 ) -> List[Channel]:
-    sub_ids, regex, keywords, excluded_ids, _lm, _cl = _output_config(out, draft)
-    channels = _load_channels_for_subs(session, sub_ids, enabled_only)
+    if enabled_only:
+        channels = [c for c in channels if c.is_enabled]
     channels = _apply_regex(channels, regex)
     if keywords:
         return M3UGenerator.filter_channels(channels, None, keywords, excluded_ids)
@@ -109,6 +110,43 @@ def filter_candidates(
             out_list.append(c.model_copy())
             seen.add(c.url)
     return out_list
+
+
+def filter_candidates(
+    session: Session,
+    out: OutputSource,
+    draft: Optional[Dict[str, Any]] = None,
+    *,
+    enabled_only: bool = False,
+) -> List[Channel]:
+    sub_ids, regex, keywords, excluded_ids, _lm, _cl = _output_config(out, draft)
+    channels = _load_channels_for_subs(session, sub_ids, enabled_only)
+    return _filter_channel_list(
+        channels, regex, keywords, excluded_ids, enabled_only=enabled_only
+    )
+
+
+def aggregate_channels_from_pool(
+    pool: List[Channel],
+    out: OutputSource,
+    draft: Optional[Dict[str, Any]] = None,
+    *,
+    enabled_sub_ids: Optional[Set[int]] = None,
+    enabled_only: bool = False,
+) -> List[Channel]:
+    """基于已加载频道池计算聚合成员，避免重复查库。"""
+    sub_ids, regex, keywords, excluded_ids, _lm, _cl = _output_config(out, draft)
+    active_subs = enabled_sub_ids or set()
+    if sub_ids:
+        target_subs = {sid for sid in sub_ids if sid in active_subs} if active_subs else set(sub_ids)
+    else:
+        target_subs = active_subs
+    if not target_subs:
+        return []
+    channels = [c for c in pool if c.subscription_id in target_subs]
+    return _filter_channel_list(
+        channels, regex, keywords, excluded_ids, enabled_only=enabled_only
+    )
 
 
 def _expand_explicit_layout(

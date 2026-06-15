@@ -13,6 +13,11 @@ from services.stream_checker import StreamChecker
 from routers.subscriptions import process_subscription_refresh
 from services.output_resolver import export_m3u_channels, filter_candidates, preview_export_groups, aggregate_channels
 from services.preview_cache import clear_output_preview_cache, get_or_build_export_preview
+from services.output_stats import (
+    get_or_refresh_member_stats,
+    invalidate_output_runtime_cache,
+    load_enabled_subscription_channel_pool,
+)
 import uuid
 
 router = APIRouter(tags=["outputs"])
@@ -71,47 +76,43 @@ async def create_output(out: OutputSource, session: Session = Depends(get_sessio
     return out
 
 @router.get("/outputs/")
-def list_outputs(session: Session = Depends(get_session)):
-    """聚合源列表，包含详细统计"""
+def list_outputs(refresh_stats: bool = False, session: Session = Depends(get_session)):
+    """聚合源列表，包含详细统计（成员数使用 DB 缓存，避免重复全表扫描）。"""
     outputs = session.exec(select(OutputSource)).all()
+    needs_compute = refresh_stats or any(out.member_total is None for out in outputs)
+    pool: List[Channel] = []
+    enabled_sub_ids: set = set()
+    if needs_compute:
+        pool, enabled_sub_ids = load_enabled_subscription_channel_pool(session)
     results = []
-    
+    stats_updated = False
+
     for out in outputs:
-        # 获取关联的所有订阅 ID
-        try:
-            sub_ids = json.loads(out.subscription_ids)
-        except:
-            sub_ids = []
-            
-        # 获取这些订阅下的所有频道
-        channels = session.exec(select(Channel).where(Channel.subscription_id.in_(sub_ids))).all()
-        
-        # 使用生成的逻辑进行过滤
-        try:
-            keywords = json.loads(out.keywords)
-        except:
-            keywords = []
-        
-        # 解析排除列表
-        try:
-            excluded_ids = json.loads(out.excluded_channel_ids or "[]")
-        except:
-            excluded_ids = []
-            
-        members = aggregate_channels(session, out)
-        total = len(members)
-        enabled = len([c for c in members if c.is_enabled])
-        disabled = total - enabled
-        
-        # 转为字典并添加统计
+        if needs_compute and (refresh_stats or out.member_total is None):
+            total, enabled, disabled = get_or_refresh_member_stats(
+                session,
+                out,
+                pool,
+                enabled_sub_ids,
+                force=refresh_stats,
+            )
+            stats_updated = True
+        else:
+            total = out.member_total or 0
+            enabled = out.member_enabled or 0
+            disabled = out.member_disabled or 0
+
         out_dict = out.model_dump()
         out_dict.update({
             "total_count": total,
             "enabled_count": enabled,
-            "disabled_count": disabled
+            "disabled_count": disabled,
         })
         results.append(out_dict)
-        
+
+    if stats_updated:
+        session.commit()
+
     return results
 
 @router.get("/outputs/{output_id}")
@@ -166,7 +167,7 @@ def update_output(output_id: int, output_data: OutputSource, session: Session = 
     output.layout_mode = output_data.layout_mode or 'rules'
     output.channel_layout = output_data.channel_layout or '{"groups":[]}'
     output.layout_meta = output_data.layout_meta or '{}'
-    clear_output_preview_cache(output)
+    invalidate_output_runtime_cache(output)
 
     session.add(output)
     session.commit()
@@ -502,7 +503,7 @@ def set_layout_mode(output_id: int, data: dict, session: Session = Depends(get_s
     if mode not in ("rules", "explicit"):
         raise HTTPException(status_code=400, detail="layout_mode 无效")
     out.layout_mode = mode
-    clear_output_preview_cache(out)
+    invalidate_output_runtime_cache(out)
     session.add(out)
     session.commit()
     return {"layout_mode": out.layout_mode}

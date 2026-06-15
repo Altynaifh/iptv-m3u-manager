@@ -78,6 +78,8 @@ async def fetch_subscription_task(task_id: str, sub_id: int, url_str: str, ua: s
             sub.last_update_status = "Success"
             session.add(sub)
             session.commit()
+            from services.output_stats import invalidate_all_output_runtime_caches
+            invalidate_all_output_runtime_caches(session)
             print(f"[Task] 数据库持久化完成")
         
         if task_id:
