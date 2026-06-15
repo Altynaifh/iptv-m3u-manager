@@ -3709,7 +3709,20 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         async function toggleChannel(id) {
             const nid = normalizePreviewChannelId(id);
             if (window._channelToggleInFlight.has(nid)) return;
+            const item = resolvePreviewChannelById(nid);
+            if (!item) return;
+
+            const prevEnabled = isPreviewChannelEnabled(item);
+            const optimisticEnabled = !prevEnabled;
+
             window._channelToggleInFlight.add(nid);
+            // 乐观更新：点击后立刻切换按钮与状态，不等待网络
+            syncChannelEnabledInPreviewPayload(nid, optimisticEnabled);
+            if (!optimisticEnabled) rememberDeferredInactiveChannel(nid);
+            else forgetDeferredInactiveChannel(nid);
+            patchAggregateEnablementControls(nid, optimisticEnabled);
+            updatePreviewStats();
+
             const toggleBtns = document.querySelectorAll(`[data-channel-toggle-id="${nid}"]`);
             toggleBtns.forEach(btn => { btn.disabled = true; });
             try {
@@ -3725,18 +3738,19 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 const enabled = normalizeChannelEnabled(updated.is_enabled);
 
                 syncChannelEnabledInPreviewPayload(nid, enabled);
-                if (!enabled) {
-                    rememberDeferredInactiveChannel(nid);
-                } else {
-                    forgetDeferredInactiveChannel(nid);
-                }
+                if (!enabled) rememberDeferredInactiveChannel(nid);
+                else forgetDeferredInactiveChannel(nid);
                 patchAggregateEnablementControls(nid, enabled);
                 updatePreviewStats();
                 const actionLabel = enabled ? '启用' : '禁用';
                 showToast(`频道已${actionLabel}`, 'success');
                 if (typeof fetchOutputs === 'function') fetchOutputs(true);
-                scheduleAggregatePreviewReload({ force: true, silent: true, delay: 450 });
             } catch (err) {
+                syncChannelEnabledInPreviewPayload(nid, prevEnabled);
+                if (!prevEnabled) rememberDeferredInactiveChannel(nid);
+                else forgetDeferredInactiveChannel(nid);
+                patchAggregateEnablementControls(nid, prevEnabled);
+                updatePreviewStats();
                 showToast('操作失败: ' + (err.message || err), 'error');
             } finally {
                 window._channelToggleInFlight.delete(nid);
@@ -6909,14 +6923,27 @@ function removeTag(val) {
 
                 const c = currentChannels.find(ch => Number(ch.id) === Number(id));
                 if (!c) continue;
-                if (isPreviewChannelEnabled(c) === targetEnabled) continue;
+                const prevEnabled = isPreviewChannelEnabled(c);
+                if (prevEnabled === targetEnabled) continue;
+
+                // 乐观更新：批量操作也先刷新界面
+                syncChannelEnabledInPreviewPayload(id, targetEnabled);
+                if (!targetEnabled) rememberDeferredInactiveChannel(id);
+                else forgetDeferredInactiveChannel(id);
+                patchAggregateEnablementControls(id, targetEnabled);
 
                 try {
                     const res = await fetch(`/channels/${id}/toggle`, {
                         method: 'POST',
                         credentials: 'same-origin',
                     });
-                    if (!res.ok) continue;
+                    if (!res.ok) {
+                        syncChannelEnabledInPreviewPayload(id, prevEnabled);
+                        if (!prevEnabled) rememberDeferredInactiveChannel(id);
+                        else forgetDeferredInactiveChannel(id);
+                        patchAggregateEnablementControls(id, prevEnabled);
+                        continue;
+                    }
                     const updated = await res.json();
                     const actualEnabled = normalizeChannelEnabled(updated.is_enabled);
                     syncChannelEnabledInPreviewPayload(id, actualEnabled);
@@ -6925,6 +6952,10 @@ function removeTag(val) {
                     patchAggregateEnablementControls(id, actualEnabled);
                     changedCount++;
                 } catch (e) {
+                    syncChannelEnabledInPreviewPayload(id, prevEnabled);
+                    if (!prevEnabled) rememberDeferredInactiveChannel(id);
+                    else forgetDeferredInactiveChannel(id);
+                    patchAggregateEnablementControls(id, prevEnabled);
                     console.error(`Failed to toggle ${id}`, e);
                 }
             }
@@ -6939,7 +6970,6 @@ function removeTag(val) {
             if (typeof fetchOutputs === 'function') fetchOutputs(true);
             if (changedCount > 0) {
                 showToast(`已批量${actionName} ${changedCount} 个频道`, 'success');
-                scheduleAggregatePreviewReload({ force: true, silent: true, delay: 450 });
             } else {
                 showToast(`选中频道均已${actionName}`, 'info');
             }
