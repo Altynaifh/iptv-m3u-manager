@@ -371,7 +371,7 @@ class StreamChecker:
 
         if output_id:
             from database import engine
-            from services.realtime_push import rebuild_manual_status_from_db
+            from services.realtime_push import rebuild_manual_status_from_db, refresh_output_and_broadcast
 
             with Session(engine) as refresh_session:
                 status = rebuild_manual_status_from_db(refresh_session, output_id)
