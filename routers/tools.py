@@ -3,6 +3,7 @@ import asyncio
 import aiohttp
 import os
 import signal
+from typing import Optional
 from sqlmodel import SQLModel
 
 from services.connectivity import check_url
@@ -21,6 +22,7 @@ class CheckRequest(SQLModel):
     urls: list[str] = []
     items: list[dict] = [] # 包含 {id: int, url: str} 的列表
     auto_disable: bool = False
+    output_id: Optional[int] = None
 
 # 并发控制锁（防 FFmpeg 跑太猛爆 CPU）
 visual_check_semaphore = asyncio.Semaphore(4)
@@ -74,6 +76,7 @@ async def check_stream_visual(req: CheckRequest, session: Session = Depends(get_
         channel_ids=channel_ids,
         source='manual',
         auto_disable=req.auto_disable,
+        output_id=req.output_id,
     )
     
     return {"status": "success", "task_id": task_id, "message": "已在后台启动深度检测任务"}

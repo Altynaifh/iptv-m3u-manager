@@ -727,6 +727,142 @@
         }
 
         // ==========================================
+        // WebSocket 实时推送：聚合卡片 + 预览行
+        // ==========================================
+        function patchOutputCardCounts(outputId, total, enabled) {
+            const card = document.querySelector(`.output-item-card[data-id="${outputId}"]`);
+            if (!card) return;
+            const disabled = Math.max(0, (total || 0) - (enabled || 0));
+            const totalEl = card.querySelector('.output-stat-total');
+            const enEl = card.querySelector('.output-stat-enabled');
+            const disEl = card.querySelector('.output-stat-disabled');
+            if (totalEl) totalEl.textContent = total || 0;
+            if (enEl) enEl.textContent = enabled || 0;
+            if (disEl) disEl.textContent = disabled;
+        }
+
+        function patchOutputCard(data) {
+            if (!data || data.id == null) return;
+            if (typeof allOutputs !== 'undefined' && Array.isArray(allOutputs)) {
+                const idx = allOutputs.findIndex(x => x.id === data.id);
+                if (idx >= 0) allOutputs[idx] = { ...allOutputs[idx], ...data };
+            }
+            const card = document.querySelector(`.output-item-card[data-id="${data.id}"]`);
+            if (!card) return;
+            patchOutputCardCounts(data.id, data.total_count, data.enabled_count);
+            const statusColor = data.last_update_status && (data.last_update_status.includes('失败') || data.last_update_status.includes('Error'))
+                ? '#ef4444' : '#10b981';
+            const syncLine = card.querySelector('.output-sync-line');
+            if (syncLine) {
+                const datePart = formatDate(data.last_updated);
+                const reqPart = formatDate(data.last_request_time);
+                syncLine.innerHTML = `最后同步: ${datePart} (<span class="output-sync-status" style="color: ${statusColor};">${data.last_update_status || '等待更新'}</span>) <span class="output-request-line" style="margin-left: 12px;">📡 最近请求: ${reqPart}</span>`;
+            }
+            const timer = card.querySelector('.countdown-timer');
+            if (timer) timer.dataset.last = data.last_updated || '';
+        }
+
+        function mergeChannelPatchIntoPreview(patch) {
+            const id = Number(patch.id);
+            if (!id) return;
+            const apply = (groups) => {
+                (groups || []).forEach(g => (g.channels || []).forEach(c => {
+                    if (Number(c.id) === id) Object.assign(c, patch);
+                }));
+            };
+            const p = window._previewGroupPayload;
+            if (p) {
+                apply(p.manual_groups);
+                apply(p.ai_groups);
+            }
+            [currentChannels, filteredChannels].forEach(list => {
+                const row = (list || []).find(c => Number(c.id) === id);
+                if (row) Object.assign(row, patch);
+            });
+        }
+
+        async function fetchChannelSnapshotForPreview(channelId) {
+            const oid = window.currentPreviewOutputId;
+            if (!oid || !channelId) return null;
+            try {
+                const res = await fetch(`/outputs/${oid}/channels/${channelId}/snapshot`);
+                if (!res.ok) return null;
+                return await res.json();
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function patchPreviewTableRow(patch) {
+            const id = patch.id;
+            const row = document.querySelector(`tr[data-channel-id="${id}"]`);
+            if (!row) return;
+            const ch = (typeof resolvePreviewChannelById === 'function' ? resolvePreviewChannelById(id) : null) || patch;
+            const merged = { ...ch, ...patch };
+            const statusCell = row.querySelector(`[data-channel-status-id="${id}"]`);
+            if (statusCell) statusCell.innerHTML = buildChannelAvailabilityHtml(merged);
+            row.classList.toggle('preview-channel-row--disabled', isPreviewChannelDisabled(merged));
+            const image = merged.visualImage || merged.check_image;
+            if (image) {
+                const thumbTd = row.querySelector('td[data-preview-thumb="1"]');
+                if (thumbTd) thumbTd.innerHTML = wrapTablePreviewThumb(image, merged);
+            }
+        }
+
+        async function applyChannelPatchToPreview(patch) {
+            mergeChannelPatchIntoPreview(patch);
+            let merged = { ...patch };
+            if (patch.has_check_image && !patch.check_image) {
+                const snap = await fetchChannelSnapshotForPreview(patch.id);
+                if (snap && snap.check_image) {
+                    merged.check_image = snap.check_image;
+                    mergeChannelPatchIntoPreview({ id: patch.id, check_image: snap.check_image });
+                }
+            }
+            patchPreviewTableRow(merged);
+            updatePreviewStats();
+        }
+
+        function handleChannelPatchMessage(msg) {
+            if (!msg || window.currentPreviewOutputId !== msg.output_id) return;
+            const modal = document.getElementById('channel_modal');
+            if (!modal || modal.style.display !== 'flex') return;
+            (msg.channels || []).forEach(p => { applyChannelPatchToPreview(p); });
+        }
+
+        function handlePreviewStatsMessage(msg) {
+            if (!msg || window.currentPreviewOutputId !== msg.output_id) return;
+            const modal = document.getElementById('channel_modal');
+            if (!modal || modal.style.display !== 'flex') return;
+            updatePreviewStats();
+            if (msg.total != null && msg.enabled != null) {
+                patchOutputCardCounts(msg.output_id, msg.total, msg.enabled);
+            }
+        }
+
+        function handleOutputUpdateMessage(msg) {
+            if (msg && msg.data) patchOutputCard(msg.data);
+        }
+
+        function handlePreviewLayoutMessage(msg) {
+            if (!msg || window.currentPreviewOutputId !== msg.output_id) return;
+            const modal = document.getElementById('channel_modal');
+            if (!modal || modal.style.display !== 'flex') return;
+            if (msg.layout_mode === 'explicit') window._previewGroupDisplayMode = 'ai';
+            scheduleAggregatePreviewReload({ force: true, silent: true, fetchOutputs: true, delay: 400 });
+        }
+
+        function handleRealtimePushMessage(msg) {
+            if (!msg || !msg.type) return;
+            switch (msg.type) {
+                case 'output_update': handleOutputUpdateMessage(msg); break;
+                case 'channel_patch': handleChannelPatchMessage(msg); break;
+                case 'preview_stats': handlePreviewStatsMessage(msg); break;
+                case 'preview_layout': handlePreviewLayoutMessage(msg); break;
+            }
+        }
+
+        // ==========================================
         // 核心任务中心控制引擎 (NAS Style)
         // ==========================================
         class GlobalTaskCenter {
@@ -789,6 +925,8 @@
                             this.handleUpdate(msg.data);
                         } else if (msg.type === 'console_log') {
                             this.handleConsoleLog(msg);
+                        } else {
+                            handleRealtimePushMessage(msg);
                         }
                     } catch (e) { console.error("WS Message Error", e); }
                 };
@@ -3027,9 +3165,9 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         function buildPreviewTableRowHtml(c, rowIndex) {
             const statusHtml = buildChannelAvailabilityHtml(c);
             const image = c.visualImage || c.check_image;
-            let visualHtml = '<td style="padding: 10px; font-size: 0.8em; opacity: 0.5;">-</td>';
+            let visualHtml = '<td data-preview-thumb="1" style="padding: 10px; font-size: 0.8em; opacity: 0.5;">-</td>';
             if (image) {
-                visualHtml = `<td style="padding: 10px;">${wrapTablePreviewThumb(image, c)}</td>`;
+                visualHtml = `<td data-preview-thumb="1" style="padding: 10px;">${wrapTablePreviewThumb(image, c)}</td>`;
             }
             const epgCellId = `epg_grp_${rowIndex}`;
             const rowCls = previewTableRowStateClass(c);
@@ -3864,6 +4002,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         async function refreshAfterAggregateTask(task) {
             if (!task || task.status !== 'success') return;
             if (!isAggregatePreviewTaskName(task.name)) return;
+            if (typeof fetchOutputs === 'function') fetchOutputs(true);
             const modal = document.getElementById('channel_modal');
             if (!modal || modal.style.display !== 'flex' || !window.currentPreviewOutputId) return;
             const map = window._previewTaskOutputMap || {};
@@ -3988,7 +4127,11 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 const res = await fetch('/check-stream-visual', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ items, auto_disable: autoDisable })
+                    body: JSON.stringify({
+                        items,
+                        auto_disable: autoDisable,
+                        output_id: window.currentPreviewOutputId || null,
+                    })
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok || data.status === 'error') {
@@ -7149,25 +7292,7 @@ function removeTag(val) {
                 }
 
                 if (isSilence) {
-                    // 静默刷新：只更新状态文字和时间，不重绘整个列表以防闪烁
-                    data.forEach(o => {
-                        const card = document.querySelector(`.output-item-card[data-id="${o.id}"]`);
-                        if (!card) return;
-
-                        // 更新最后同步时间
-                        const syncStatus = card.querySelector('.sync-status-text');
-                        if (syncStatus) {
-                            const statusColor = o.last_update_status && (o.last_update_status.includes('失败') || o.last_update_status.includes('Error')) ? '#ef4444' : '#10b981';
-                            syncStatus.style.color = statusColor;
-                            syncStatus.innerText = `最后同步: ${formatDate(o.last_updated)} (${o.last_update_status || '等待更新'})`;
-                        }
-
-                        // 更新倒计时 data 属性，防止循环触发
-                        const timer = card.querySelector('.countdown-timer');
-                        if (timer) {
-                            timer.dataset.last = o.last_updated || '';
-                        }
-                    });
+                    data.forEach(o => patchOutputCard(o));
                     return;
                 }
 
@@ -7199,10 +7324,10 @@ function removeTag(val) {
                             <div style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px;">
                                 ${tagsHtml || `<span style="opacity: 0.5; font-size: 0.8em;">(无筛选词)</span>`}
                             </div>
-                            <div style="font-size: 0.85em; opacity: 0.8; margin-top: 8px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                                <span style="color: #cbd5e1;">📊 频道: <strong>${o.total_count || 0}</strong> 总计</span>
-                                <span style="color: #10b981;">✅ <strong>${o.enabled_count || 0}</strong> 启用</span>
-                                <span style="color: #ef4444;">❌ <strong>${o.disabled_count || 0}</strong> 禁用</span>
+                            <div class="output-member-stats" style="font-size: 0.85em; opacity: 0.8; margin-top: 8px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                                <span style="color: #cbd5e1;">📊 频道: <strong class="output-stat-total">${o.total_count || 0}</strong> 总计</span>
+                                <span style="color: #10b981;">✅ <strong class="output-stat-enabled">${o.enabled_count || 0}</strong> 启用</span>
+                                <span style="color: #ef4444;">❌ <strong class="output-stat-disabled">${o.disabled_count || 0}</strong> 禁用</span>
                                 <span style="opacity: 0.6;">(来源: ${subIds.length})</span>
                             </div>
                             <div style="font-size: 0.85em; opacity: 0.7; margin-top: 6px; display: flex; align-items: center; gap: 10px;">
@@ -7210,9 +7335,9 @@ function removeTag(val) {
                                 ${o.auto_update_minutes > 0 && o.is_enabled !== false ? `<span style="color: #a5b4fc;">• 🔄 每${o.auto_update_minutes >= 60 ? o.auto_update_minutes / 60 + '时' : o.auto_update_minutes + '分'}同步</span> <span id="countdown_${o.id}" class="countdown-timer" data-last="${o.last_updated}" data-interval="${o.auto_update_minutes}" style="color: #fbbf24; margin-left: 2px; font-size: 0.9em;"></span>` : ''}
                                 ${o.auto_visual_check ? `<span style="color: #fbbf24;">• 📺 自动检测</span>` : ''}
                             </div>
-                            <div style="font-size: 0.8em; opacity: 0.5; margin-top: 6px;">
-                                最后同步: ${formatDate(o.last_updated)} ${o.last_update_status ? `(<span style="color: ${statusColor};">${o.last_update_status}</span>)` : ''}
-                                <span style="margin-left: 12px;">📡 最近请求: ${formatDate(o.last_request_time)}</span>
+                            <div class="output-sync-line" style="font-size: 0.8em; opacity: 0.5; margin-top: 6px;">
+                                最后同步: ${formatDate(o.last_updated)} (<span class="output-sync-status" style="color: ${statusColor};">${o.last_update_status || '等待更新'}</span>)
+                                <span class="output-request-line" style="margin-left: 12px;">📡 最近请求: ${formatDate(o.last_request_time)}</span>
                             </div>
                         </div>
                         <div style="margin-top: 10px; display: flex; gap: 10px;">

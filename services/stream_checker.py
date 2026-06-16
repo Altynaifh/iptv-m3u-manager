@@ -14,7 +14,13 @@ from task_broker import broker, update_task_status, notifier
 from models import TaskRecord
 
 @broker.task
-async def check_channels_task(task_id: str, channel_ids: List[int], source: str = 'manual', auto_disable: bool = True):
+async def check_channels_task(
+    task_id: str,
+    channel_ids: List[int],
+    source: str = 'manual',
+    auto_disable: bool = True,
+    output_id: Optional[int] = None,
+):
     try:
         await update_task_status(task_id, status="running", progress=0, message=f"准备检测 {len(channel_ids)} 个路径...")
         print(f"[Task] 收到深度检测请求: {len(channel_ids)} 个频道 (来源: {source})")
@@ -33,7 +39,13 @@ async def check_channels_task(task_id: str, channel_ids: List[int], source: str 
                 return
                 
             batch_stats = await StreamChecker.run_batch_check(
-                session, channels, concurrency=5, source=source, task_id=task_id, auto_disable=auto_disable
+                session,
+                channels,
+                concurrency=5,
+                source=source,
+                task_id=task_id,
+                auto_disable=auto_disable,
+                output_id=output_id,
             )
             if batch_stats is False:
                 return
@@ -221,7 +233,16 @@ class StreamChecker:
                     pass
 
     @classmethod
-    async def run_batch_check(cls, session: Session, channels, concurrency: int = 5, source: str = 'manual', task_id: Optional[str] = None, auto_disable: bool = True):
+    async def run_batch_check(
+        cls,
+        session: Session,
+        channels,
+        concurrency: int = 5,
+        source: str = 'manual',
+        task_id: Optional[str] = None,
+        auto_disable: bool = True,
+        output_id: Optional[int] = None,
+    ):
         """
         [重构版] 分批执行多个频道的深度检测
         """
@@ -245,6 +266,41 @@ class StreamChecker:
         results = []
 
         local_aborted = False
+
+        async def _persist_channel_result(res: dict) -> None:
+            if not res or not res.get("ch_id") or res.get("status") == "canceled":
+                return
+            from database import engine
+            from models import OutputSource
+            from services.output_resolver import aggregate_channels
+            from services.realtime_push import (
+                broadcast_channel_patch,
+                broadcast_preview_stats,
+                channel_patch_fields,
+            )
+
+            with Session(engine) as update_session:
+                ch = update_session.get(cls._get_channel_model(), res["ch_id"])
+                if not ch:
+                    return
+                ch.check_status = res["status"]
+                ch.check_date = datetime.utcnow()
+                ch.check_image = res.get("image")
+                ch.check_error = res.get("error") if not res["status"] else None
+                ch.check_source = source
+                if auto_disable:
+                    ch.is_enabled = res["status"]
+                update_session.add(ch)
+                update_session.commit()
+                update_session.refresh(ch)
+                if not output_id:
+                    return
+                await broadcast_channel_patch(output_id, [channel_patch_fields(ch)])
+                out = update_session.get(OutputSource, output_id)
+                if out:
+                    members = aggregate_channels(update_session, out, None)
+                    enabled_n = sum(1 for c in members if c.is_enabled)
+                    await broadcast_preview_stats(output_id, len(members), enabled_n)
 
         async def _worker(i, ch):
             nonlocal finished_count, last_reported_p, local_aborted
@@ -288,11 +344,15 @@ class StreamChecker:
                         print(f"  └─ ✅ 成功")
                     else:
                         print(f"  └─ ❌ 失败: {res.get('error', 'Unknown')}")
-                        
-                    return {**res, "ch_id": ch.id}
+
+                    payload = {**res, "ch_id": ch.id}
+                    await _persist_channel_result(payload)
+                    return payload
             except Exception as e:
                 print(f"[Check] 异常: {ch.name} -> {e}")
-                return {"status": False, "error": str(e), "ch_id": ch.id}
+                payload = {"status": False, "error": str(e), "ch_id": ch.id}
+                await _persist_channel_result(payload)
+                return payload
 
         # 使用 asyncio.gather 但受控于信号量，并加入对取消信号的全局响应
         tasks = [_worker(i, ch) for i, ch in enumerate(unique_channels)]
@@ -309,21 +369,14 @@ class StreamChecker:
         success_count = sum(1 for res in valid_results if res.get("status") is True)
         failed_count = len(valid_results) - success_count
 
-        # 批量写回数据库（过滤掉已取消的虚拟结果）
-        from database import engine
-        with Session(engine) as update_session:
-            for res in valid_results:
-                ch = update_session.get(cls._get_channel_model(), res['ch_id'])
-                if ch:
-                    ch.check_status = res['status']
-                    ch.check_date = datetime.utcnow()
-                    ch.check_image = res.get('image')
-                    ch.check_error = res.get('error') if not res['status'] else None
-                    ch.check_source = source
-                    if auto_disable:
-                        ch.is_enabled = res['status']
-                    update_session.add(ch)
-            update_session.commit()
+        if output_id:
+            from database import engine
+            from services.realtime_push import rebuild_manual_status_from_db
+
+            with Session(engine) as refresh_session:
+                status = rebuild_manual_status_from_db(refresh_session, output_id)
+                await refresh_output_and_broadcast(refresh_session, output_id, status_text=status)
+
         return {"total": total, "success": success_count, "failed": failed_count}
             
         # 清理进度标记属性，防止内存泄漏或属性过多

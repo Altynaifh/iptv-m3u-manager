@@ -8,6 +8,11 @@ from database import engine
 from models import Channel, OutputSource, Subscription, TaskRecord
 from services.output_resolver import ai_vision_candidates, export_m3u_channels, filter_candidates
 from services.playlist_organizer import PlaylistOrganizer
+from services.realtime_push import (
+    broadcast_preview_layout,
+    rebuild_manual_status_from_db,
+    refresh_output_and_broadcast,
+)
 from services.visual_ai_checker import VisualAiChecker
 from task_broker import TaskCanceledError, broker, guard_task_cancellation, update_task_status
 
@@ -33,13 +38,17 @@ async def llm_organize_task(
                 task_id,
                 PlaylistOrganizer.organize_output(session, out, draft, sub_map),
             )
+            group_count = len(layout.get("groups", []))
             await update_task_status(
                 task_id,
                 status="success",
                 progress=100,
-                message=f"已生成 explicit 布局，{len(layout.get('groups', []))} 个分组",
+                message=f"已生成 explicit 布局，{group_count} 个分组",
                 result=json.dumps(layout, ensure_ascii=False),
             )
+            status = rebuild_manual_status_from_db(session, output_id)
+            await refresh_output_and_broadcast(session, output_id, status_text=status)
+            await broadcast_preview_layout(output_id, out.layout_mode or "explicit", group_count)
     except TaskCanceledError:
         await update_task_status(task_id, status="canceled", message="任务已中止")
     except Exception as e:
@@ -72,6 +81,8 @@ async def ai_visual_check_task(
 
             if not channels:
                 await update_task_status(task_id, status="success", progress=100, message="无频道需要检测")
+                status = rebuild_manual_status_from_db(session, output_id)
+                await refresh_output_and_broadcast(session, output_id, status_text=status)
                 return
 
             async def _progress(done, total, msg):
@@ -97,7 +108,15 @@ async def ai_visual_check_task(
                 message=f"视觉 AI 完成：{stats}",
                 result=json.dumps(stats, ensure_ascii=False),
             )
+            status = rebuild_manual_status_from_db(session, output_id)
+            await refresh_output_and_broadcast(session, output_id, status_text=status)
     except TaskCanceledError:
         await update_task_status(task_id, status="canceled", message="任务已中止")
+        with Session(engine) as session:
+            status = rebuild_manual_status_from_db(session, output_id)
+            await refresh_output_and_broadcast(session, output_id, status_text=status)
     except Exception as e:
         await update_task_status(task_id, status="failure", message=str(e)[:500])
+        with Session(engine) as session:
+            status = rebuild_manual_status_from_db(session, output_id)
+            await refresh_output_and_broadcast(session, output_id, status_text=status)

@@ -200,3 +200,16 @@ async def startup(state: TaskiqState):
 @broker.on_event(TaskiqEvents.WORKER_SHUTDOWN)
 async def shutdown(state: TaskiqState):
     print("Taskiq Worker 已关闭")
+
+
+def schedule_output_broadcast(output_id: int) -> None:
+    """延迟导入，避免与 realtime_push 循环依赖。"""
+    from services.realtime_push import schedule_output_broadcast as _impl
+
+    _impl(output_id)
+
+
+async def broadcast_output_update_by_id(output_id: int) -> None:
+    from services.realtime_push import broadcast_output_update_by_id as _impl
+
+    await _impl(output_id)

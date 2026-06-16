@@ -119,6 +119,30 @@ def list_outputs(refresh_stats: bool = False, session: Session = Depends(get_ses
 
     return results
 
+@router.get("/outputs/{output_id}/channels/{channel_id}/snapshot")
+def get_channel_snapshot(
+    output_id: int,
+    channel_id: int,
+    session: Session = Depends(get_session),
+):
+    """频道检测快照（含截图 base64，供按需拉取）。"""
+    out = session.get(OutputSource, output_id)
+    if not out:
+        raise HTTPException(status_code=404, detail="输出源不存在")
+    ch = session.get(Channel, channel_id)
+    if not ch:
+        raise HTTPException(status_code=404, detail="频道不存在")
+    return {
+        "id": ch.id,
+        "check_image": ch.check_image,
+        "check_status": ch.check_status,
+        "ai_visual_status": ch.ai_visual_status,
+        "ai_visual_detail": ch.ai_visual_detail,
+        "is_enabled": ch.is_enabled,
+        "check_date": ch.check_date.isoformat() if ch.check_date else None,
+    }
+
+
 @router.get("/outputs/{output_id}")
 def get_output(output_id: int, session: Session = Depends(get_session)):
     """获取单个聚合源完整配置（编辑回读）"""
@@ -470,6 +494,10 @@ async def get_m3u_output(
     out.last_request_time = datetime.utcnow()
     session.add(out)
     session.commit()
+
+    from services.realtime_push import broadcast_output_update_by_id
+
+    await broadcast_output_update_by_id(out.id)
 
     if not out.is_enabled:
         return Response(

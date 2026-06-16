@@ -60,11 +60,16 @@ def format_output_update_status(
 
 
 def apply_output_update_status(session, output_id: int, status_text: str) -> None:
+    from datetime import datetime
+
     from models import OutputSource
+    from services.realtime_push import schedule_output_broadcast
 
     out = session.get(OutputSource, output_id)
     if not out:
         return
     out.last_update_status = status_text
+    out.last_updated = datetime.utcnow()
     session.add(out)
     session.commit()
+    schedule_output_broadcast(output_id)

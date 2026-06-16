@@ -239,6 +239,23 @@ class VisualAiChecker:
         resolved_prompt = _resolve_vision_prompt(out, draft, custom_prompt)
         vision_system = _build_vision_system(resolved_prompt)
 
+        async def _push_batch_realtime(batch_channels: List[Channel]) -> None:
+            if not out or out.id is None:
+                return
+            from services.output_resolver import aggregate_channels
+            from services.realtime_push import (
+                broadcast_channel_patch,
+                broadcast_preview_stats,
+                channel_patch_fields,
+            )
+
+            patches = [channel_patch_fields(ch) for ch in batch_channels if ch.id is not None]
+            if patches:
+                await broadcast_channel_patch(out.id, patches)
+            members = aggregate_channels(session, out, draft)
+            enabled_n = sum(1 for c in members if c.is_enabled)
+            await broadcast_preview_stats(out.id, len(members), enabled_n)
+
         for ch in unique:
             if _sync_stored_ai_visual_disablement(ch):
                 stats["disabled"] += 1
@@ -270,6 +287,7 @@ class VisualAiChecker:
                     ch.ai_visual_date = datetime.utcnow()
                     session.add(ch)
                 session.commit()
+                await _push_batch_realtime(batch)
                 stats["updated"] += len(batch)
                 done += 1
                 if progress_cb:
@@ -294,6 +312,7 @@ class VisualAiChecker:
                     ch.ai_visual_date = datetime.utcnow()
                     session.add(ch)
                 session.commit()
+                await _push_batch_realtime(batch)
                 done += 1
                 if progress_cb:
                     await progress_cb(done, total_batches, f"批次失败: {e}")
@@ -337,6 +356,8 @@ class VisualAiChecker:
                     stats["updated"] += 1
 
             session.commit()
+            await _push_batch_realtime(batch)
+
             stats["batches"] += 1
             done += 1
             if progress_cb:
