@@ -285,7 +285,7 @@ class StreamChecker:
                     return
                 ch.check_status = res["status"]
                 ch.check_date = datetime.utcnow()
-                ch.check_image = res.get("image")
+                ch.check_image = res.get("image") if res.get("status") else None
                 ch.check_error = res.get("error") if not res["status"] else None
                 ch.check_source = source
                 if auto_disable:

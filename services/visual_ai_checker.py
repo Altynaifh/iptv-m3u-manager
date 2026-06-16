@@ -196,6 +196,7 @@ async def ensure_check_image(session: Session, channel: Channel) -> Optional[str
         session.refresh(channel)
         return channel.check_image
     channel.check_status = False
+    channel.check_image = None
     channel.check_error = res.get("error") or "capture failed"
     session.add(channel)
     session.commit()

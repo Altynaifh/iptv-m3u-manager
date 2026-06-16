@@ -762,12 +762,25 @@
             if (timer) timer.dataset.last = data.last_updated || '';
         }
 
+        function normalizeChannelPatchForMerge(patch) {
+            const normalized = { ...patch };
+            if (
+                normalized.has_check_image === false
+                || (normalized.check_status === false && normalized.has_check_image !== true)
+            ) {
+                normalized.check_image = null;
+                normalized.visualImage = null;
+            }
+            return normalized;
+        }
+
         function mergeChannelPatchIntoPreview(patch) {
             const id = Number(patch.id);
             if (!id) return;
+            const normalized = normalizeChannelPatchForMerge(patch);
             const apply = (groups) => {
                 (groups || []).forEach(g => (g.channels || []).forEach(c => {
-                    if (Number(c.id) === id) Object.assign(c, patch);
+                    if (Number(c.id) === id) Object.assign(c, normalized);
                 }));
             };
             const p = window._previewGroupPayload;
@@ -777,7 +790,30 @@
             }
             [currentChannels, filteredChannels].forEach(list => {
                 const row = (list || []).find(c => Number(c.id) === id);
-                if (row) Object.assign(row, patch);
+                if (row) Object.assign(row, normalized);
+            });
+        }
+
+        function patchPreviewThumbnailCells(id, item) {
+            const image = item && (item.visualImage || item.check_image);
+            const emptyThumb = '<span style="font-size:0.8em;opacity:0.5;">-</span>';
+            document.querySelectorAll(`tr[data-channel-id="${id}"]`).forEach(tr => {
+                const thumbTd = tr.querySelector('td[data-preview-thumb="1"]');
+                if (!thumbTd) return;
+                thumbTd.innerHTML = image ? wrapTablePreviewThumb(image, item) : emptyThumb;
+            });
+            document.querySelectorAll(`.mobile-channel-card[data-id="${id}"]`).forEach(card => {
+                const bg = card.querySelector('.mobile-channel-card__bg');
+                if (!bg) return;
+                bg.classList.toggle('mobile-channel-card__bg--empty', !image);
+                if (image) {
+                    bg.innerHTML = `<img src="${image}" onclick="event.stopPropagation(); showLightbox('${String(image).replace(/'/g, "\\'")}')" alt="预览">`
+                        + `<button class="mobile-channel-card__copy-btn" onclick="event.stopPropagation(); copyChannelUrl('${(item.url || '').replace(/'/g, "\\'")}')" title="复制播放链接">📋</button>`;
+                } else {
+                    const copyUrl = (item && item.url) ? item.url.replace(/'/g, "\\'") : '';
+                    bg.innerHTML = '<span>📺</span>'
+                        + (copyUrl ? `<button class="mobile-channel-card__copy-btn" onclick="event.stopPropagation(); copyChannelUrl('${copyUrl}')" title="复制播放链接">📋</button>` : '');
+                }
             });
         }
 
@@ -811,24 +847,25 @@
                 patchChannelAvailabilityCells(id, item, patch.is_enabled);
             }
 
-            const image = item.visualImage || item.check_image;
-            if (image) {
-                document.querySelectorAll(`tr[data-channel-id="${id}"]`).forEach(tr => {
-                    const thumbTd = tr.querySelector('td[data-preview-thumb="1"]');
-                    if (thumbTd) thumbTd.innerHTML = wrapTablePreviewThumb(image, item);
-                });
+            if (
+                patch.has_check_image !== undefined
+                || patch.check_status !== undefined
+                || patch.check_image !== undefined
+            ) {
+                patchPreviewThumbnailCells(id, item);
             }
         }
 
         async function applyChannelPatchToPreview(patch) {
-            mergeChannelPatchIntoPreview(patch);
-            if (patch.has_check_image && !patch.check_image) {
+            const normalized = normalizeChannelPatchForMerge(patch);
+            mergeChannelPatchIntoPreview(normalized);
+            if (normalized.has_check_image === true && !normalized.check_image) {
                 const snap = await fetchChannelSnapshotForPreview(patch.id);
                 if (snap && snap.check_image) {
-                    mergeChannelPatchIntoPreview({ id: patch.id, check_image: snap.check_image });
+                    mergeChannelPatchIntoPreview({ id: patch.id, check_image: snap.check_image, has_check_image: true });
                 }
             }
-            patchPreviewTableRow(patch);
+            patchPreviewTableRow(normalized);
             updatePreviewStats();
         }
 
