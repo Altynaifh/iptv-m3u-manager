@@ -75,6 +75,45 @@ class ConsoleLogStream(io.TextIOBase):
 
 notifier = TaskNotifier()
 
+
+class TaskCanceledError(Exception):
+    """任务被用户中止。"""
+
+
+def is_task_canceled_sync(task_id: str) -> bool:
+    """同步检查任务是否已中止。"""
+    if not task_id:
+        return False
+    with Session(engine) as session:
+        task = session.get(TaskRecord, task_id)
+        return task is None or task.status == "canceled"
+
+
+async def is_task_canceled(task_id: str) -> bool:
+    """异步检查任务是否已中止。"""
+    return await asyncio.to_thread(is_task_canceled_sync, task_id)
+
+
+async def guard_task_cancellation(task_id: str, coro):
+    """等待协程完成；等待期间若用户中止则取消子协程。"""
+    if not task_id:
+        return await coro
+    t = asyncio.create_task(coro)
+    try:
+        while not t.done():
+            if await is_task_canceled(task_id):
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+                raise TaskCanceledError("任务已中止")
+            await asyncio.sleep(1.5)
+        return t.result()
+    except asyncio.CancelledError:
+        raise TaskCanceledError("任务已中止") from None
+
+
 # 重定向 stdout 和 stderr
 sys.stdout = ConsoleLogStream(sys.stdout, notifier)
 sys.stderr = ConsoleLogStream(sys.stderr, notifier)

@@ -131,6 +131,7 @@ class StreamChecker:
             "-y",
             "-hide_banner",
             "-loglevel", "error",
+            "-timeout", "10000000",
             "-t", "8",
             "-user_agent", "AptvPlayer/1.4.1",
             "-i", url,

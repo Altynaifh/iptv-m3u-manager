@@ -9,7 +9,7 @@ from models import Channel, OutputSource, Subscription, TaskRecord
 from services.output_resolver import ai_vision_candidates, export_m3u_channels, filter_candidates
 from services.playlist_organizer import PlaylistOrganizer
 from services.visual_ai_checker import VisualAiChecker
-from task_broker import broker, update_task_status
+from task_broker import TaskCanceledError, broker, guard_task_cancellation, update_task_status
 
 
 @broker.task
@@ -29,7 +29,10 @@ async def llm_organize_task(
             subs = session.exec(select(Subscription)).all()
             sub_map = {s.id: s.name or s.url for s in subs}
             await update_task_status(task_id, progress=30, message="调用文本 LLM 编排...")
-            layout = await PlaylistOrganizer.organize_output(session, out, draft, sub_map)
+            layout = await guard_task_cancellation(
+                task_id,
+                PlaylistOrganizer.organize_output(session, out, draft, sub_map),
+            )
             await update_task_status(
                 task_id,
                 status="success",
@@ -37,6 +40,8 @@ async def llm_organize_task(
                 message=f"已生成 explicit 布局，{len(layout.get('groups', []))} 个分组",
                 result=json.dumps(layout, ensure_ascii=False),
             )
+    except TaskCanceledError:
+        await update_task_status(task_id, status="canceled", message="任务已中止")
     except Exception as e:
         await update_task_status(task_id, status="failure", message=str(e)[:500])
 
@@ -73,14 +78,17 @@ async def ai_visual_check_task(
                 p = 10 + int((done / max(total, 1)) * 85)
                 await update_task_status(task_id, progress=p, message=msg)
 
-            stats = await VisualAiChecker.run_batch(
-                session,
-                channels,
-                capture_missing=capture_missing,
-                task_id=task_id,
-                progress_cb=_progress,
-                out=out,
-                draft=draft,
+            stats = await guard_task_cancellation(
+                task_id,
+                VisualAiChecker.run_batch(
+                    session,
+                    channels,
+                    capture_missing=capture_missing,
+                    task_id=task_id,
+                    progress_cb=_progress,
+                    out=out,
+                    draft=draft,
+                ),
             )
             await update_task_status(
                 task_id,
@@ -89,5 +97,7 @@ async def ai_visual_check_task(
                 message=f"视觉 AI 完成：{stats}",
                 result=json.dumps(stats, ensure_ascii=False),
             )
+    except TaskCanceledError:
+        await update_task_status(task_id, status="canceled", message="任务已中止")
     except Exception as e:
         await update_task_status(task_id, status="failure", message=str(e)[:500])

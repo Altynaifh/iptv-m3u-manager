@@ -6,6 +6,7 @@ import asyncio
 import gzip
 import json
 import os
+import tempfile
 import threading
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -51,24 +52,62 @@ def clear_output_artifacts(out: OutputSource) -> None:
                 os.remove(path)
             except OSError:
                 pass
+    _cleanup_stale_temp_artifacts(out)
+
+
+def _cleanup_stale_temp_artifacts(out: OutputSource) -> None:
+    """清理因并发中断留下的固定名临时文件。"""
+    previews_dir = os.path.join(artifacts_root(), "previews")
+    exports_dir = os.path.join(artifacts_root(), "exports")
+    stale_names = (
+        f"{out.id}.json.gz.tmp",
+        f"{out.id}.meta.json.tmp",
+        f"{out.slug}.m3u.tmp",
+    )
+    for directory in (previews_dir, exports_dir):
+        for name in stale_names:
+            path = os.path.join(directory, name)
+            if os.path.isfile(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
 
 def _atomic_write_text(path: str, content: str) -> None:
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        f.write(content)
-    if os.path.isfile(path):
-        os.remove(path)
-    os.rename(tmp, path)
+    dir_name = os.path.dirname(path) or "."
+    os.makedirs(dir_name, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(suffix=".tmp", prefix=".art-", dir=dir_name)
+    os.close(fd)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.isfile(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        raise
 
 
 def _atomic_write_json_gz(path: str, payload: dict) -> None:
-    tmp = path + ".tmp"
-    with gzip.open(tmp, "wt", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, default=str)
-    if os.path.isfile(path):
-        os.remove(path)
-    os.rename(tmp, path)
+    dir_name = os.path.dirname(path) or "."
+    os.makedirs(dir_name, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(suffix=".json.gz.tmp", prefix=".art-", dir=dir_name)
+    os.close(fd)
+    try:
+        with gzip.open(tmp, "wt", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, default=str)
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.isfile(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        raise
 
 
 def _read_preview_file(output_id: int) -> Optional[dict]:
@@ -147,8 +186,28 @@ def _enrich_preview_epg(
     return payload
 
 
+_rebuild_locks: Dict[int, threading.Lock] = {}
+_rebuild_locks_guard = threading.Lock()
+
+
+def _get_rebuild_lock(output_id: int) -> threading.Lock:
+    with _rebuild_locks_guard:
+        lock = _rebuild_locks.get(output_id)
+        if lock is None:
+            lock = threading.Lock()
+            _rebuild_locks[output_id] = lock
+        return lock
+
+
 def build_output_artifacts(session: Session, out: OutputSource) -> Dict[str, Any]:
     """同步生成 M3U 与预览 gzip 产物，并更新 DB 元数据（不再存大 JSON）。"""
+    if out.id is None:
+        return {}
+    with _get_rebuild_lock(out.id):
+        return _build_output_artifacts_impl(session, out)
+
+
+def _build_output_artifacts_impl(session: Session, out: OutputSource) -> Dict[str, Any]:
     subs = session.exec(select(Subscription)).all()
     sub_map = {s.id: s.name or s.url for s in subs}
 

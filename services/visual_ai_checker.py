@@ -10,6 +10,7 @@ from sqlmodel import Session, select
 
 from models import Channel, OutputSource
 from services.llm_client import LlmClient, VisionJsonParseError
+from task_broker import TaskCanceledError, is_task_canceled
 from services.llm_settings import load_llm_blocks
 from services.stream_checker import StreamChecker
 
@@ -246,6 +247,9 @@ class VisualAiChecker:
             session.commit()
 
         for batch_start in range(0, len(unique), BATCH_SIZE):
+            if task_id and await is_task_canceled(task_id):
+                raise TaskCanceledError("任务已中止")
+
             batch = unique[batch_start : batch_start + BATCH_SIZE]
             slots = []
             for ch in batch:

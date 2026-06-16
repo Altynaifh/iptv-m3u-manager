@@ -1,4 +1,5 @@
 """OpenAI 兼容 Chat Completions 客户端。"""
+import asyncio
 import json
 import os
 import re
@@ -9,6 +10,12 @@ from typing import Any, List
 import aiohttp
 
 _VISION_JSON_LOG: Path | None = None
+# 连接阶段快速失败，避免断网时长时间挂起
+_HTTP_TIMEOUT = aiohttp.ClientTimeout(connect=15, sock_connect=15, sock_read=120, total=180)
+
+
+class LlmNetworkError(RuntimeError):
+    """LLM 请求因网络不可达或超时失败。"""
 
 
 class VisionJsonParseError(ValueError):
@@ -450,6 +457,8 @@ class LlmClient:
                 )
                 last_raw = raw
                 return _parse_vision_json(raw)
+            except LlmNetworkError:
+                raise
             except RuntimeError as e:
                 if use_json_format:
                     use_json_format = False
@@ -528,14 +537,15 @@ class LlmClient:
         }
         if response_format:
             payload["response_format"] = response_format
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=180)
-            ) as resp:
-                body = await resp.text()
-                if resp.status >= 400:
-                    raise RuntimeError(f"LLM HTTP {resp.status}: {body[:500]}")
-                return json.loads(body)
+        try:
+            async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
+                async with session.post(url, json=payload, headers=headers) as resp:
+                    body = await resp.text()
+                    if resp.status >= 400:
+                        raise RuntimeError(f"LLM HTTP {resp.status}: {body[:500]}")
+                    return json.loads(body)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            raise LlmNetworkError(f"LLM 网络请求失败: {type(e).__name__}: {e}") from e
 
     @staticmethod
     def _message_text(data: dict) -> str:
