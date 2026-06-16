@@ -794,32 +794,41 @@
         }
 
         function patchPreviewTableRow(patch) {
-            const id = patch.id;
-            const row = document.querySelector(`tr[data-channel-id="${id}"]`);
-            if (!row) return;
-            const ch = (typeof resolvePreviewChannelById === 'function' ? resolvePreviewChannelById(id) : null) || patch;
-            const merged = { ...ch, ...patch };
-            const statusCell = row.querySelector(`[data-channel-status-id="${id}"]`);
-            if (statusCell) statusCell.innerHTML = buildChannelAvailabilityHtml(merged);
-            row.classList.toggle('preview-channel-row--disabled', isPreviewChannelDisabled(merged));
-            const image = merged.visualImage || merged.check_image;
+            const id = normalizePreviewChannelId(patch.id);
+            const item = resolvePreviewChannelById(id);
+            if (!item) return;
+
+            if (patch.is_enabled !== undefined) {
+                forgetPreviewChannelEnableOverride(id);
+                patchAggregateEnablementControls(id, patch.is_enabled);
+            }
+
+            if (
+                patch.ai_visual_status !== undefined
+                || patch.check_status !== undefined
+                || patch.check_error !== undefined
+            ) {
+                patchChannelAvailabilityCells(id, item, patch.is_enabled);
+            }
+
+            const image = item.visualImage || item.check_image;
             if (image) {
-                const thumbTd = row.querySelector('td[data-preview-thumb="1"]');
-                if (thumbTd) thumbTd.innerHTML = wrapTablePreviewThumb(image, merged);
+                document.querySelectorAll(`tr[data-channel-id="${id}"]`).forEach(tr => {
+                    const thumbTd = tr.querySelector('td[data-preview-thumb="1"]');
+                    if (thumbTd) thumbTd.innerHTML = wrapTablePreviewThumb(image, item);
+                });
             }
         }
 
         async function applyChannelPatchToPreview(patch) {
             mergeChannelPatchIntoPreview(patch);
-            let merged = { ...patch };
             if (patch.has_check_image && !patch.check_image) {
                 const snap = await fetchChannelSnapshotForPreview(patch.id);
                 if (snap && snap.check_image) {
-                    merged.check_image = snap.check_image;
                     mergeChannelPatchIntoPreview({ id: patch.id, check_image: snap.check_image });
                 }
             }
-            patchPreviewTableRow(merged);
+            patchPreviewTableRow(patch);
             updatePreviewStats();
         }
 
