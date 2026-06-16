@@ -5954,6 +5954,7 @@ function removeTag(val) {
                 showToast('请先保存或进入编辑已有聚合源', 'error');
                 return;
             }
+            if (!confirmAiVisionCheck('当前编辑草稿筛选出的已启用频道')) return;
             const payload = buildOutputDraftPayload();
             const res = await fetch(`/outputs/${editId}/ai-visual-check`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
