@@ -256,6 +256,32 @@ def _order_explicit_layout_members(
     return ordered
 
 
+def epg_match_channels(
+    session: Session,
+    out: OutputSource,
+    draft: Optional[Dict[str, Any]] = None,
+) -> List[Channel]:
+    """EPG 批量匹配用频道列表：仅应用 tvg-name 覆盖，不做台标 HTTP 探测。"""
+    members = aggregate_channels(session, out, draft)
+    _sub_ids, _regex, _keywords, _excluded_ids, layout_mode, channel_layout = _output_config(out, draft)
+
+    if (layout_mode or "rules") == "explicit":
+        ordered = _order_explicit_layout_members(members, channel_layout)
+        enabled = [c for c in ordered if c.is_enabled]
+    else:
+        enabled = [c for c in members if c.is_enabled]
+
+    tvg_ov = _resolve_tvg_name_overlays(
+        out,
+        members,
+        validate_cluster_media=False,
+        sub_map=None,
+    )
+    if tvg_ov:
+        enabled = apply_tvg_name_overlays_to_channels(enabled, tvg_ov)
+    return enabled
+
+
 def export_m3u_channels(
     session: Session,
     out: OutputSource,

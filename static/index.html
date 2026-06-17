@@ -3577,12 +3577,19 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
         function applyBatchEpgPrograms(programs, channelItems = null) {
             const map = programs || {};
+            const cellIndex = new Map();
+            document.querySelectorAll('[data-epg-channel-id]').forEach((cell) => {
+                const id = Number(cell.getAttribute('data-epg-channel-id'));
+                if (!Number.isFinite(id)) return;
+                if (!cellIndex.has(id)) cellIndex.set(id, []);
+                cellIndex.get(id).push(cell);
+            });
             const paintCell = (channelId, epg, cellId) => {
                 if (cellId) {
                     const cell = document.getElementById(cellId);
                     if (cell) applyEpgData(cell, epg, cellId);
                 }
-                document.querySelectorAll(`[data-epg-channel-id="${channelId}"]`).forEach((cell) => {
+                (cellIndex.get(Number(channelId)) || []).forEach((cell) => {
                     applyEpgData(cell, epg, cell.id);
                 });
             };
@@ -3610,11 +3617,14 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const channelIds = enabledItems.map((item) => item.channel.id);
             const run = async () => {
                 if (window.currentPreviewOutputId) {
+                    const controller = new AbortController();
+                    const timer = setTimeout(() => controller.abort(), 180000);
                     const res = await fetch(`/outputs/${window.currentPreviewOutputId}/epg/match`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ refresh, channel_ids: channelIds }),
-                    });
+                        signal: controller.signal,
+                    }).finally(() => clearTimeout(timer));
                     if (!res.ok) throw new Error(await res.text());
                     const data = await res.json();
                     applyBatchEpgPrograms(data.programs, enabledItems);

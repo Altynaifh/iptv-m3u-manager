@@ -12,7 +12,13 @@ from services.generator import M3UGenerator
 from services.epg import EPGManager, refresh_epg_group, split_epg_urls
 from services.stream_checker import StreamChecker
 
-from services.output_resolver import export_m3u_channels, filter_candidates, preview_export_groups, aggregate_channels
+from services.output_resolver import (
+    epg_match_channels,
+    export_m3u_channels,
+    filter_candidates,
+    preview_export_groups,
+    aggregate_channels,
+)
 from services.preview_cache import clear_output_preview_cache, get_or_build_export_preview
 from services.output_stats import (
     get_or_refresh_member_stats,
@@ -224,7 +230,7 @@ async def match_output_epg(
     if not out.epg_url:
         raise HTTPException(status_code=400, detail="聚合源未配置节目表")
 
-    enabled_channels = export_m3u_channels(session, out, None)
+    enabled_channels = epg_match_channels(session, out, None)
     if req.channel_ids:
         wanted = {int(i) for i in req.channel_ids}
         enabled_channels = [c for c in enabled_channels if c.id in wanted]
@@ -239,7 +245,9 @@ async def match_output_epg(
             "message": "EPG 加载失败",
         }
 
-    results = EPGManager.batch_lookup_channels(out.epg_url, enabled_channels, enabled_only=True)
+    results = await EPGManager.batch_lookup_channels_async(
+        out.epg_url, enabled_channels, enabled_only=True
+    )
     return {
         "programs": {str(k): v for k, v in results.items()},
         "matched": len(results),

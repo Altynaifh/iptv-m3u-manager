@@ -69,7 +69,9 @@ async def epg_batch_match(req: EpgBatchRequest):
             "source_count": len(split_epg_urls(req.epg_url)),
             "message": "EPG 加载失败",
         }
-    results = EPGManager.batch_lookup_channels(req.epg_url, targets, enabled_only=True)
+    results = await EPGManager.batch_lookup_channels_async(
+        req.epg_url, targets, enabled_only=True
+    )
     return {
         "programs": {str(k): v for k, v in results.items()},
         "matched": len(results),

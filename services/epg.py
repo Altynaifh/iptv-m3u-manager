@@ -285,6 +285,22 @@ class EPGManager:
         return ch_id, tvg_id, tvg_name, logo
 
     @classmethod
+    async def batch_lookup_channels_async(
+        cls,
+        epg_url: str,
+        channels: List[Any],
+        *,
+        enabled_only: bool = True,
+    ) -> Dict[int, Dict[str, Any]]:
+        """在线程池中批量匹配，避免阻塞事件循环。"""
+        return await asyncio.to_thread(
+            cls.batch_lookup_channels,
+            epg_url,
+            channels,
+            enabled_only=enabled_only,
+        )
+
+    @classmethod
     def batch_lookup_channels(
         cls,
         epg_url: str,
