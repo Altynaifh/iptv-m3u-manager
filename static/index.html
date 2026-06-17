@@ -66,6 +66,43 @@
                 transform: translateY(-20px);
             }
         }
+
+        .out-epg-hint {
+            margin: -4px 0 8px;
+            font-size: 0.82em;
+            opacity: 0.65;
+        }
+
+        .out-epg-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .out-epg-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .out-epg-row .out-epg-input {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .out-epg-remove {
+            flex-shrink: 0;
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            line-height: 1;
+            font-size: 1.1em;
+            opacity: 0.75;
+        }
+
+        .out-epg-remove:hover {
+            opacity: 1;
+        }
     </style>
 </head>
 
@@ -246,7 +283,8 @@
                     <label
                         style="display: block; margin-bottom: 8px; opacity: 0.9; font-size: 0.95em; font-weight: 500;">EPG
                         节目预告 (可选)</label>
-                    <input type="text" id="out_epg" placeholder="多个节目表用 | 分隔，例如: https://.../pl.xml.gz|https://epg.112114.xyz/pp.xml.gz" aria-label="EPG节目预告链接">
+                    <p class="out-epg-hint">每行一条链接；在行内按回车可添加下一条节目表</p>
+                    <div id="out_epg_list" class="out-epg-list" aria-label="EPG节目预告链接列表"></div>
                 </div>
 
                 <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
@@ -7117,6 +7155,92 @@ function removeTag(val) {
 
         window._outLastScrollY = 0;
 
+        function escapeOutputEpgAttr(text) {
+            return String(text || '')
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        function splitOutputEpgUrls(raw) {
+            if (!raw || !String(raw).trim()) return [''];
+            const urls = [];
+            String(raw).split(/[|,\n]+/).forEach((part) => {
+                const trimmed = part.trim();
+                if (trimmed && !urls.includes(trimmed)) urls.push(trimmed);
+            });
+            return urls.length ? urls : [''];
+        }
+
+        function renderOutputEpgRows(urls) {
+            const list = document.getElementById('out_epg_list');
+            if (!list) return;
+            const values = urls && urls.length ? urls : [''];
+            list.innerHTML = values.map((url, idx) => {
+                const placeholder = idx === 0
+                    ? 'EPG XML/GZ 链接，例如 https://.../pl.xml.gz'
+                    : '下一条节目表链接（可选）';
+                const removeBtn = values.length > 1
+                    ? '<button type="button" class="btn btn-sm out-epg-remove" onclick="removeOutputEpgRow(this)" title="移除此行" aria-label="移除此节目表">×</button>'
+                    : '';
+                return `<div class="out-epg-row">
+                    <input type="text" class="out-epg-input" value="${escapeOutputEpgAttr(url)}"
+                        placeholder="${escapeOutputEpgAttr(placeholder)}"
+                        aria-label="EPG节目表链接 ${idx + 1}"
+                        onkeydown="handleOutputEpgKeydown(event, this)">
+                    ${removeBtn}
+                </div>`;
+            }).join('');
+        }
+
+        function getOutputEpgUrlsJoined() {
+            const urls = [];
+            document.querySelectorAll('#out_epg_list .out-epg-input').forEach((inp) => {
+                const value = (inp.value || '').trim();
+                if (value && !urls.includes(value)) urls.push(value);
+            });
+            return urls.join('|');
+        }
+
+        function setOutputEpgFromRaw(raw) {
+            renderOutputEpgRows(splitOutputEpgUrls(raw));
+        }
+
+        function clearOutputEpgRows() {
+            renderOutputEpgRows(['']);
+        }
+
+        function handleOutputEpgKeydown(event, input) {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            const row = input.closest('.out-epg-row');
+            const list = document.getElementById('out_epg_list');
+            if (!row || !list) return;
+            const rows = Array.from(list.querySelectorAll('.out-epg-row'));
+            const idx = rows.indexOf(row);
+            if (idx < 0) return;
+            if (idx < rows.length - 1) {
+                rows[idx + 1].querySelector('.out-epg-input')?.focus();
+                return;
+            }
+            const urls = Array.from(list.querySelectorAll('.out-epg-input')).map((el) => el.value);
+            urls.push('');
+            renderOutputEpgRows(urls);
+            list.querySelectorAll('.out-epg-input')[idx + 1]?.focus();
+        }
+
+        function removeOutputEpgRow(btn) {
+            const row = btn.closest('.out-epg-row');
+            const list = document.getElementById('out_epg_list');
+            if (!row || !list) return;
+            const rows = Array.from(list.querySelectorAll('.out-epg-row'));
+            const urls = rows.map((r) => r.querySelector('.out-epg-input')?.value || '');
+            const idx = rows.indexOf(row);
+            if (idx >= 0) urls.splice(idx, 1);
+            renderOutputEpgRows(urls.length ? urls : ['']);
+        }
+
         function coerceOutputBool(val, defaultVal = false) {
             if (val === true || val === 1 || val === '1' || val === 'true') return true;
             if (val === false || val === 0 || val === '0' || val === 'false') return false;
@@ -7157,7 +7281,7 @@ function removeTag(val) {
             document.getElementById('out_name').value = out.name;
             document.getElementById('out_slug').value = out.slug;
             document.getElementById('out_regex').value = out.filter_regex;
-            document.getElementById('out_epg').value = out.epg_url || '';
+            setOutputEpgFromRaw(out.epg_url || '');
             document.getElementById('out_include_suffix').checked = coerceOutputBool(out.include_source_suffix, true);
             document.getElementById('out_is_enabled').checked = coerceOutputBool(out.is_enabled, true);
             document.getElementById('out_auto_update').value = out.auto_update_minutes || 0;
@@ -7234,7 +7358,7 @@ function removeTag(val) {
             document.getElementById('out_name').value = '';
             document.getElementById('out_slug').value = '';
             document.getElementById('out_regex').value = '.*';
-            document.getElementById('out_epg').value = '';
+            clearOutputEpgRows();
             document.getElementById('out_include_suffix').checked = true;
             document.getElementById('out_is_enabled').checked = true; // 默认启用
             document.getElementById('out_auto_update').value = 0; // 默认不自动更新
@@ -7289,7 +7413,7 @@ function removeTag(val) {
                 keywords: JSON.stringify(getMergedFilterKeywords()),
                 subscription_ids: JSON.stringify(selectedSubs),
                 excluded_channel_ids: JSON.stringify(computeSaveExcludedIds()), // 名称排除 + 分组未选用
-                epg_url: document.getElementById('out_epg').value,
+                epg_url: getOutputEpgUrlsJoined(),
                 include_source_suffix: document.getElementById('out_include_suffix').checked,
                 is_enabled: document.getElementById('out_is_enabled').checked,
                 auto_update_minutes: parseInt(document.getElementById('out_auto_update').value),
@@ -8248,6 +8372,10 @@ function removeTag(val) {
 
         function bootLoadLlmSettings() {
             if (typeof loadLlmSettings === 'function') loadLlmSettings(true);
+        }
+
+        if (document.getElementById('out_epg_list')) {
+            clearOutputEpgRows();
         }
 
         async function checkPreviewAiOrganize() {
