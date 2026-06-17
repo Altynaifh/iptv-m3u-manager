@@ -34,11 +34,11 @@ def clear_output_member_stats(out: OutputSource) -> None:
 
 
 def invalidate_output_runtime_cache(out: OutputSource, *, schedule_rebuild: bool = True) -> None:
+    """标记聚合预览/M3U 产物过期；保留磁盘文件供读路径直出，后台覆盖重建。"""
     clear_output_preview_cache(out)
     clear_output_member_stats(out)
-    from services.output_artifacts import clear_output_artifacts, schedule_rebuild_output_artifacts
+    from services.output_artifacts import schedule_rebuild_output_artifacts
 
-    clear_output_artifacts(out)
     if schedule_rebuild and out.id is not None:
         schedule_rebuild_output_artifacts(out.id)
 

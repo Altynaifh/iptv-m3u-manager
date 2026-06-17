@@ -264,10 +264,32 @@ def export_preview_output(
     epg_refresh: bool = False,
     session: Session = Depends(get_session),
 ):
-    """聚合列表预览：默认读磁盘 gzip 产物；force=1 或 epg_refresh=1 时重建。"""
+    """聚合列表预览：默认直出磁盘 gzip；force=1 或 epg_refresh=1 时重建。"""
+    import json
+
+    from fastapi.responses import Response
+
+    from services.output_artifacts import try_get_preview_gzip_fast
+
     out = session.get(OutputSource, output_id)
     if not out:
         raise HTTPException(status_code=404, detail="输出源不存在")
+    fast = try_get_preview_gzip_fast(
+        session,
+        out,
+        force=force,
+        epg_refresh=epg_refresh,
+    )
+    if fast is not None:
+        gz_bytes, cache_meta = fast
+        return Response(
+            content=gz_bytes,
+            media_type="application/json",
+            headers={
+                "Content-Encoding": "gzip",
+                "X-Preview-Cache": json.dumps(cache_meta, ensure_ascii=False),
+            },
+        )
     return get_or_build_export_preview(
         session,
         out,

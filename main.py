@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Response, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
+from starlette.middleware.gzip import GZipMiddleware
 from sqlmodel import Session, select
 import asyncio
 import os
@@ -19,6 +20,8 @@ import services.output_artifacts  # noqa: F401
 import uuid
 
 app = FastAPI(title="IPTV M3U Manager")
+# 聚合预览 JSON 体积大（含截图 base64），压缩后可显著降低传输耗时
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 _PUBLIC_PATHS = {"/"}
 _PUBLIC_PREFIXES = ("/static/", "/m3u/", "/api/auth/login", "/api/auth/status")

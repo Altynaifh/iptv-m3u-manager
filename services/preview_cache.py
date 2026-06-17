@@ -84,8 +84,8 @@ def compute_preview_cache_key(
 
 
 def clear_output_preview_cache(out: OutputSource) -> None:
-    """清空聚合源上已存的预览缓存元数据。"""
-    out.preview_cache_key = None
+    """清空聚合源上已存的预览缓存元数据（空串表示已失效，区别于 None 未回填）。"""
+    out.preview_cache_key = ""
     out.preview_cache_json = None
     out.preview_cache_at = None
 

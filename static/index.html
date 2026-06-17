@@ -1680,7 +1680,36 @@
         window._previewGroupedDomCache = {};
         window._previewGroupSectionOffsets = {};
         window._previewGroupSectionOffsetsByDomKey = {};
+        window._previewGroupedDomCacheByOutputId = {};
+        window._previewGroupSectionOffsetsByOutputId = {};
+        window._aggregatePreviewPayloadByOutputId = {};
         window._previewExportCacheMeta = null;
+
+        function restorePreviewDomCachesForOutput(outputId) {
+            const domStore = (window._previewGroupedDomCacheByOutputId || {})[outputId] || {};
+            const offsetStore = (window._previewGroupSectionOffsetsByOutputId || {})[outputId] || {};
+            window._previewGroupedDomCache = { ...domStore };
+            window._previewGroupSectionOffsetsByDomKey = { ...offsetStore };
+            window._previewGroupSectionOffsets = {};
+        }
+
+        function persistPreviewDomCachesForOutput(outputId) {
+            if (outputId == null) return;
+            window._previewGroupedDomCacheByOutputId[outputId] = { ...window._previewGroupedDomCache };
+            window._previewGroupSectionOffsetsByOutputId[outputId] = { ...window._previewGroupSectionOffsetsByDomKey };
+        }
+
+        function invalidatePreviewDataCache(outputId) {
+            if (outputId == null) {
+                window._aggregatePreviewPayloadByOutputId = {};
+                window._previewGroupedDomCacheByOutputId = {};
+                window._previewGroupSectionOffsetsByOutputId = {};
+            } else {
+                delete window._aggregatePreviewPayloadByOutputId[outputId];
+                delete window._previewGroupedDomCacheByOutputId[outputId];
+                delete window._previewGroupSectionOffsetsByOutputId[outputId];
+            }
+        }
 
         function invalidatePreviewRenderCaches() {
             window._previewGroupedDomCache = {};
@@ -1978,6 +2007,14 @@
         }
 
         async function fetchAggregateExportPreview(outputId, options = {}) {
+            const useMemory = !options.force && !options.epg_refresh && !options.skipMemory;
+            if (useMemory) {
+                const mem = window._aggregatePreviewPayloadByOutputId[outputId];
+                if (mem) {
+                    window._previewExportCacheMeta = mem.cache || null;
+                    return mem;
+                }
+            }
             const params = new URLSearchParams();
             if (options.force) params.set('force', '1');
             if (options.epg_refresh) params.set('epg_refresh', '1');
@@ -1985,9 +2022,38 @@
             const url = `/outputs/${outputId}/export-preview${qs ? '?' + qs : ''}`;
             const res = await fetch(url);
             if (!res.ok) throw new Error('export-preview 请求失败');
+            const cacheHeader = res.headers.get('X-Preview-Cache');
             const data = await res.json();
+            if (cacheHeader) {
+                try {
+                    data.cache = JSON.parse(cacheHeader);
+                } catch (e) {
+                    console.warn('解析 X-Preview-Cache 失败', e);
+                }
+            }
             window._previewExportCacheMeta = data.cache || null;
+            window._aggregatePreviewPayloadByOutputId[outputId] = data;
             return data;
+        }
+
+        function applyAggregatePreviewPayload(out, data, excludedIds) {
+            window._previewGroupPayload = normalizePreviewPayloadChannels(data);
+            window._previewExportCacheMeta = data.cache || null;
+            updatePreviewGroupModeTabs(data);
+            window._previewAggregateExcludedIds = new Set((excludedIds || []).map(id => Number(id)));
+            applyPreviewGroupDisplay();
+        }
+
+        function refreshAggregatePreviewInBackground(out, excludedIds) {
+            const oid = out && out.id;
+            if (!oid) return;
+            fetchAggregateExportPreview(oid, { skipMemory: true }).then(data => {
+                if (window.currentPreviewOutputId !== oid) return;
+                const modal = document.getElementById('channel_modal');
+                if (!modal || modal.style.display !== 'flex') return;
+                window._aggregatePreviewPayloadByOutputId[oid] = data;
+                applyAggregatePreviewPayload(out, data, excludedIds);
+            }).catch(err => console.warn('后台刷新聚合预览失败', err));
         }
 
         function enqueueGroupedPreviewEpg(sections, isMobile, options = {}) {
@@ -2242,35 +2308,27 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             }
 
             try {
-                // 解析配置
-                let keywords = [];
-                try {
-                    const parsed = JSON.parse(out.keywords || "[]");
-                    parsed.forEach(k => {
-                        if (typeof k === 'string') keywords.push({ value: k, group: '' });
-                        else keywords.push(k);
-                    });
-                } catch (e) { }
-
-                const subIds = JSON.parse(out.subscription_ids || "[]");
                 const excludedIds = JSON.parse(out.excluded_channel_ids || "[]");
-
-                const payload = {
-                    subscription_ids: subIds,
-                    keywords: keywords,
-                    filter_regex: out.filter_regex,
-                    excluded_channel_ids: excludedIds
-                };
-
                 syncLayoutGlobalsFromOutput(out);
-
-                invalidatePreviewRenderCaches();
-                const data = await fetchAggregateExportPreview(out.id);
+                restorePreviewDomCachesForOutput(out.id);
                 window.lastRenderShowActions = true;
-                window._previewGroupPayload = normalizePreviewPayloadChannels(data);
-                updatePreviewGroupModeTabs(data);
-                window._previewAggregateExcludedIds = new Set((excludedIds || []).map(id => Number(id)));
-                applyPreviewGroupDisplay();
+
+                const mem = window._aggregatePreviewPayloadByOutputId[out.id];
+                if (mem) {
+                    applyAggregatePreviewPayload(out, mem, excludedIds);
+                    const cache = mem.cache || {};
+                    if (cache.stale || cache.building || cache.source === 'live') {
+                        refreshAggregatePreviewInBackground(out, excludedIds);
+                    }
+                    return;
+                }
+
+                const data = await fetchAggregateExportPreview(out.id);
+                applyAggregatePreviewPayload(out, data, excludedIds);
+                const cache = data.cache || {};
+                if (cache.stale || cache.building) {
+                    refreshAggregatePreviewInBackground(out, excludedIds);
+                }
             } catch (err) {
                 document.getElementById('channel_list').innerHTML = '预览加载失败: ' + err.message;
             }
@@ -4160,7 +4218,11 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const viewState = layoutRefresh ? null : captureAggregatePreviewViewState();
             const savedMode = layoutRefresh ? null : window._previewGroupDisplayMode;
             try {
+                if (options.force || options.epg_refresh) {
+                    invalidatePreviewDataCache(oid);
+                }
                 invalidatePreviewRenderCaches();
+                restorePreviewDomCachesForOutput(oid);
                 const data = await fetchAggregateExportPreview(oid, {
                     force: !!options.force,
                     epg_refresh: !!options.epg_refresh,
@@ -7060,6 +7122,7 @@ function removeTag(val) {
 
         function closePreview() {
             hideMediaOverlayPopover();
+            persistPreviewDomCachesForOutput(window.currentPreviewOutputId);
             const modal = document.getElementById('channel_modal');
             modal.style.setProperty('display', 'none', 'important');
             document.body.style.overflow = '';
@@ -8015,9 +8078,12 @@ function removeTag(val) {
                 }
                 const cacheMeta = window._previewExportCacheMeta;
                 if (cacheMeta && window.currentPreviewOutputId) {
-                    const cacheHint = cacheMeta.hit
-                        ? '<span style="margin-left:10px;opacity:0.55;" title="服务端已缓存预览数据">· 缓存</span>'
-                        : '<span style="margin-left:10px;opacity:0.55;" title="本次已重新生成预览">· 已生成</span>';
+                    let cacheHint = '<span style="margin-left:10px;opacity:0.55;" title="本次已重新生成预览">· 已生成</span>';
+                    if (cacheMeta.hit) {
+                        cacheHint = '<span style="margin-left:10px;opacity:0.55;" title="服务端已缓存预览数据">· 缓存</span>';
+                    } else if (cacheMeta.stale || cacheMeta.building) {
+                        cacheHint = '<span style="margin-left:10px;opacity:0.55;" title="展示缓存数据，后台正在更新">· 更新中</span>';
+                    }
                     html += cacheHint;
                 }
                 statsEl.innerHTML = html;

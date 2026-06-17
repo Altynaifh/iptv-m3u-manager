@@ -9,7 +9,7 @@ import os
 import tempfile
 import threading
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from sqlmodel import Session, select
 
@@ -142,15 +142,95 @@ def _artifact_bundle_complete(out: OutputSource) -> bool:
     )
 
 
+def _sync_preview_cache_key_from_meta(session: Session, out: OutputSource, meta: dict) -> None:
+    """旧库仅有磁盘 meta 时，回填 DB 指纹避免每次误判过期。"""
+    if out.preview_cache_key is not None:
+        return
+    disk_key = meta.get("cache_key")
+    if not disk_key:
+        return
+    out.preview_cache_key = disk_key
+    session.add(out)
+    session.commit()
+    session.refresh(out)
+
+
 def is_artifact_cache_stale(session: Session, out: OutputSource) -> bool:
-    """磁盘产物是否与当前聚合配置/成员状态不一致。"""
-    if not _artifact_bundle_complete(out):
+    """磁盘产物是否与当前聚合配置/成员状态不一致（读路径用 DB 失效标记，避免全表扫描）。"""
+    if out.id is None or not os.path.isfile(preview_artifact_path(out.id)):
         return True
     meta = _read_artifact_meta(out.id)
     if not meta or not meta.get("cache_key"):
         return True
-    current_key = compute_preview_cache_key(session, out, None)
-    return meta.get("cache_key") != current_key
+    if out.preview_cache_key is None:
+        _sync_preview_cache_key_from_meta(session, out, meta)
+    db_key = out.preview_cache_key
+    if not db_key:
+        return True
+    return db_key != meta.get("cache_key")
+
+
+def _preview_cache_meta(
+    out: OutputSource,
+    meta: dict,
+    *,
+    hit: bool,
+    stale: bool = False,
+    rebuilding: bool = False,
+    source: str,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "hit": hit,
+        "key": meta.get("cache_key"),
+        "at": meta.get("built_at") or (out.preview_cache_at.isoformat() if out.preview_cache_at else None),
+        "source": source,
+    }
+    if stale:
+        payload["stale"] = True
+    if rebuilding:
+        payload["rebuilding"] = True
+    return payload
+
+
+def _read_preview_gzip_bytes(output_id: int) -> Optional[bytes]:
+    path = preview_artifact_path(output_id)
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def try_get_preview_gzip_fast(
+    session: Session,
+    out: OutputSource,
+    *,
+    force: bool = False,
+    epg_refresh: bool = False,
+) -> Optional[Tuple[bytes, Dict[str, Any]]]:
+    """磁盘直出：返回原始 gzip 字节与 cache 元数据，跳过解压/重序列化。"""
+    if force or epg_refresh or out.id is None:
+        return None
+    gz_bytes = _read_preview_gzip_bytes(out.id)
+    if not gz_bytes:
+        return None
+    meta = _read_artifact_meta(out.id) or {}
+    stale = is_artifact_cache_stale(session, out)
+    if not stale:
+        cache = _preview_cache_meta(out, meta, hit=True, source="disk")
+        return gz_bytes, cache
+    schedule_rebuild_output_artifacts(out.id, epg_refresh=False)
+    cache = _preview_cache_meta(
+        out,
+        meta,
+        hit=False,
+        stale=True,
+        rebuilding=True,
+        source="disk-stale",
+    )
+    return gz_bytes, cache
 
 
 def _enrich_preview_epg(
@@ -284,30 +364,23 @@ def get_or_build_preview_payload(
 
     if not force and not epg_refresh:
         cached = _read_preview_file(out.id)
-        stale = is_artifact_cache_stale(session, out)
-        if cached is not None and not stale:
+        if cached is not None:
+            stale = is_artifact_cache_stale(session, out)
             meta = _read_artifact_meta(out.id) or {}
-            cached["cache"] = {
-                "hit": True,
-                "key": meta.get("cache_key"),
-                "at": meta.get("built_at") or (out.preview_cache_at.isoformat() if out.preview_cache_at else None),
-                "source": "disk",
-            }
+            if not stale:
+                cache = _preview_cache_meta(out, meta, hit=True, source="disk")
+            else:
+                schedule_rebuild_output_artifacts(out.id, epg_refresh=False)
+                cache = _preview_cache_meta(
+                    out,
+                    meta,
+                    hit=False,
+                    stale=True,
+                    rebuilding=True,
+                    source="disk-stale",
+                )
+            cached["cache"] = cache
             return cached
-        if cached is not None and stale:
-            meta = _read_artifact_meta(out.id) or {}
-            schedule_rebuild_output_artifacts(out.id, epg_refresh=False)
-            # 过期 gzip 可能仍含旧启用状态；改读库内实时预览，避免前端闪回
-            payload = preview_export_groups(session, out, None)
-            payload["cache"] = {
-                "hit": False,
-                "stale": True,
-                "rebuilding": True,
-                "key": meta.get("cache_key"),
-                "at": meta.get("built_at") or (out.preview_cache_at.isoformat() if out.preview_cache_at else None),
-                "source": "live",
-            }
-            return payload
 
     if not force and not _artifact_bundle_complete(out):
         from services.output_resolver import aggregate_channels
