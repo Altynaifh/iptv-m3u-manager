@@ -1916,7 +1916,7 @@
                         cell.innerHTML = '<span style="font-size:0.85em;color:var(--text-loading);">⏳ 更新中...</span>';
                     }
                     if (forceRefresh) {
-                        const dedupeKey = `${window.currentEPGUrl}_${effectiveTvgName(c)}`;
+                        const dedupeKey = epgDedupeKey(window.currentEPGUrl, c, effectiveTvgName(c));
                         window.epgCache.delete(dedupeKey);
                         pendingEpgRequests.delete(dedupeKey);
                     }
@@ -3559,6 +3559,13 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         // EPG 性能优化
         window.epgCache = new Map(); // 会话级缓存
         const pendingEpgRequests = new Map(); // 请求去重
+        window._epgBatchRefreshPending = false; // 批量刷新时仅首条请求触发下载
+
+        function epgDedupeKey(epgUrl, channelObj, tvgName) {
+            const tvgId = (channelObj?.tvg_id || '').trim();
+            const name = (tvgName || '').trim();
+            return `${epgUrl}_${tvgId || name}`;
+        }
 
         async function loadChannelEPG(epgUrl, tvgName, cellId, currentLogo, channelId, isRefresh = false, channelObj = null) {
             const cell = document.getElementById(cellId);
@@ -3570,8 +3577,14 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     return;
                 }
 
-                // 合并/去重 Key (缓存 Key 不应包含 refresh 状态，否则刷新后的结果无法复用)
-                const dedupeKey = `${epgUrl}_${tvgName}`;
+                const tvgId = (channelObj?.tvg_id || '').trim();
+                const dedupeKey = epgDedupeKey(epgUrl, channelObj, tvgName);
+                let actualRefresh = !!isRefresh;
+                if (actualRefresh && window._epgBatchRefreshPending) {
+                    window._epgBatchRefreshPending = false;
+                } else if (actualRefresh) {
+                    actualRefresh = false;
+                }
 
                 // 1. 检查缓存 (如果不是刷新请求，则尝试读缓存)
                 if (!isRefresh && window.epgCache.has(dedupeKey)) {
@@ -3588,7 +3601,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
                 // 3. 发起请求
                 const fetchPromise = (async () => {
-                    const url = `/api/epg/current?epg_url=${encodeURIComponent(epgUrl)}&tvg_id=&tvg_name=${encodeURIComponent(tvgName || '')}&current_logo=${encodeURIComponent(currentLogo || '')}&refresh=${isRefresh}`;
+                    const url = `/api/epg/current?epg_url=${encodeURIComponent(epgUrl)}&tvg_id=${encodeURIComponent(tvgId)}&tvg_name=${encodeURIComponent(tvgName || '')}&current_logo=${encodeURIComponent(currentLogo || '')}&refresh=${actualRefresh}`;
                     const res = await fetch(url);
                     return await res.json();
                 })();
@@ -3700,6 +3713,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const isMobile = window.innerWidth <= 768;
             const sections = getActivePreviewGroupSections();
             let queued = 0;
+            window._epgBatchRefreshPending = true;
             if (sections.length > 0) {
                 queued = enqueueGroupedPreviewEpg(sections, isMobile, {
                     forceRefresh: true,
@@ -3709,7 +3723,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             } else {
                 window.refreshSelectedOnly = true;
                 targets.forEach((c) => {
-                    const dedupeKey = `${window.currentEPGUrl}_${effectiveTvgName(c)}`;
+                    const dedupeKey = epgDedupeKey(window.currentEPGUrl, c, effectiveTvgName(c));
                     window.epgCache.delete(dedupeKey);
                     pendingEpgRequests.delete(dedupeKey);
                 });

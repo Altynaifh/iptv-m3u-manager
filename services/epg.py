@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import gzip
 import io
@@ -16,20 +17,67 @@ EPG_CACHE_DIR = "./epg_cache"
 if not os.path.exists(EPG_CACHE_DIR):
     os.makedirs(EPG_CACHE_DIR, exist_ok=True)
 
+# 珠三角地面台 EPG 不含港澳台，自动追加通用补源
+_GD_PL_EPG_URL = "https://raw.githubusercontent.com/litiande03/epg/refs/heads/master/pl.xml.gz"
+_HK_TW_SUPPLEMENT_URL = "https://epg.112114.xyz/pp.xml.gz"
+
 # 并发控制与请求合并
 _url_locks: Dict[str, asyncio.Lock] = {}
-_pending_futures: Dict[str, asyncio.Future] = {} # 用于合并相同 URL 的解析任务
-_url_refresh_timestamps: Dict[str, float] = {} # 记录上一次成功强制刷新的时间
+_pending_futures: Dict[str, asyncio.Future] = {}  # 用于合并相同 URL 组合的解析任务
+_url_refresh_timestamps: Dict[str, float] = {}  # 记录上一次成功强制刷新的时间
+_cd_log_suppress_until: Dict[str, float] = {}  # CD 提示去重
 _locks_lock = asyncio.Lock()
+
+
+def split_epg_urls(epg_url: str) -> List[str]:
+    """拆分聚合源配置的多条 EPG 链接（| 、逗号、换行）。"""
+    if not epg_url:
+        return []
+    urls: List[str] = []
+    for part in re.split(r"[|,\n]+", epg_url):
+        part = (part or "").strip()
+        if part and part not in urls:
+            urls.append(part)
+    return urls
+
+
+def expand_epg_urls(epg_url: str) -> List[str]:
+    """展开用户配置并附加已知补源。"""
+    urls = split_epg_urls(epg_url)
+    if _GD_PL_EPG_URL in urls and _HK_TW_SUPPLEMENT_URL not in urls:
+        urls.append(_HK_TW_SUPPLEMENT_URL)
+    return urls
+
+
+def primary_epg_url_for_export(epg_url: str) -> str:
+    """M3U x-tvg-url 只写主链，避免播放器不识别多链。"""
+    urls = split_epg_urls(epg_url)
+    return urls[0] if urls else (epg_url or "")
+
+
+def epg_config_key(epg_url: str) -> str:
+    """同一组 EPG 源共用内存缓存键。"""
+    expanded = expand_epg_urls(epg_url)
+    if not expanded:
+        return ""
+    return md5("|".join(expanded).encode()).hexdigest()
+
+
+async def refresh_epg_group(epg_url: str, refresh: bool = False) -> None:
+    """按配置刷新一组 EPG 源（含自动补源）。"""
+    for url in expand_epg_urls(epg_url):
+        await fetch_epg_cached(url, refresh=refresh)
+
 
 async def fetch_epg_cached(url: str, refresh: bool = False) -> str:
     """原子化下载并缓存 EPG"""
-    if not url: return None
-        
+    if not url:
+        return None
+
     url_hash = md5(url.encode()).hexdigest()
     cache_path = os.path.join(EPG_CACHE_DIR, f"{url_hash}.xml")
     tmp_path = cache_path + ".tmp"
-    
+
     # 1. 强缓存模式：如果 refresh=False 且文件存在，直接视为有效
     if not refresh and os.path.exists(cache_path):
         return cache_path
@@ -40,59 +88,93 @@ async def fetch_epg_cached(url: str, refresh: bool = False) -> str:
         # 使用 APTVPlayer 的 UA 绕过 429 封锁
         headers = {
             "User-Agent": "APTVPlayer/1.3.9 (com.ios.aptv; build:1; iOS 15.1.0) Alamofire/5.2.2",
-            "Accept": "*/*"
+            "Accept": "*/*",
         }
         timeout = aiohttp.ClientTimeout(total=120, connect=20)
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
             async with session.get(url) as response:
-                if response.status != 200: 
+                if response.status != 200:
                     print(f"[EPG] 下载响应异常 {url}: HTTP {response.status}")
                     return cache_path if os.path.exists(cache_path) else None
                 content = await response.read()
-                
-                if url.endswith(".gz") or content[:2] == b'\x1f\x8b':
+
+                if url.endswith(".gz") or content[:2] == b"\x1f\x8b":
                     try:
                         with gzip.GzipFile(fileobj=io.BytesIO(content)) as gz:
                             xml_content = gz.read()
-                    except: xml_content = content
-                else: xml_content = content
-                
+                    except Exception:
+                        xml_content = content
+                else:
+                    xml_content = content
+
                 # 先写临时文件，再瞬间移动（原子操作）
                 with open(tmp_path, "wb") as f:
                     f.write(xml_content)
-                if os.path.exists(cache_path): os.remove(cache_path)
+                if os.path.exists(cache_path):
+                    os.remove(cache_path)
                 os.rename(tmp_path, cache_path)
         return cache_path
     except Exception as e:
         print(f"[EPG] 下载失败 {url}: {e}")
-        if os.path.exists(tmp_path): os.remove(tmp_path)
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
         return cache_path if os.path.exists(cache_path) else None
+
 
 class EPGManager:
     """EPG 管理器"""
+
     _cache: Dict[str, Dict[str, Any]] = {}
+
+    @staticmethod
+    def _merge_parsed_data(parts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """合并多源解析结果，后写入的源覆盖同名键。"""
+        merged = {
+            "programs": {},
+            "name_map": {},
+            "logos": {},
+            "reverse_logos": {},
+        }
+        for part in parts:
+            if not part:
+                continue
+            merged["programs"].update(part.get("programs", {}))
+            merged["name_map"].update(part.get("name_map", {}))
+            merged["logos"].update(part.get("logos", {}))
+            merged["reverse_logos"].update(part.get("reverse_logos", {}))
+        return merged
+
+    @classmethod
+    def _load_parsed_from_disk(cls, epg_url: str) -> Dict[str, Any]:
+        """从磁盘加载一组 EPG 源并合并。"""
+        parts = []
+        for url in expand_epg_urls(epg_url):
+            cache_path = os.path.join(EPG_CACHE_DIR, f"{md5(url.encode()).hexdigest()}.xml")
+            if os.path.exists(cache_path):
+                parts.append(cls._parse_epg_file(cache_path))
+        return cls._merge_parsed_data(parts)
 
     @classmethod
     def ensure_parsed_cache_sync(cls, epg_url: str, *, force_reload: bool = False) -> bool:
         """从磁盘 EPG XML 同步加载到内存（不触发下载），供产物生成使用。"""
         if not epg_url:
             return False
-        url_hash = md5(epg_url.encode()).hexdigest()
+        cache_key = epg_config_key(epg_url)
         now_ts = datetime.now(timezone.utc).timestamp()
-        if not force_reload and url_hash in cls._cache:
-            entry = cls._cache[url_hash]
+        if not force_reload and cache_key in cls._cache:
+            entry = cls._cache[cache_key]
             if now_ts - entry["timestamp"] < 3600:
-                return True
-        cache_path = os.path.join(EPG_CACHE_DIR, f"{url_hash}.xml")
-        if not os.path.exists(cache_path):
+                return bool(entry.get("programs") or entry.get("name_map"))
+        parsed = cls._load_parsed_from_disk(epg_url)
+        if not parsed["programs"] and not parsed["name_map"]:
             return False
-        parsed_data = cls._parse_epg_file(cache_path)
-        cls._cache[url_hash] = {
+        cls._cache[cache_key] = {
             "timestamp": now_ts,
-            "programs": parsed_data["programs"],
-            "name_map": parsed_data["name_map"],
-            "logos": parsed_data["logos"],
-            "reverse_logos": parsed_data.get("reverse_logos", {}),
+            "programs": parsed["programs"],
+            "name_map": parsed["name_map"],
+            "logos": parsed["logos"],
+            "reverse_logos": parsed.get("reverse_logos", {}),
+            "source_count": len(expand_epg_urls(epg_url)),
         }
         return True
 
@@ -109,121 +191,145 @@ class EPGManager:
             return {"title": "无 EPG 链接", "logo": None}
         if not cls.ensure_parsed_cache_sync(epg_url):
             return {"title": "无节目信息", "logo": None}
-        url_hash = md5(epg_url.encode()).hexdigest()
-        return cls._lookup_in_memory(cls._cache[url_hash], channel_id, channel_name, current_logo)
-    
+        cache_key = epg_config_key(epg_url)
+        return cls._lookup_in_memory(cls._cache[cache_key], channel_id, channel_name, current_logo)
+
     @classmethod
-    async def get_program(cls, epg_url: str, channel_id: str, channel_name: str, current_logo: str = None, refresh: bool = False) -> dict:
+    async def get_program(
+        cls,
+        epg_url: str,
+        channel_id: str,
+        channel_name: str,
+        current_logo: str = None,
+        refresh: bool = False,
+    ) -> dict:
         """获取频道节目 (带请求合并与超时保护)"""
-        if not epg_url: return {"title": "无 EPG 链接", "logo": None}
-        
-        url_hash = md5(epg_url.encode()).hexdigest()
+        if not epg_url:
+            return {"title": "无 EPG 链接", "logo": None}
+
+        cache_key = epg_config_key(epg_url)
         now_ts = datetime.now(timezone.utc).timestamp()
-        
+
         # 1. 内存缓存极速命中
-        if not refresh and url_hash in cls._cache:
-            entry = cls._cache[url_hash]
+        if not refresh and cache_key in cls._cache:
+            entry = cls._cache[cache_key]
             if now_ts - entry["timestamp"] < 3600:
                 return cls._lookup_in_memory(entry, channel_id, channel_name, current_logo)
-            
-        # 2. 刷新频率控制 (Anti-Storm): 5 分钟内同一 URL 只允许一次真正的 refresh=True
+
+        # 2. 刷新频率控制 (Anti-Storm): 5 分钟内同一配置只允许一次真正的 refresh=True
         actual_refresh = refresh
         if refresh:
-            last_ref = _url_refresh_timestamps.get(url_hash, 0)
-            if time.time() - last_ref < 300: 
-                print(f"[EPG] 刷新受限 (5分钟CD): {epg_url}")
+            last_ref = _url_refresh_timestamps.get(cache_key, 0)
+            if time.time() - last_ref < 300:
+                if time.time() >= _cd_log_suppress_until.get(cache_key, 0):
+                    print(f"[EPG] 刷新受限 (5分钟CD): {epg_url}")
+                    _cd_log_suppress_until[cache_key] = time.time() + 300
                 actual_refresh = False
             else:
-                # 前置记录尝试时间，防止下载过程中由于并发穿透再次触发下载
-                _url_refresh_timestamps[url_hash] = time.time()
+                _url_refresh_timestamps[cache_key] = time.time()
 
         # 3. 请求合并逻辑 (Future Coalescing)
         async with _locks_lock:
-            if url_hash in _pending_futures:
-                fut = _pending_futures[url_hash]
+            if cache_key in _pending_futures:
+                fut = _pending_futures[cache_key]
             else:
                 fut = asyncio.get_event_loop().create_future()
-                _pending_futures[url_hash] = fut
-                # 记录刷新任务属性
-                asyncio.create_task(cls._bg_refresh_at_url(epg_url, url_hash, actual_refresh))
-                
+                _pending_futures[cache_key] = fut
+                asyncio.create_task(cls._bg_refresh_at_url(epg_url, cache_key, actual_refresh))
+
         try:
-            # 增加 10 秒硬超时
             await asyncio.wait_for(fut, timeout=10.0)
-            if url_hash in cls._cache:
-                res = cls._lookup_in_memory(cls._cache[url_hash], channel_id, channel_name, current_logo)
-                return res
+            if cache_key in cls._cache:
+                return cls._lookup_in_memory(cls._cache[cache_key], channel_id, channel_name, current_logo)
         except Exception as e:
-            # 记录详细错误堆栈防止静默退出
             import traceback
+
             print(f"[EPG] API 异常: {epg_url} -> {e}")
             traceback.print_exc()
-            
+
         return {"title": "无节目信息", "logo": None}
 
     @classmethod
-    async def _bg_refresh_at_url(cls, epg_url: str, url_hash: str, refresh: bool):
+    async def _bg_refresh_at_url(cls, epg_url: str, cache_key: str, refresh: bool):
         """后台执行真正的数据抓取与解析"""
         try:
-            xml_path = await fetch_epg_cached(epg_url, refresh=refresh)
-            if xml_path and os.path.exists(xml_path):
-                loop = asyncio.get_event_loop()
-                parsed_data = await loop.run_in_executor(None, cls._parse_epg_file, xml_path)
-                cls._cache[url_hash] = {
+            parts = []
+            source_urls = expand_epg_urls(epg_url)
+            for url in source_urls:
+                xml_path = await fetch_epg_cached(url, refresh=refresh)
+                if xml_path and os.path.exists(xml_path):
+                    loop = asyncio.get_event_loop()
+                    parts.append(await loop.run_in_executor(None, cls._parse_epg_file, xml_path))
+            parsed_data = cls._merge_parsed_data(parts)
+            if parsed_data["programs"] or parsed_data["name_map"]:
+                cls._cache[cache_key] = {
                     "timestamp": datetime.now(timezone.utc).timestamp(),
                     "programs": parsed_data["programs"],
                     "name_map": parsed_data["name_map"],
                     "logos": parsed_data["logos"],
-                    "reverse_logos": parsed_data.get("reverse_logos", {})
+                    "reverse_logos": parsed_data.get("reverse_logos", {}),
+                    "source_count": len(source_urls),
                 }
-                # 如果是强制刷新成功，记录时间戳
                 if refresh:
-                    _url_refresh_timestamps[url_hash] = time.time()
-                
-                print(f"[EPG] 解析完成: 加载了 {len(parsed_data['name_map'])} 个频道变体, {len(parsed_data['programs'])} 个节目源")
+                    _url_refresh_timestamps[cache_key] = time.time()
+                print(
+                    f"[EPG] 解析完成: {len(source_urls)} 个源, "
+                    f"{len(parsed_data['name_map'])} 个频道变体, "
+                    f"{len(parsed_data['programs'])} 个节目源"
+                )
         except Exception as e:
             print(f"[EPG] 后台解析崩溃: {e}")
             import traceback
+
             traceback.print_exc()
         finally:
-            # 1. 显式通知所有等待该 URL 加载的请求
             async with _locks_lock:
-                fut = _pending_futures.get(url_hash)
+                fut = _pending_futures.get(cache_key)
                 if fut and not fut.done():
                     fut.set_result(True)
-            
-            # 2. 延迟 2 秒移除标记，防止前端瞬间重复触发下载
+
             await asyncio.sleep(2)
             async with _locks_lock:
-                if url_hash in _pending_futures:
-                    _pending_futures.pop(url_hash, None)
+                if cache_key in _pending_futures:
+                    _pending_futures.pop(cache_key, None)
 
     @staticmethod
     def _clean_name(name: str) -> str:
         """强化清洗名称用于模糊匹配 (自动支持简繁转换)"""
-        if not name: return ""
-        import re
+        if not name:
+            return ""
         # 0. 去除名字中的所有空格 (应对 "翡翠 台" 这种变体)
         name = name.replace(" ", "")
-        
+
         # 1. 移除干扰符号和其中间内容
-        name = re.sub(r'[\(\[【「].*?[\)\]】」]', '', name)
+        name = re.sub(r"[\(\[【「].*?[\)\]】」]", "", name)
         # 2. 移除干扰词
         noise = [
-            "4K", "1080P", "HD", "高清", "超清", "频道", 
-            "TVB", "CCTV", "备用", "字幕", "匹配", 
-            "*sg", "geo-blocked", "fhd"
+            "4K",
+            "1080P",
+            "HD",
+            "高清",
+            "超清",
+            "频道",
+            "TVB",
+            "CCTV",
+            "备用",
+            "字幕",
+            "匹配",
+            "*sg",
+            "geo-blocked",
+            "fhd",
         ]
         for word in noise:
             escaped_word = re.escape(word)
-            name = re.sub(rf'\b{escaped_word}\b', '', name, flags=re.IGNORECASE)
+            name = re.sub(rf"\b{escaped_word}\b", "", name, flags=re.IGNORECASE)
             name = name.replace(word, "").replace(word.lower(), "")
-        
+
         # 3. 移除特殊符号（保留汉字、字母、数字）
-        name = re.sub(r'[^\w\u4e00-\u9fa5]', '', name)
+        name = re.sub(r"[^\w\u4e00-\u9fa5]", "", name)
         name = name.strip().lower()
-        
-        return zhconv.convert(name, 'zh-hans')
+
+        return zhconv.convert(name, "zh-hans")
 
     @staticmethod
     def _expand_lookup_candidates(seed: str, name_map: dict) -> set:
@@ -253,39 +359,21 @@ class EPGManager:
         name_map: dict,
         logos: dict,
         now_dt: datetime,
-        *,
-        channel_name: str = "",
-        channel_id: str = "",
     ) -> dict:
         """在给定候选集内查找当前节目与台标。"""
         found_title = "无节目信息"
         found_logo = None
-        is_target = (
-            "翡翠" in (channel_name or "")
-            or "Jade" in (channel_name or "")
-            or "翡翠" in (channel_id or "")
-        )
-        if is_target:
-            print(f"[EPG] 匹配追踪 [{channel_name}]: 候选词={list(candidates)}")
-            sample_keys = list(name_map.keys())[:5]
-            print(f"[EPG] 匹配追踪 [{channel_name}]: 映射库样例键={sample_keys}")
 
         for cid in candidates:
             actual_cid = cid
             if cid not in programs and cid in name_map:
                 actual_cid = name_map[cid]
-                if is_target:
-                    print(f"[EPG] 匹配追踪 [{channel_name}]: 通过 '{cid}' 映射到 ID '{actual_cid}'")
 
             if actual_cid in programs and found_title == "无节目信息":
-                if is_target:
-                    print(f"[EPG] 匹配追踪 [{channel_name}]: ID '{actual_cid}' 在节目库中命中！")
                 for start_dt, stop_dt, title in programs[actual_cid]:
                     if start_dt <= now_dt <= stop_dt:
                         found_title = title
                         break
-                if is_target and found_title == "无节目信息":
-                    print(f"[EPG] 匹配追踪 [{channel_name}]: 命中频道但无当前时段节目 (当前时间: {now_dt})")
 
             if actual_cid in logos and not found_logo:
                 found_logo = logos[actual_cid]
@@ -310,8 +398,6 @@ class EPGManager:
                 name_map,
                 logos,
                 now_dt,
-                channel_name=channel_name,
-                channel_id=channel_id or "",
             )
             if result["title"] != "无节目信息" or result["logo"]:
                 return result
@@ -324,8 +410,6 @@ class EPGManager:
                 name_map,
                 logos,
                 now_dt,
-                channel_name=channel_name or "",
-                channel_id=channel_id,
             )
 
         return {"title": "无节目信息", "logo": None}
@@ -337,25 +421,17 @@ class EPGManager:
         name_map = {}
         logos = {}
         reverse_logos = {}
-        import re
-        
+
         try:
-            # 方案：二进制读取 + 暴力纠正编码瑕疵
-            with open(xml_path, 'rb') as f:
+            with open(xml_path, "rb") as f:
                 raw_data = f.read()
-            
-            # 1. 过滤掉所有可能导致 parsing 报错的低位控制字符 (0x00-0x1F)
-            # 除了 0x09 (TAB), 0x0A (LF), 0x0D (CR)
-            cleaned_data = re.sub(rb'[\x00-\x08\x0b\x0c\x0e-\x1f]', b'', raw_data)
-            
-            # 2. 解决常见的 & 符号未转义问题 (XML 禁忌)
-            # 很多 EPG 源直接写 "A & B" 而不是 "A &amp; B"
-            cleaned_data = cleaned_data.replace(b' & ', b' &amp; ')
-            
-            # 使用 io.BytesIO 模拟流式解析，并采用更鲁棒的迭代模式
+
+            cleaned_data = re.sub(rb"[\x00-\x08\x0b\x0c\x0e-\x1f]", b"", raw_data)
+            cleaned_data = cleaned_data.replace(b" & ", b" &amp; ")
+
             it = ET.iterparse(io.BytesIO(cleaned_data), events=("start", "end"))
             _, root = next(it)
-            
+
             while True:
                 try:
                     event, elem = next(it)
@@ -366,15 +442,21 @@ class EPGManager:
                                 for dn in elem.findall("display-name"):
                                     if dn.text:
                                         text = dn.text.strip()
-                                        for t in [text, zhconv.convert(text, 'zh-hans'), zhconv.convert(text, 'zh-hant')]:
+                                        for t in [
+                                            text,
+                                            zhconv.convert(text, "zh-hans"),
+                                            zhconv.convert(text, "zh-hant"),
+                                        ]:
                                             name_map[t] = cid
                                         cleaned = EPGManager._clean_name(text)
-                                        if cleaned: name_map[cleaned] = cid
+                                        if cleaned:
+                                            name_map[cleaned] = cid
                                 icon = elem.find("icon")
                                 if icon is not None:
                                     src = icon.get("src")
-                                    if src: logos[cid] = src
-                                    
+                                    if src:
+                                        logos[cid] = src
+
                         elif elem.tag == "programme":
                             chan = elem.get("channel")
                             start_str = elem.get("start")
@@ -383,21 +465,29 @@ class EPGManager:
                                 try:
                                     start_dt = date_parser.parse(start_str)
                                     stop_dt = date_parser.parse(stop_str)
-                                    if start_dt.tzinfo is None: start_dt = start_dt.replace(tzinfo=timezone.utc)
-                                    if stop_dt.tzinfo is None: stop_dt = stop_dt.replace(tzinfo=timezone.utc)
+                                    if start_dt.tzinfo is None:
+                                        start_dt = start_dt.replace(tzinfo=timezone.utc)
+                                    if stop_dt.tzinfo is None:
+                                        stop_dt = stop_dt.replace(tzinfo=timezone.utc)
                                     title_elem = elem.find("title")
                                     title = title_elem.text if title_elem is not None else "未知节目"
-                                    if chan not in programs: programs[chan] = []
+                                    if chan not in programs:
+                                        programs[chan] = []
                                     programs[chan].append((start_dt, stop_dt, title))
-                                except: pass
+                                except Exception:
+                                    pass
                         root.clear()
                 except StopIteration:
                     break
-                except Exception as ex:
-                    # 遇到损坏的 XML 片段，跳过这一段继续寻找下一个标签
+                except Exception:
                     continue
-                    
+
         except Exception as e:
             print(f"[EPG] 解析遇到严重异常: {e}")
-            
-        return {"programs": programs, "name_map": name_map, "logos": logos, "reverse_logos": reverse_logos}
+
+        return {
+            "programs": programs,
+            "name_map": name_map,
+            "logos": logos,
+            "reverse_logos": reverse_logos,
+        }

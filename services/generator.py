@@ -149,7 +149,8 @@ class M3UGenerator:
 
         header = "#EXTM3U"
         if epg_url:
-            header += f' x-tvg-url="{epg_url}"'
+            from services.epg import primary_epg_url_for_export
+            header += f' x-tvg-url="{primary_epg_url_for_export(epg_url)}"'
         lines = [header]
         
         for c in channels:

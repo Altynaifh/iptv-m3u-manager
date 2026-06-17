@@ -9,7 +9,7 @@ import re
 from models import OutputSource, Subscription, Channel, TaskRecord
 from database import get_session
 from services.generator import M3UGenerator
-from services.epg import fetch_epg_cached
+from services.epg import refresh_epg_group
 from services.stream_checker import StreamChecker
 from routers.subscriptions import process_subscription_refresh
 from services.output_resolver import export_m3u_channels, filter_candidates, preview_export_groups, aggregate_channels
@@ -69,7 +69,7 @@ def list_source_groups(subscription_ids: str = "", session: Session = Depends(ge
 async def create_output(out: OutputSource, session: Session = Depends(get_session)):
     """新建聚合源"""
     if out.epg_url:
-        await fetch_epg_cached(out.epg_url, refresh=True)
+        await refresh_epg_group(out.epg_url, refresh=True)
         
     session.add(out)
     session.commit()

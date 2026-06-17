@@ -8,7 +8,7 @@ from sqlmodel import Session
 from database import engine
 from models import OutputSource, Subscription, TaskRecord
 from routers.subscriptions import process_subscription_refresh
-from services.epg import fetch_epg_cached
+from services.epg import refresh_epg_group
 from services.output_postprocess import run_output_postprocess_chain
 from services.update_status_report import format_output_update_status, apply_output_update_status
 from task_broker import broker, update_task_status
@@ -69,7 +69,7 @@ async def refresh_output_task(task_id: str, output_id: int):
             if out.epg_url:
                 await update_task_status(task_id, progress=50, message="正在更新 EPG...")
                 try:
-                    await fetch_epg_cached(out.epg_url, refresh=True)
+                    await refresh_epg_group(out.epg_url, refresh=True)
                 except Exception as e:
                     print(f"[refresh_output_task] EPG failed: {e}")
 

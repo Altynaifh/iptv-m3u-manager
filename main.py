@@ -296,8 +296,8 @@ async def auto_update_task():
                                 # 此处不需要 process_subscription_refresh，因为步骤1已经刷过所有订阅
                                 # 直接刷新聚合 EPG (如果有)
                                 if out.epg_url:
-                                    from services.epg import fetch_epg_cached
-                                    await fetch_epg_cached(out.epg_url, refresh=True)
+                                    from services.epg import refresh_epg_group
+                                    await refresh_epg_group(out.epg_url, refresh=True)
                                 
                                 out.last_updated = now
                                 session.add(out)
