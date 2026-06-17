@@ -9,9 +9,25 @@ from typing import Any, List
 
 import aiohttp
 
+from services.ai_vision_log import latin1_audit, mask_secret, vision_log, vision_log_exc
+
 _VISION_JSON_LOG: Path | None = None
 # 连接阶段快速失败，避免断网时长时间挂起
 _HTTP_TIMEOUT = aiohttp.ClientTimeout(connect=15, sock_connect=15, sock_read=120, total=180)
+
+
+def _require_latin1_http_text(value: str, field: str) -> str:
+    """HTTP 头仅支持 latin-1；配置项含中文时提前给出可读报错。"""
+    text = value or ""
+    try:
+        text.encode("latin-1")
+    except UnicodeEncodeError as e:
+        snippet = text[e.start : e.end]
+        raise ValueError(
+            f"LLM {field} 含非 ASCII 字符（如「{snippet}」），无法用于 HTTP 请求头；"
+            f"请检查 API Key / Base URL 是否误粘贴了中文说明"
+        ) from e
+    return text
 
 
 class LlmNetworkError(RuntimeError):
@@ -525,26 +541,62 @@ class LlmClient:
     ) -> dict:
         if not self.configured():
             raise ValueError("LLM 未配置 base_url / api_key / model")
+        api_key = _require_latin1_http_text(self.api_key, "api_key")
+        model = _require_latin1_http_text(self.model, "model")
         url = self.chat_completions_url(self.base_url)
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json; charset=utf-8",
         }
         payload: dict = {
-            "model": self.model,
+            "model": model,
             "messages": messages,
             "temperature": temperature,
         }
         if response_format:
             payload["response_format"] = response_format
+        body_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        is_vision = any(
+            isinstance(m.get("content"), list)
+            and any(isinstance(p, dict) and p.get("type") == "image_url" for p in (m.get("content") or []))
+            for m in messages
+            if isinstance(m, dict)
+        )
+        if is_vision:
+            vision_log(
+                f"HTTP POST url={url!r} model={model!r} "
+                f"api_key={mask_secret(api_key)} body_bytes={len(body_bytes)} "
+                f"json_format={bool(response_format)}"
+            )
+            for audit in (
+                latin1_audit("Authorization", headers.get("Authorization", "")),
+                latin1_audit("Content-Type", headers.get("Content-Type", "")),
+            ):
+                if not audit.get("ok"):
+                    vision_log(f"HTTP 头 latin-1 审计失败 {audit}")
         try:
             async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
-                async with session.post(url, json=payload, headers=headers) as resp:
+                async with session.post(url, data=body_bytes, headers=headers) as resp:
                     body = await resp.text()
+                    if is_vision:
+                        vision_log(
+                            f"HTTP 响应 status={resp.status} body_len={len(body)} "
+                            f"preview={body[:240]!r}"
+                        )
                     if resp.status >= 400:
                         raise RuntimeError(f"LLM HTTP {resp.status}: {body[:500]}")
                     return json.loads(body)
+        except UnicodeEncodeError as e:
+            vision_log_exc("LLM HTTP UnicodeEncodeError", e)
+            snippet = (e.object or "")[e.start : e.end] if isinstance(e.object, str) else ""
+            raise ValueError(
+                "LLM 请求编码失败（HTTP 头或 URL 含非 ASCII 字符"
+                + (f"：「{snippet}」" if snippet else "")
+                + "）；请检查视觉模型 API Key 与 Base URL"
+            ) from e
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            if is_vision:
+                vision_log_exc("LLM HTTP 网络错误", e)
             raise LlmNetworkError(f"LLM 网络请求失败: {type(e).__name__}: {e}") from e
 
     @staticmethod

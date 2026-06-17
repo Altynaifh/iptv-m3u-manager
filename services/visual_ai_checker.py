@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, select
 
 from models import Channel, OutputSource
+from services.ai_vision_log import latin1_audit, mask_secret, vision_log, vision_log_exc, vision_push
 from services.llm_client import LlmClient, VisionJsonParseError
 from task_broker import TaskCanceledError, is_task_canceled
 from services.llm_settings import load_llm_blocks
@@ -169,7 +170,8 @@ def build_collage_data_url(slots: List[Tuple[int, str, Optional[bytes]]]) -> str
                     img.paste(tile, (x + (cell_w - tile.width) // 2, y + (cell_h - tile.height) // 2))
                 except Exception:
                     draw.rectangle([x, y, x + cell_w, y + cell_h], outline=(80, 80, 80))
-            draw.text((x + 6, y + 6), f"#{cid} {label[:12]}", fill=(255, 220, 100))
+            # 拼图角标仅用 channel_id，避免中文名进入底层 HTTP/字体编码链
+            draw.text((x + 6, y + 6), f"#{cid}", fill=(255, 220, 100))
         else:
             draw.rectangle([x, y, x + cell_w, y + cell_h], outline=(60, 60, 60))
     buf = io.BytesIO()
@@ -184,9 +186,18 @@ async def ensure_check_image(session: Session, channel: Channel) -> Optional[str
         if row is not None:
             channel = row
     if channel.check_image:
+        vision_log(
+            f"截图复用 channel_id={channel.id} name={channel.name!r} "
+            f"已有截图 len={len(channel.check_image)}"
+        )
         return channel.check_image
+    url_preview = (channel.url or "")[:120]
+    vision_log(
+        f"截图抓取开始 channel_id={channel.id} name={channel.name!r} url={url_preview!r}"
+    )
     res = await StreamChecker.check_stream_visual(channel.url)
     if res.get("status") and res.get("image"):
+        vision_log(f"截图抓取成功 channel_id={channel.id}")
         channel.check_status = True
         channel.check_image = res["image"]
         channel.check_date = datetime.utcnow()
@@ -197,7 +208,9 @@ async def ensure_check_image(session: Session, channel: Channel) -> Optional[str
         return channel.check_image
     channel.check_status = False
     channel.check_image = None
-    channel.check_error = res.get("error") or "capture failed"
+    err = res.get("error") or "capture failed"
+    vision_log(f"截图抓取失败 channel_id={channel.id} error={err[:200]!r}")
+    channel.check_error = err
     session.add(channel)
     session.commit()
     return None
@@ -223,6 +236,25 @@ class VisualAiChecker:
         if not client.configured():
             raise ValueError("视觉 LLM 未配置")
 
+        out_label = f"output_id={out.id}" if out and out.id else "output=无"
+        task_label = f"task_id={task_id}" if task_id else "task_id=无"
+        vision_log(
+            f"批处理开始 {out_label} {task_label} "
+            f"输入频道={len(channels)} capture_missing={capture_missing} "
+            f"draft={'有' if draft else '无'}"
+        )
+        vision_log(
+            f"LLM 配置 base_url={vision.get('base_url', '')!r} "
+            f"model={vision.get('model', '')!r} api_key={mask_secret(vision.get('api_key', ''))}"
+        )
+        for audit in (
+            latin1_audit("api_key", vision.get("api_key", "")),
+            latin1_audit("model", vision.get("model", "")),
+            latin1_audit("base_url", vision.get("base_url", "")),
+        ):
+            if not audit.get("ok"):
+                vision_log(f"latin-1 审计失败 {audit}")
+
         unique = []
         seen = set()
         for ch in channels:
@@ -239,6 +271,14 @@ class VisualAiChecker:
         stats = {"batches": 0, "updated": 0, "errors": 0, "disabled": 0, "enabled": 0}
         resolved_prompt = _resolve_vision_prompt(out, draft, custom_prompt)
         vision_system = _build_vision_system(resolved_prompt)
+        vision_log(
+            f"去重后频道={len(unique)} 批次数={total_batches} "
+            f"自定义提示词长度={len(resolved_prompt)} system_prompt长度={len(vision_system)}"
+        )
+        if task_id:
+            await vision_push(
+                f"开始检测：{len(unique)} 个频道，{total_batches} 批拼图"
+            )
 
         async def _push_batch_realtime(batch_channels: List[Channel]) -> None:
             if not out or out.id is None:
@@ -269,6 +309,11 @@ class VisualAiChecker:
                 raise TaskCanceledError("任务已中止")
 
             batch = unique[batch_start : batch_start + BATCH_SIZE]
+            batch_no = batch_start // BATCH_SIZE + 1
+            batch_summary = ", ".join(
+                f"{ch.id}:{ch.name!r}" for ch in batch if ch.id is not None
+            )
+            vision_log(f"批次 {batch_no}/{total_batches} 开始 channels=[{batch_summary}]")
             slots = []
             for ch in batch:
                 img = ch.check_image
@@ -276,8 +321,13 @@ class VisualAiChecker:
                     img = await ensure_check_image(session, ch)
                 raw = _decode_data_url(img) if img else None
                 slots.append((ch.id, ch.name or "", raw))
+                vision_log(
+                    f"  槽位 channel_id={ch.id} has_image={bool(raw)} "
+                    f"capture_tried={capture_missing and not ch.check_image}"
+                )
 
             if not any(s[2] for s in slots):
+                vision_log(f"批次 {batch_no}/{total_batches} 跳过：本批无可用截图")
                 for ch in batch:
                     if ch.check_image:
                         ch.ai_visual_status = "error"
@@ -297,19 +347,37 @@ class VisualAiChecker:
 
             collage_url = build_collage_data_url(slots)
             slot_desc = "\n".join(
-                f"slot{i+1}: channel_id={slots[i][0]} name={slots[i][1]}"
+                f"slot{i+1}: channel_id={slots[i][0]}"
                 for i in range(len(slots))
             )
             user_text = _build_vision_user_text(len(slots), slot_desc, resolved_prompt)
+            vision_log(
+                f"批次 {batch_no}/{total_batches} 请求 LLM "
+                f"collage_bytes≈{max(0, len(collage_url) - 23)} "
+                f"user_text_len={len(user_text)} slot_desc={slot_desc!r}"
+            )
 
             try:
                 parsed = await client.chat_vision_json(vision_system, user_text, collage_url)
                 results = parsed.get("results") or []
-            except (VisionJsonParseError, ValueError) as e:
+                vision_log(
+                    f"批次 {batch_no}/{total_batches} LLM 返回 results={len(results)} "
+                    f"items={results!r}"
+                )
+            except (VisionJsonParseError, ValueError, UnicodeEncodeError) as e:
+                vision_log_exc(f"批次 {batch_no}/{total_batches} LLM 失败", e)
                 stats["errors"] += 1
+                if isinstance(e, UnicodeEncodeError):
+                    snippet = (e.object or "")[e.start : e.end] if isinstance(e.object, str) else ""
+                    err_detail = (
+                        "HTTP 编码失败，请检查视觉 LLM 的 API Key / Base URL 是否含中文"
+                        + (f"（{snippet}）" if snippet else "")
+                    )
+                else:
+                    err_detail = str(e)
                 for ch in batch:
                     ch.ai_visual_status = "error"
-                    ch.ai_visual_detail = str(e)[:200]
+                    ch.ai_visual_detail = err_detail[:200]
                     ch.ai_visual_date = datetime.utcnow()
                     session.add(ch)
                 session.commit()
@@ -317,6 +385,8 @@ class VisualAiChecker:
                 done += 1
                 if progress_cb:
                     await progress_cb(done, total_batches, f"批次失败: {e}")
+                if task_id:
+                    await vision_push(f"批次 {batch_no}/{total_batches} 失败: {err_detail[:120]}")
                 continue
 
             by_id = {ch.id: ch for ch in batch}
@@ -361,7 +431,16 @@ class VisualAiChecker:
 
             stats["batches"] += 1
             done += 1
+            vision_log(
+                f"批次 {batch_no}/{total_batches} 完成 "
+                f"matched={len(seen_result)} disabled+={disabled_n} enabled+={enabled_n}"
+            )
             if progress_cb:
                 await progress_cb(done, total_batches, f"已完成拼图批 {done}/{total_batches}")
+            if task_id:
+                await vision_push(f"批次 {batch_no}/{total_batches} 完成")
 
+        vision_log(f"批处理结束 stats={stats}")
+        if task_id:
+            await vision_push(f"检测结束：{stats}")
         return stats

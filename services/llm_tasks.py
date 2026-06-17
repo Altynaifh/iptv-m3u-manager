@@ -13,6 +13,8 @@ from services.realtime_push import (
     rebuild_manual_status_from_db,
     refresh_output_and_broadcast,
 )
+from services.ai_vision_log import mask_secret, vision_log, vision_log_exc, vision_push
+from services.llm_settings import load_llm_blocks
 from services.visual_ai_checker import VisualAiChecker
 from task_broker import TaskCanceledError, broker, guard_task_cancellation, update_task_status
 
@@ -70,12 +72,30 @@ async def ai_visual_check_task(
 ):
     draft = json.loads(draft_json) if draft_json else None
     try:
+        vision_log(
+            f"任务入队 task_id={task_id} output_id={output_id} "
+            f"channel_ids={'指定' + str(len(channel_ids or [])) if channel_ids else '自动'} "
+            f"capture_missing={capture_missing} draft_json={'有' if draft_json else '无'}"
+        )
         await update_task_status(task_id, status="running", progress=5, message="加载频道...")
         with Session(engine) as session:
             out = session.get(OutputSource, output_id)
             if not out:
+                vision_log(f"任务失败 task_id={task_id} 原因=聚合源不存在")
                 await update_task_status(task_id, status="failure", message="聚合源不存在")
                 return
+
+            blocks = load_llm_blocks(session)
+            vision_cfg = blocks.get("llm_vision") or {}
+            vision_log(
+                f"任务配置 task_id={task_id} output={out.name!r} "
+                f"llm_vision base_url={vision_cfg.get('base_url', '')!r} "
+                f"model={vision_cfg.get('model', '')!r} "
+                f"api_key={mask_secret(vision_cfg.get('api_key', ''))}"
+            )
+            await vision_push(
+                f"任务 {task_id[:8]}… 聚合「{out.name}」视觉 LLM={vision_cfg.get('model') or '未配置'}"
+            )
 
             if channel_ids:
                 channels = list(
@@ -84,6 +104,7 @@ async def ai_visual_check_task(
             else:
                 channels = ai_vision_candidates(session, out, draft)
 
+            vision_log(f"任务频道列表 task_id={task_id} count={len(channels)}")
             if not channels:
                 await update_task_status(task_id, status="success", progress=100, message="无频道需要检测")
                 status = rebuild_manual_status_from_db(session, output_id)
@@ -106,6 +127,7 @@ async def ai_visual_check_task(
                     draft=draft,
                 ),
             )
+            vision_log(f"任务成功 task_id={task_id} stats={stats}")
             await update_task_status(
                 task_id,
                 status="success",
@@ -116,11 +138,27 @@ async def ai_visual_check_task(
             status = rebuild_manual_status_from_db(session, output_id)
             await refresh_output_and_broadcast(session, output_id, status_text=status)
     except TaskCanceledError:
+        vision_log(f"任务中止 task_id={task_id}")
         await update_task_status(task_id, status="canceled", message="任务已中止")
         with Session(engine) as session:
             status = rebuild_manual_status_from_db(session, output_id)
             await refresh_output_and_broadcast(session, output_id, status_text=status)
+    except UnicodeEncodeError as e:
+        vision_log_exc(f"任务 latin-1 编码失败 task_id={task_id}", e)
+        snippet = (e.object or "")[e.start : e.end] if isinstance(e.object, str) else ""
+        msg = (
+            "AI 视觉请求编码失败：HTTP 头或 URL 不能含中文"
+            + (f"（问题片段：{snippet}）" if snippet else "")
+            + "；请检查视觉 LLM 的 API Key / Base URL 配置"
+        )
+        await vision_push(msg[:200])
+        await update_task_status(task_id, status="failure", message=msg[:500])
+        with Session(engine) as session:
+            status = rebuild_manual_status_from_db(session, output_id)
+            await refresh_output_and_broadcast(session, output_id, status_text=status)
     except Exception as e:
+        vision_log_exc(f"任务未捕获异常 task_id={task_id}", e)
+        await vision_push(f"任务失败: {str(e)[:120]}")
         await update_task_status(task_id, status="failure", message=str(e)[:500])
         with Session(engine) as session:
             status = rebuild_manual_status_from_db(session, output_id)

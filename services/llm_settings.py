@@ -9,6 +9,20 @@ from models import AppSettings
 MASK = "***"
 
 
+def _reject_non_latin1_config(value: str, field: str) -> None:
+    """API Key / 模型名须为 ASCII，避免 HTTP 头 latin-1 编码失败。"""
+    text = (value or "").strip()
+    if not text:
+        return
+    try:
+        text.encode("latin-1")
+    except UnicodeEncodeError as e:
+        snippet = text[e.start : e.end]
+        raise ValueError(
+            f"{field} 含非 ASCII 字符（如「{snippet}」），请仅填写英文/数字密钥与模型名"
+        ) from e
+
+
 def _default_block() -> Dict[str, str]:
     return {"base_url": "", "api_key": "", "model": ""}
 
@@ -89,7 +103,11 @@ def save_llm_settings(session: Session, payload: Dict[str, Any]) -> Dict[str, An
             merged["model"] = str(inc.get("model") or "").strip()
         api_key = inc.get("api_key")
         if api_key is not None and api_key != MASK and str(api_key).strip():
-            merged["api_key"] = str(api_key).strip()
+            key_text = str(api_key).strip()
+            _reject_non_latin1_config(key_text, f"{key} api_key")
+            merged["api_key"] = key_text
+        if inc.get("model") is not None:
+            _reject_non_latin1_config(merged.get("model", ""), f"{key} model")
         if key == "llm_text":
             row.llm_text_json = json.dumps(merged, ensure_ascii=False)
         else:
