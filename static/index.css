@@ -179,6 +179,23 @@
     display: flex;
     gap: 8px;
     align-items: center;
+    flex-wrap: wrap;
+}
+
+.task-duration {
+    color: var(--primary, #60a5fa);
+    opacity: 0.95;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.task-sub-info .task-message {
+    opacity: 0.85;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* 进度条样式 */

@@ -149,7 +149,8 @@ async def update_task_status(task_id: str, status: Optional[str] = None, progres
                 "status": task.status,
                 "progress": task.progress,
                 "message": task.message,
-                "updated_at": task.updated_at.isoformat()
+                "created_at": task.created_at.isoformat(),
+                "updated_at": task.updated_at.isoformat(),
             }
 
     async def _do_update():
