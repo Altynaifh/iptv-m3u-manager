@@ -110,13 +110,17 @@ async def _run_ai_organize_step(
     subs = session.exec(select(Subscription)).all()
     sub_map = {s.id: s.name or s.url for s in subs}
     layout = await PlaylistOrganizer.organize_output(session, out, None, sub_map)
+    group_count = len(layout.get("groups", []))
     if task_id:
         await update_task_status(
             task_id,
             progress=95,
-            message=f"AI 排序完成，共 {len(layout.get('groups', []))} 个分组",
+            message=f"AI 排序完成，共 {group_count} 个分组",
         )
-    return {"groups": len(layout.get("groups", []))}
+    from services.realtime_push import broadcast_preview_layout
+
+    await broadcast_preview_layout(out.id, out.layout_mode or "explicit", group_count)
+    return {"groups": group_count}
 
 
 async def run_output_postprocess_chain(

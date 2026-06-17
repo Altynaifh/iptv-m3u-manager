@@ -933,7 +933,15 @@
             const modal = document.getElementById('channel_modal');
             if (!modal || modal.style.display !== 'flex') return;
             if (msg.layout_mode === 'explicit') window._previewGroupDisplayMode = 'ai';
-            scheduleAggregatePreviewReload({ force: true, silent: true, fetchOutputs: true, delay: 400 });
+            window._previewChannelEnableOverrides = new Map();
+            scheduleAggregatePreviewReload({
+                force: true,
+                silent: false,
+                fetchOutputs: true,
+                layoutRefresh: true,
+                bypassDefer: true,
+                delay: 150,
+            });
         }
 
         function handleRealtimePushMessage(msg) {
@@ -2433,7 +2441,8 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             return actual;
         }
 
-        function shouldDeferAggregatePreviewReload() {
+        function shouldDeferAggregatePreviewReload(options) {
+            if (options && options.bypassDefer) return false;
             if (window._channelToggleInFlight && window._channelToggleInFlight.size > 0) return true;
             const recentMs = Date.now() - (window._previewLastChannelToggleAt || 0);
             return recentMs < 4000;
@@ -2441,7 +2450,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
         function flushDeferredAggregatePreviewReload() {
             if (!window._previewReloadDeferredOptions) return;
-            if (shouldDeferAggregatePreviewReload()) {
+            if (shouldDeferAggregatePreviewReload(window._previewReloadDeferredOptions)) {
                 if (!window._previewReloadDeferredTimer) {
                     const wait = Math.max(50, 4000 - (Date.now() - (window._previewLastChannelToggleAt || 0)) + 50);
                     window._previewReloadDeferredTimer = setTimeout(() => {
@@ -3886,7 +3895,13 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const n = String(name || '');
             return n.includes('批量深度检测')
                 || n.includes('AI 画面检测')
-                || n.includes('AI 整理节目表');
+                || n.includes('AI 整理节目表')
+                || n.includes('刷新聚合');
+        }
+
+        function isAggregateLayoutRefreshTaskName(name) {
+            const n = String(name || '');
+            return n.includes('AI 整理节目表') || n.includes('刷新聚合');
         }
 
         function rememberPreviewTask(taskId, outputId) {
@@ -4073,8 +4088,9 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             const out = (typeof allOutputs !== 'undefined' && allOutputs) ? allOutputs.find(o => o.id === oid) : null;
             if (!out) return false;
             setCurrentOutputAutoDisableFlag(out);
-            const viewState = captureAggregatePreviewViewState();
-            const savedMode = window._previewGroupDisplayMode;
+            const layoutRefresh = !!options.layoutRefresh;
+            const viewState = layoutRefresh ? null : captureAggregatePreviewViewState();
+            const savedMode = layoutRefresh ? null : window._previewGroupDisplayMode;
             try {
                 invalidatePreviewRenderCaches();
                 const data = await fetchAggregateExportPreview(oid, {
@@ -4082,12 +4098,28 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     epg_refresh: !!options.epg_refresh,
                 });
                 window._previewGroupPayload = normalizePreviewPayloadChannels(data);
+                if (layoutRefresh) {
+                    window._previewChannelEnableOverrides = new Map();
+                }
                 updatePreviewGroupModeTabs(data);
                 if (savedMode) window._previewGroupDisplayMode = savedMode;
-                applyPreviewGroupDisplay({ preserveView: true, priorViewState: viewState, forceRender: true });
+                const freshOut = (typeof allOutputs !== 'undefined' && allOutputs)
+                    ? allOutputs.find(o => o.id === oid)
+                    : null;
+                if (freshOut) {
+                    syncLayoutGlobalsFromOutput(freshOut);
+                    updateLayoutModeBadge(freshOut.layout_mode || data.layout_mode || 'rules');
+                } else if (data.layout_mode) {
+                    updateLayoutModeBadge(data.layout_mode);
+                }
+                applyPreviewGroupDisplay({
+                    preserveView: !layoutRefresh,
+                    priorViewState: viewState,
+                    forceRender: true,
+                });
                 updatePreviewStats();
                 if (!options.silent) {
-                    showToast('频道列表已更新', 'success');
+                    showToast(layoutRefresh ? '聚合预览已更新' : '频道列表已更新', 'success');
                 }
                 return true;
             } catch (e) {
@@ -4100,7 +4132,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
         }
 
         function scheduleAggregatePreviewReload(options = {}) {
-            if (shouldDeferAggregatePreviewReload()) {
+            if (shouldDeferAggregatePreviewReload(options)) {
                 window._previewReloadDeferredOptions = options;
                 return;
             }
@@ -4149,16 +4181,19 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             if (window._previewRefreshedTaskIds.has(task.id)) return;
             window._previewRefreshedTaskIds.add(task.id);
 
-            if (task.name && task.name.includes('AI 整理')) {
+            const layoutRefresh = isAggregateLayoutRefreshTaskName(task.name);
+            if (layoutRefresh || (task.name && task.name.includes('AI 整理'))) {
                 window._previewGroupDisplayMode = 'ai';
             }
             window._previewChannelEnableOverrides = new Map();
 
             scheduleAggregatePreviewReload({
                 force: true,
-                silent: true,
+                silent: !layoutRefresh,
                 fetchOutputs: true,
-                delay: 600,
+                layoutRefresh,
+                bypassDefer: layoutRefresh,
+                delay: layoutRefresh ? 150 : 400,
             });
             stopPreviewTaskWatcher();
         }
@@ -7455,7 +7490,12 @@ function removeTag(val) {
                 const res = await fetch(`/outputs/${id}/refresh`, { method: 'POST' });
                 if (res.ok) {
                     const data = await res.json();
-                    showToast('基础同步已完成', 'success');
+                    showToast(data.message || '刷新任务已提交', 'success');
+                    if (data.task_id) {
+                        if (window.currentPreviewOutputId === id) {
+                            rememberPreviewTask(data.task_id, id);
+                        }
+                    }
                     fetchOutputs();
                     fetchSubs();
 

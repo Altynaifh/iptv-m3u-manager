@@ -46,6 +46,11 @@ async def llm_organize_task(
                 message=f"已生成 explicit 布局，{group_count} 个分组",
                 result=json.dumps(layout, ensure_ascii=False),
             )
+            from services.output_artifacts import schedule_rebuild_output_artifacts
+            from services.output_stats import invalidate_output_runtime_cache
+
+            invalidate_output_runtime_cache(out, schedule_rebuild=False)
+            schedule_rebuild_output_artifacts(output_id, epg_refresh=False)
             status = rebuild_manual_status_from_db(session, output_id)
             await refresh_output_and_broadcast(session, output_id, status_text=status)
             await broadcast_preview_layout(output_id, out.layout_mode or "explicit", group_count)
