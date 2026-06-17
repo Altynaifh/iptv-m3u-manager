@@ -8,7 +8,7 @@ from sqlmodel import Session
 from database import engine
 from models import OutputSource, Subscription, TaskRecord
 from routers.subscriptions import process_subscription_refresh
-from services.epg import refresh_epg_group
+from services.epg import refresh_epg_for_output
 from services.output_postprocess import run_output_postprocess_chain
 from services.update_status_report import format_output_update_status, apply_output_update_status
 from task_broker import broker, update_task_status
@@ -66,10 +66,28 @@ async def refresh_output_task(task_id: str, output_id: int):
             if sub_failures:
                 sync_ok = False
 
-            if out.epg_url:
-                await update_task_status(task_id, progress=50, message="正在更新 EPG...")
+            related_subs = []
+            for sub_id in sub_ids:
+                sub = session.get(Subscription, sub_id)
+                if sub:
+                    related_subs.append(sub)
+
+            epg_sources = []
+            if out.epg_url or any(getattr(s, "epg_url", None) for s in related_subs):
+                await update_task_status(task_id, progress=50, message="正在更新节目表...")
                 try:
-                    await refresh_epg_group(out.epg_url, refresh=True)
+                    epg_sources = await refresh_epg_for_output(
+                        out.epg_url,
+                        related_subs,
+                        refresh=True,
+                        reload_memory=True,
+                    )
+                    if epg_sources:
+                        await update_task_status(
+                            task_id,
+                            progress=55,
+                            message=f"节目表已更新（{len(epg_sources)} 个来源）",
+                        )
                 except Exception as e:
                     print(f"[refresh_output_task] EPG failed: {e}")
 
@@ -95,7 +113,8 @@ async def refresh_output_task(task_id: str, output_id: int):
             out = session.get(OutputSource, output_id)
             if out:
                 invalidate_output_runtime_cache(out, schedule_rebuild=False)
-            schedule_rebuild_output_artifacts(output_id, epg_refresh=bool(out and out.epg_url))
+            # 节目表已在上方拉取，产物重建只读本地缓存做匹配
+            schedule_rebuild_output_artifacts(output_id, epg_refresh=False)
 
             if not steps:
                 apply_output_update_status(

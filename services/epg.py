@@ -8,7 +8,7 @@ import aiohttp
 import xml.etree.ElementTree as ET
 from hashlib import md5
 from datetime import datetime, timezone
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Iterable
 from dateutil import parser as date_parser
 import zhconv
 
@@ -18,11 +18,15 @@ if not os.path.exists(EPG_CACHE_DIR):
     os.makedirs(EPG_CACHE_DIR, exist_ok=True)
 
 # 并发控制与请求合并
-_url_locks: Dict[str, asyncio.Lock] = {}
-_pending_futures: Dict[str, asyncio.Future] = {}  # 用于合并相同 URL 组合的解析任务
-_url_refresh_timestamps: Dict[str, float] = {}  # 记录上一次成功强制刷新的时间
+_pending_futures: Dict[str, asyncio.Future] = {}  # 合并相同 EPG 配置组的解析任务
+_url_download_futures: Dict[str, asyncio.Future] = {}  # 合并同源单链下载
+_url_refresh_timestamps: Dict[str, float] = {}  # 配置组上次成功强制刷新时间
+_url_disk_refresh_at: Dict[str, float] = {}  # 单链 EPG 上次成功写入磁盘时间
 _cd_log_suppress_until: Dict[str, float] = {}  # CD 提示去重
 _locks_lock = asyncio.Lock()
+_download_guard = asyncio.Lock()
+# 全流程刷新窗口内同源跳过重复下载（秒）
+_SAME_SOURCE_REFRESH_COOLDOWN = 120
 
 
 def split_epg_urls(epg_url: str) -> List[str]:
@@ -51,14 +55,67 @@ def epg_config_key(epg_url: str) -> str:
     return md5("|".join(urls).encode()).hexdigest()
 
 
+def merge_unique_epg_urls(*epg_url_parts: Optional[str]) -> List[str]:
+    """合并多段 EPG 配置并去重，保持首次出现顺序。"""
+    merged: List[str] = []
+    for part in epg_url_parts:
+        for url in split_epg_urls(part or ""):
+            if url not in merged:
+                merged.append(url)
+    return merged
+
+
+def collect_epg_sources_for_output(
+    output_epg_url: Optional[str],
+    subscriptions: Optional[Iterable[Any]] = None,
+) -> List[str]:
+    """汇总聚合源及其关联订阅的节目表来源（同源只保留一条）。"""
+    parts: List[Optional[str]] = [output_epg_url]
+    for sub in subscriptions or []:
+        parts.append(getattr(sub, "epg_url", None))
+    return merge_unique_epg_urls(*parts)
+
+
+async def refresh_epg_sources(urls: List[str], refresh: bool = False) -> List[str]:
+    """按去重后的来源列表刷新磁盘缓存，同源只下载一次。"""
+    unique_urls: List[str] = []
+    for url in urls or []:
+        if url and url not in unique_urls:
+            unique_urls.append(url)
+    refreshed: List[str] = []
+    for url in unique_urls:
+        path = await fetch_epg_cached(url, refresh=refresh)
+        if path:
+            refreshed.append(url)
+    if refresh and refreshed:
+        print(f"[EPG] 已刷新 {len(refreshed)} 个节目来源（去重后）")
+    return refreshed
+
+
 async def refresh_epg_group(epg_url: str, refresh: bool = False) -> None:
     """按配置刷新一组 EPG 源到本地磁盘缓存。"""
-    for url in split_epg_urls(epg_url):
-        await fetch_epg_cached(url, refresh=refresh)
+    await refresh_epg_sources(split_epg_urls(epg_url), refresh=refresh)
 
 
-async def fetch_epg_cached(url: str, refresh: bool = False) -> str:
-    """原子化下载并缓存 EPG"""
+async def refresh_epg_for_output(
+    output_epg_url: Optional[str],
+    subscriptions: Optional[Iterable[Any]] = None,
+    *,
+    refresh: bool = False,
+    reload_memory: bool = True,
+) -> List[str]:
+    """聚合全流程：先汇总节目来源，一次拉取后可选重载内存索引。"""
+    sources = collect_epg_sources_for_output(output_epg_url, subscriptions)
+    if not sources:
+        return []
+    await refresh_epg_sources(sources, refresh=refresh)
+    if reload_memory and output_epg_url:
+        EPGManager.ensure_parsed_cache_sync(output_epg_url, force_reload=True)
+    return sources
+
+
+async def _download_epg_to_disk(url: str, refresh: bool) -> Optional[str]:
+    """实际执行单链 EPG 下载（无并发合并）。"""
     if not url:
         return None
 
@@ -66,14 +123,16 @@ async def fetch_epg_cached(url: str, refresh: bool = False) -> str:
     cache_path = os.path.join(EPG_CACHE_DIR, f"{url_hash}.xml")
     tmp_path = cache_path + ".tmp"
 
-    # 1. 强缓存模式：如果 refresh=False 且文件存在，直接视为有效
     if not refresh and os.path.exists(cache_path):
         return cache_path
 
-    # 下载不需要全局锁主干，只需针对该文件的临时下载锁
+    if refresh:
+        last = _url_disk_refresh_at.get(url_hash, 0)
+        if time.time() - last < _SAME_SOURCE_REFRESH_COOLDOWN and os.path.exists(cache_path):
+            return cache_path
+
     print(f"[EPG] 正在下载: {url}")
     try:
-        # 使用 APTVPlayer 的 UA 绕过 429 封锁
         headers = {
             "User-Agent": "APTVPlayer/1.3.9 (com.ios.aptv; build:1; iOS 15.1.0) Alamofire/5.2.2",
             "Accept": "*/*",
@@ -95,18 +154,60 @@ async def fetch_epg_cached(url: str, refresh: bool = False) -> str:
                 else:
                     xml_content = content
 
-                # 先写临时文件，再瞬间移动（原子操作）
                 with open(tmp_path, "wb") as f:
                     f.write(xml_content)
                 if os.path.exists(cache_path):
                     os.remove(cache_path)
                 os.rename(tmp_path, cache_path)
+        _url_disk_refresh_at[url_hash] = time.time()
         return cache_path
     except Exception as e:
         print(f"[EPG] 下载失败 {url}: {e}")
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
         return cache_path if os.path.exists(cache_path) else None
+
+
+async def fetch_epg_cached(url: str, refresh: bool = False) -> str:
+    """原子化下载并缓存 EPG；同源并发请求合并为一次下载。"""
+    if not url:
+        return None
+
+    url_hash = md5(url.encode()).hexdigest()
+    cache_path = os.path.join(EPG_CACHE_DIR, f"{url_hash}.xml")
+    if not refresh and os.path.exists(cache_path):
+        return cache_path
+
+    async with _download_guard:
+        fut = _url_download_futures.get(url_hash)
+        if fut is None:
+            fut = asyncio.get_event_loop().create_future()
+            _url_download_futures[url_hash] = fut
+            asyncio.create_task(_run_coalesced_epg_download(url, url_hash, refresh, fut))
+
+    try:
+        return await fut
+    except Exception:
+        return cache_path if os.path.exists(cache_path) else None
+
+
+async def _run_coalesced_epg_download(
+    url: str,
+    url_hash: str,
+    refresh: bool,
+    fut: asyncio.Future,
+) -> None:
+    try:
+        result = await _download_epg_to_disk(url, refresh)
+        if not fut.done():
+            fut.set_result(result)
+    except Exception as exc:
+        if not fut.done():
+            fut.set_exception(exc)
+    finally:
+        async with _download_guard:
+            if _url_download_futures.get(url_hash) is fut:
+                _url_download_futures.pop(url_hash, None)
 
 
 class EPGManager:
@@ -306,10 +407,11 @@ class EPGManager:
         try:
             parts = []
             source_urls = split_epg_urls(epg_url)
+            await refresh_epg_sources(source_urls, refresh=refresh)
+            loop = asyncio.get_event_loop()
             for url in source_urls:
-                xml_path = await fetch_epg_cached(url, refresh=refresh)
-                if xml_path and os.path.exists(xml_path):
-                    loop = asyncio.get_event_loop()
+                xml_path = os.path.join(EPG_CACHE_DIR, f"{md5(url.encode()).hexdigest()}.xml")
+                if os.path.exists(xml_path):
                     parts.append(await loop.run_in_executor(None, cls._parse_epg_file, xml_path))
             parsed_data = cls._merge_parsed_data(parts)
             if parsed_data["programs"] or parsed_data["name_map"]:

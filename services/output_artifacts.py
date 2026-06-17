@@ -337,10 +337,26 @@ async def build_output_artifacts_async(
 ) -> Dict[str, Any]:
     """后台任务入口：可选先拉 EPG，再在线程池生成产物。"""
     if epg_refresh and epg_url:
-        from services.epg import EPGManager, refresh_epg_group
+        from services.epg import refresh_epg_for_output
 
-        await refresh_epg_group(epg_url, refresh=True)
-        EPGManager.ensure_parsed_cache_sync(epg_url, force_reload=True)
+        with Session(engine) as session:
+            out = session.get(OutputSource, output_id)
+            related_subs = []
+            if out:
+                try:
+                    sub_ids = json.loads(out.subscription_ids or "[]")
+                except Exception:
+                    sub_ids = []
+                for sub_id in sub_ids:
+                    sub = session.get(Subscription, sub_id)
+                    if sub:
+                        related_subs.append(sub)
+            await refresh_epg_for_output(
+                epg_url,
+                related_subs,
+                refresh=True,
+                reload_memory=True,
+            )
 
     return await asyncio.to_thread(_build_artifacts_sync, output_id)
 
