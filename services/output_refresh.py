@@ -7,7 +7,7 @@ from sqlmodel import Session
 
 from database import engine
 from models import OutputSource, Subscription, TaskRecord
-from routers.subscriptions import process_subscription_refresh
+from routers.subscriptions import refresh_subscriptions_deduped
 from services.epg import refresh_epg_for_output
 from services.output_postprocess import run_output_postprocess_chain
 from services.update_status_report import format_output_update_status, apply_output_update_status
@@ -35,10 +35,13 @@ async def refresh_output_task(task_id: str, output_id: int):
             except Exception:
                 sub_ids = []
 
-            sub_failures = 0
-            sync_ok = True
+            subs: list[Subscription] = []
+            for sub_id in sub_ids:
+                sub = session.get(Subscription, sub_id)
+                if sub:
+                    subs.append(sub)
 
-            for i, sub_id in enumerate(sub_ids):
+            async def _on_group_done(done: int, total: int, lead: Subscription, group: list[Subscription]) -> None:
                 with Session(engine) as check_session:
                     task = check_session.get(TaskRecord, task_id)
                     if not task or task.status == "canceled":
@@ -48,37 +51,30 @@ async def refresh_output_task(task_id: str, output_id: int):
                             message="刷新作业已由用户中止",
                         )
                         return
+                label = lead.name or lead.url or str(lead.id)
+                suffix = f"（同源 {len(group)} 个订阅）" if len(group) > 1 else ""
+                p = 10 + int(done / total * 40) if total else 50
+                await update_task_status(
+                    task_id,
+                    progress=p,
+                    message=f"已同步订阅: {label}{suffix}",
+                )
 
-                try:
-                    sub = session.get(Subscription, sub_id)
-                    if sub:
-                        await process_subscription_refresh(session, sub, invalidate_outputs=False)
-                        p = 10 + int((i + 1) / len(sub_ids) * 40) if sub_ids else 50
-                        await update_task_status(
-                            task_id,
-                            progress=p,
-                            message=f"已同步订阅: {sub.name or sub_id}",
-                        )
-                except Exception as e:
-                    sub_failures += 1
-                    print(f"[refresh_output_task] Sub {sub_id} failed: {e}")
-
-            if sub_failures:
-                sync_ok = False
-
-            related_subs = []
-            for sub_id in sub_ids:
-                sub = session.get(Subscription, sub_id)
-                if sub:
-                    related_subs.append(sub)
+            dedup_result = await refresh_subscriptions_deduped(
+                session,
+                subs,
+                invalidate_outputs=False,
+                on_group_done=_on_group_done,
+            )
+            sub_failures = dedup_result.get("failures", 0)
+            sync_ok = sub_failures == 0
 
             epg_sources = []
-            if out.epg_url or any(getattr(s, "epg_url", None) for s in related_subs):
+            if out.epg_url:
                 await update_task_status(task_id, progress=50, message="正在更新节目表...")
                 try:
                     epg_sources = await refresh_epg_for_output(
                         out.epg_url,
-                        related_subs,
                         refresh=True,
                         reload_memory=True,
                     )

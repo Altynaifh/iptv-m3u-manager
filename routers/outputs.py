@@ -11,7 +11,7 @@ from database import get_session
 from services.generator import M3UGenerator
 from services.epg import EPGManager, refresh_epg_group, split_epg_urls
 from services.stream_checker import StreamChecker
-from routers.subscriptions import process_subscription_refresh
+
 from services.output_resolver import export_m3u_channels, filter_candidates, preview_export_groups, aggregate_channels
 from services.preview_cache import clear_output_preview_cache, get_or_build_export_preview
 from services.output_stats import (

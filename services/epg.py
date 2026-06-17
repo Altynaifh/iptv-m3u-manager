@@ -65,15 +65,9 @@ def merge_unique_epg_urls(*epg_url_parts: Optional[str]) -> List[str]:
     return merged
 
 
-def collect_epg_sources_for_output(
-    output_epg_url: Optional[str],
-    subscriptions: Optional[Iterable[Any]] = None,
-) -> List[str]:
-    """汇总聚合源及其关联订阅的节目表来源（同源只保留一条）。"""
-    parts: List[Optional[str]] = [output_epg_url]
-    for sub in subscriptions or []:
-        parts.append(getattr(sub, "epg_url", None))
-    return merge_unique_epg_urls(*parts)
+def collect_epg_sources_for_output(output_epg_url: Optional[str]) -> List[str]:
+    """聚合源专属节目表来源（忽略订阅/频道自带链）。"""
+    return split_epg_urls(output_epg_url or "")
 
 
 async def refresh_epg_sources(urls: List[str], refresh: bool = False) -> List[str]:
@@ -99,13 +93,12 @@ async def refresh_epg_group(epg_url: str, refresh: bool = False) -> None:
 
 async def refresh_epg_for_output(
     output_epg_url: Optional[str],
-    subscriptions: Optional[Iterable[Any]] = None,
     *,
     refresh: bool = False,
     reload_memory: bool = True,
 ) -> List[str]:
-    """聚合全流程：先汇总节目来源，一次拉取后可选重载内存索引。"""
-    sources = collect_epg_sources_for_output(output_epg_url, subscriptions)
+    """聚合全流程：仅拉取聚合表配置的节目来源，一次下载后可选重载内存索引。"""
+    sources = collect_epg_sources_for_output(output_epg_url)
     if not sources:
         return []
     await refresh_epg_sources(sources, refresh=refresh)

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlmodel import Session, select
-from typing import List
+from hashlib import md5
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 from models import Subscription, Channel, TaskRecord
 from database import get_session, engine
 from services.fetcher import IPTVFetcher, fetch_subscription_task
@@ -92,6 +93,59 @@ def get_subscription_channels(sub_id: int, session: Session = Depends(get_sessio
     channels = session.exec(select(Channel).where(Channel.subscription_id == sub_id)).all()
     return channels
 
+def subscription_fetch_key(sub: Subscription) -> str:
+    """订阅抓取归一化键：同源（URL + UA + Headers）只请求一次。"""
+    url = (sub.url or "").strip()
+    ua = sub.user_agent or ""
+    headers = (sub.headers or "{}").strip()
+    return md5(f"{url}\0{ua}\0{headers}".encode()).hexdigest()
+
+
+def _channel_states_for_subscription(session: Session, sub_id: int) -> Dict[str, dict]:
+    """读取订阅下频道状态，刷新后按流 URL 恢复。"""
+    old_channels = session.exec(select(Channel).where(Channel.subscription_id == sub_id)).all()
+    return {
+        c.url: {
+            "is_enabled": c.is_enabled,
+            "check_status": c.check_status,
+            "check_date": c.check_date,
+            "check_image": c.check_image,
+        }
+        for c in old_channels
+    }
+
+
+async def _apply_channels_to_subscription(
+    session: Session,
+    sub: Subscription,
+    channels_data: list,
+) -> int:
+    """将已抓取的频道列表写入订阅（保留启用/检测状态）。"""
+    channel_states = _channel_states_for_subscription(session, sub.id)
+    old_channels = session.exec(select(Channel).where(Channel.subscription_id == sub.id)).all()
+    for c in old_channels:
+        session.delete(c)
+
+    for item in channels_data:
+        url = item.get("url")
+        state = channel_states.get(url, {})
+        channel = Channel(
+            **item,
+            subscription_id=sub.id,
+            is_enabled=state.get("is_enabled", True),
+            check_status=state.get("check_status"),
+            check_date=state.get("check_date"),
+            check_image=state.get("check_image"),
+        )
+        session.add(channel)
+
+    sub.last_updated = datetime.utcnow()
+    sub.last_update_status = "Success"
+    session.add(sub)
+    session.commit()
+    return len(channels_data)
+
+
 async def process_subscription_refresh(
     session: Session,
     sub: Subscription,
@@ -99,50 +153,55 @@ async def process_subscription_refresh(
     invalidate_outputs: bool = True,
 ) -> int:
     """同步订阅（支持 M3U/TXT/Git 混合及多地址）。"""
-    # 1. 记住当前已有的状态（禁用状态、检测结果），防止刷新后丢失
-    old_channels = session.exec(select(Channel).where(Channel.subscription_id == sub.id)).all()
-    
-    # 建立以 URL 为 Key 的状态映射表
-    channel_states = {}
-    for c in old_channels:
-        channel_states[c.url] = {
-            "is_enabled": c.is_enabled,
-            "check_status": c.check_status,
-            "check_date": c.check_date,
-            "check_image": c.check_image
-        }
-    
-    # 2. 清掉旧台
-    for c in old_channels:
-        session.delete(c)
-    
-    # 3. 抓取并解析
-    channels_data, metadata = await IPTVFetcher.fetch_subscription(sub.url, sub.user_agent, sub.headers)
-    
-    for item in channels_data:
-        # 尝试从映射表中恢复状态
-        url = item.get("url")
-        state = channel_states.get(url, {})
-        
-        is_enabled = state.get("is_enabled", True)
-        
-        channel = Channel(
-            **item, 
-            subscription_id=sub.id, 
-            is_enabled=is_enabled,
-            check_status=state.get("check_status"),
-            check_date=state.get("check_date"),
-            check_image=state.get("check_image")
-        )
-        session.add(channel)
-    
-    sub.last_updated = datetime.utcnow()
-    sub.last_update_status = "Success"
-    session.add(sub)
-    session.commit()
+    channels_data, _metadata = await IPTVFetcher.fetch_subscription(sub.url, sub.user_agent, sub.headers)
+    count = await _apply_channels_to_subscription(session, sub, channels_data)
     if invalidate_outputs:
         invalidate_all_output_runtime_caches(session)
-    return len(channels_data)
+    return count
+
+
+async def refresh_subscriptions_deduped(
+    session: Session,
+    subs: List[Subscription],
+    *,
+    invalidate_outputs: bool = True,
+    on_group_done: Optional[
+        Callable[[int, int, Subscription, List[Subscription]], Awaitable[None]]
+    ] = None,
+) -> Dict[str, Any]:
+    """按抓取键去重刷新多个订阅；同源只下载一次，结果写入该组全部订阅。"""
+    groups: Dict[str, List[Subscription]] = {}
+    ordered_keys: List[str] = []
+    for sub in subs:
+        if not sub:
+            continue
+        key = subscription_fetch_key(sub)
+        if key not in groups:
+            groups[key] = []
+            ordered_keys.append(key)
+        groups[key].append(sub)
+
+    failures = 0
+    synced = 0
+    for idx, key in enumerate(ordered_keys):
+        group = groups[key]
+        lead = group[0]
+        try:
+            channels_data, _metadata = await IPTVFetcher.fetch_subscription(
+                lead.url, lead.user_agent, lead.headers
+            )
+            for sub in group:
+                await _apply_channels_to_subscription(session, sub, channels_data)
+                synced += 1
+            if on_group_done:
+                await on_group_done(idx + 1, len(ordered_keys), lead, group)
+        except Exception as e:
+            failures += len(group)
+            print(f"[refresh_subscriptions_deduped] 抓取失败 {lead.name or lead.url}: {e}")
+
+    if invalidate_outputs:
+        invalidate_all_output_runtime_caches(session)
+    return {"source_count": len(ordered_keys), "synced": synced, "failures": failures}
 
 @router.post("/{sub_id}/refresh")
 async def refresh_subscription(sub_id: int, session: Session = Depends(get_session)):
