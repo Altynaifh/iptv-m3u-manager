@@ -1906,11 +1906,18 @@
             return `<span ${labelAttr} style="font-size: 0.8em; opacity: 0.6;">${safe}${mark}</span>`;
         }
 
+        function previewEpgDisabledHtml() {
+            return '<span style="font-size:0.85em;opacity:0.35;" title="频道已禁用，不刷新节目表">—</span>';
+        }
+
         function previewEpgSnapshotSpan(c, loadingHtml) {
             if (channelHasEpgSnapshot(c)) {
                 const highlight = c.epg_program && c.epg_program !== '无节目信息';
                 const safe = String(c.epg_program).replace(/&/g, '&amp;').replace(/</g, '&lt;');
                 return `<span style="font-size: 0.85em; color: ${highlight ? 'var(--text-highlight)' : 'inherit'}; opacity: ${highlight ? '1' : '0.5'};">${safe}</span>`;
+            }
+            if (isPreviewChannelDisabled(c)) {
+                return previewEpgDisabledHtml();
             }
             return loadingHtml || '<span style="font-size: 0.85em; color: var(--text-loading);">⏳ 加载中...</span>';
         }
@@ -1957,6 +1964,10 @@
                     const cell = document.getElementById(cellId);
                     if (channelHasEpgSnapshot(c) && !forceRefresh && !options.forceEpg) {
                         if (cell) applyEpgData(cell, { program: c.epg_program, logo: c.epg_logo }, cellId);
+                        return;
+                    }
+                    if (isPreviewChannelDisabled(c)) {
+                        if (cell) cell.innerHTML = previewEpgDisabledHtml();
                         return;
                     }
                     if (cell) {
@@ -3508,7 +3519,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         <td style="padding: 10px;" data-label="TVG：">${formatTvgNameCellHtml(c)}</td>
                         ${window.currentEPGUrl ? `
                         <td id="epg_${renderOffset}_${batch.indexOf(c)}" data-epg-channel-id="${c.id}" style="padding: 10px;" data-label="节目：">
-                            <span style="font-size: 0.85em; color: var(--text-loading);">⏳ 加载中...</span>
+                            ${previewEpgSnapshotSpan(c)}
                         </td>` : ''}
                         <td style="padding: 10px;" data-label="分组：">${previewChannelGroupLabel(c)}</td>
                         ${window.lastRenderShowActions ? `<td style="padding: 10px;" data-label="来源："><span style="font-size: 0.85em; opacity: 0.7;">${c.source || '未知'}</span></td>` : ''}
@@ -3528,11 +3539,13 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
             if (window.currentEPGUrl) {
                 const isRefresh = !!window.forceRefreshEPG;
-                const pending = batch.map((c, idx) => ({
-                    channel: c,
-                    cellId: isMobileCardMode ? `mobile_epg_${renderOffset}_${idx}` : `epg_${renderOffset}_${idx}`,
-                }));
-                runBatchEpgMatch(pending, { refresh: isRefresh });
+                const pending = batch
+                    .map((c, idx) => ({
+                        channel: c,
+                        cellId: isMobileCardMode ? `mobile_epg_${renderOffset}_${idx}` : `epg_${renderOffset}_${idx}`,
+                    }))
+                    .filter((item) => isPreviewChannelEnabled(item.channel));
+                if (pending.length) runBatchEpgMatch(pending, { refresh: isRefresh });
             }
 
             renderOffset = end;
