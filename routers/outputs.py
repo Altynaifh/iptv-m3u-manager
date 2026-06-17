@@ -457,7 +457,14 @@ async def run_output_visual_check_v2(output_id: int, task_id: str, force_check: 
                 from services.stream_checker import StreamChecker
                 check_source = 'manual' if force_check else 'auto'
                 auto_disable = getattr(out, 'auto_disable_on_check', True)
-                check_result = await StreamChecker.run_batch_check(session, matched_channels, source=check_source, task_id=task_id, auto_disable=auto_disable)
+                check_result = await StreamChecker.run_batch_check(
+                    session,
+                    matched_channels,
+                    source=check_source,
+                    task_id=task_id,
+                    auto_disable=auto_disable,
+                    output_id=output_id,
+                )
                 
                 # 如果检测因中止而提前退出，严禁发送成功广播
                 if check_result is False:
@@ -536,7 +543,14 @@ async def run_output_visual_check(output_id: int, force_check: bool = False):
                 
                 # 传入 task_id 以便更新进度
                 auto_disable = getattr(out, 'auto_disable_on_check', True)
-                await StreamChecker.run_batch_check(session, pending_channels, source=check_source, task_id=task_id, auto_disable=auto_disable)
+                await StreamChecker.run_batch_check(
+                    session,
+                    pending_channels,
+                    source=check_source,
+                    task_id=task_id,
+                    auto_disable=auto_disable,
+                    output_id=output_id,
+                )
                 
                 # 重新获取对象并更新状态
                 out = session.get(OutputSource, output_id)
@@ -651,11 +665,21 @@ async def ai_visual_check_output(output_id: int, data: dict, session: Session = 
             "ai_vision_prompt": (data.get("ai_vision_prompt") or "").strip(),
         }
     channel_ids = data.get("channel_ids")
+    if channel_ids is not None:
+        try:
+            channel_ids = [int(i) for i in channel_ids if i is not None]
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="channel_ids 格式无效")
+        if not channel_ids:
+            raise HTTPException(status_code=400, detail="未指定有效频道")
     capture_missing = data.get("capture_missing", True)
     task_id = str(uuid.uuid4())
+    task_label = f"AI 画面检测: {out.name}"
+    if channel_ids:
+        task_label = f"AI 画面检测: {len(channel_ids)} 个频道"
     task_record = TaskRecord(
         id=task_id,
-        name=f"AI 画面检测: {out.name}",
+        name=task_label,
         status="pending",
         message="排队中...",
     )

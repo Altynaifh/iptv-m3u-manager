@@ -1,6 +1,6 @@
 """聚合源更新后的自动后处理链路。"""
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from sqlmodel import Session, select
 
@@ -11,6 +11,56 @@ from services.stream_checker import StreamChecker
 from services.visual_ai_checker import VisualAiChecker
 from task_broker import push_console_log, update_task_status
 from services.update_status_report import format_output_update_status, apply_output_update_status
+
+
+def _screenshot_tail_candidates(channels: List[Channel]) -> List[Channel]:
+    """扫尾补截图：从未检测且无截图的聚合成员。"""
+    return [
+        c for c in channels
+        if c.check_date is None and not c.check_image
+    ]
+
+
+def _aggregate_screenshot_stats(session: Session, out: OutputSource) -> dict:
+    members = aggregate_channels(session, out, None)
+    enabled = sum(1 for c in members if c.is_enabled)
+    return {"enabled": enabled, "disabled": len(members) - enabled}
+
+
+async def _enforce_failed_check_disablement(
+    session: Session,
+    out: OutputSource,
+) -> int:
+    """截图已判定失败但仍启用的频道，强制禁用。"""
+    from services.realtime_push import (
+        broadcast_channel_patch,
+        broadcast_preview_stats,
+        channel_patch_fields,
+    )
+
+    members = aggregate_channels(session, out, None)
+    changed: List[Channel] = []
+    for ch in members:
+        if ch.check_status is not False or not ch.is_enabled or ch.id is None:
+            continue
+        row = session.get(Channel, ch.id)
+        if not row or not row.is_enabled:
+            continue
+        row.is_enabled = False
+        session.add(row)
+        changed.append(row)
+    if not changed:
+        return 0
+    session.commit()
+    for row in changed:
+        session.refresh(row)
+    if out.id is not None:
+        patches = [channel_patch_fields(c) for c in changed]
+        await broadcast_channel_patch(out.id, patches)
+        members = aggregate_channels(session, out, None)
+        enabled_n = sum(1 for c in members if c.is_enabled)
+        await broadcast_preview_stats(out.id, len(members), enabled_n)
+    return len(changed)
 
 
 def _planned_steps(out: OutputSource) -> List[str]:
@@ -47,13 +97,45 @@ async def _run_screenshot_step(
         source=check_source,
         task_id=task_id,
         auto_disable=auto_disable,
+        output_id=out.id,
     )
     if result is False:
         return False, None
-    after = aggregate_channels(session, out, None)
-    enabled = sum(1 for c in after if c.is_enabled)
-    disabled = len(after) - enabled
-    return True, {"enabled": enabled, "disabled": disabled}
+    return True, _aggregate_screenshot_stats(session, out)
+
+
+async def _run_screenshot_sweep_step(
+    session: Session,
+    out: OutputSource,
+    *,
+    task_id: Optional[str],
+    source: str,
+    force_check: bool,
+) -> Tuple[bool, int]:
+    """扫尾：对漏检且无图的聚合成员补跑截图。"""
+    auto_disable = getattr(out, "auto_disable_on_check", True)
+    pending = _screenshot_tail_candidates(aggregate_channels(session, out, None))
+    if not pending:
+        return True, 0
+
+    if task_id:
+        await update_task_status(
+            task_id,
+            progress=68,
+            message=f"扫尾补截图（{len(pending)} 路漏检）...",
+        )
+    check_source = "manual" if force_check else source
+    result = await StreamChecker.run_batch_check(
+        session,
+        pending,
+        source=check_source,
+        task_id=task_id,
+        auto_disable=auto_disable,
+        output_id=out.id,
+    )
+    if result is False:
+        return False, 0
+    return True, len(pending)
 
 
 async def _run_ai_vision_step(
@@ -176,6 +258,30 @@ async def run_output_postprocess_chain(
             )
             return planned
 
+        sweep_ok, swept_n = await _run_screenshot_sweep_step(
+            session,
+            out,
+            task_id=task_id,
+            source=source,
+            force_check=force_check,
+        )
+        if not sweep_ok:
+            apply_output_update_status(
+                session,
+                output_id,
+                format_output_update_status(trigger, sync=sync_ok, screenshot={"enabled": 0, "disabled": 0}),
+            )
+            return planned
+
+        disabled_n = await _enforce_failed_check_disablement(session, out)
+        screenshot_stats = _aggregate_screenshot_stats(session, out)
+        if swept_n or disabled_n:
+            msg = f"截图扫尾：补检 {swept_n} 路"
+            if disabled_n:
+                msg += f"，强制禁用 {disabled_n} 路"
+            print(f"[Screenshot] 聚合 id={out.id} {msg}")
+            await push_console_log(f"[截图] 聚合 id={out.id} {msg}")
+
     if "ai_vision" in planned:
         if task_id:
             await update_task_status(task_id, progress=72, message="自动 AI 视觉检测（仅启用频道）...")
@@ -212,6 +318,14 @@ async def run_output_postprocess_chain(
             message=status,
         )
     return planned
+
+
+async def enforce_screenshot_fail_disablement(session: Session, output_id: int) -> int:
+    """对外：聚合范围内截图失败仍启用的频道强制禁用。"""
+    out = session.get(OutputSource, output_id)
+    if not out:
+        return 0
+    return await _enforce_failed_check_disablement(session, out)
 
 
 from database import engine

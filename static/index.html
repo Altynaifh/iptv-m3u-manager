@@ -8503,10 +8503,10 @@ function removeTag(val) {
 
         window.currentPreviewOutputId = null;
 
-        async function postOutputAiVisual(outputId, draft) {
+        async function postOutputAiVisual(outputId, payload = {}) {
             const res = await fetch(`/outputs/${outputId}/ai-visual-check`, {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...draft, use_draft: !!draft })
+                body: JSON.stringify(payload)
             });
             return res;
         }
@@ -8520,11 +8520,7 @@ function removeTag(val) {
         }
 
         function getAiVisionCheckPool() {
-            if (window.currentPreviewOutputId && window._previewGroupPayload) {
-                const all = flattenAggregatePreviewChannels();
-                if (all.length) return all.filter(c => isPreviewChannelEnabled(c));
-            }
-            return (filteredChannels || []).filter(c => isPreviewChannelEnabled(c));
+            return getAggregateMemberChannelsForSelection();
         }
 
         function confirmAiVisionCheck(scopeLabel) {
@@ -8541,16 +8537,41 @@ function removeTag(val) {
             if (!oid) { showToast('仅聚合预览支持 AI 视觉检测', 'error'); return; }
             const pool = getAiVisionCheckPool();
             if (!pool.length) {
-                showToast('当前没有已启用的频道可检测', 'error');
+                showToast('当前聚合表为空，无法检测', 'error');
                 return;
             }
-            const scopeLabel = `当前聚合表内 ${pool.length} 个已启用频道`;
+
+            let scopeChannels = pool;
+            let scopeLabel = '';
+            if (window.selectedChannelIds && window.selectedChannelIds.size > 0) {
+                scopeChannels = pool.filter(c => window.selectedChannelIds.has(c.id));
+                if (!scopeChannels.length) {
+                    showToast('所选频道不在当前聚合表范围内', 'error');
+                    return;
+                }
+                scopeLabel = `已勾选的 ${scopeChannels.length} 个频道`;
+                showToast(`已勾选 ${scopeChannels.length} 个频道，将仅对勾选范围做 AI 视觉检测`, 'info');
+            } else {
+                scopeChannels = pool.filter(c => isPreviewChannelEnabled(c));
+                if (!scopeChannels.length) {
+                    showToast('当前没有已启用的频道可检测', 'error');
+                    return;
+                }
+                scopeLabel = `当前聚合表内 ${scopeChannels.length} 个已启用频道`;
+                showToast(`未勾选频道，将对 ${scopeChannels.length} 个已启用频道做 AI 视觉检测`, 'info');
+            }
+
             if (!confirmAiVisionCheck(scopeLabel)) return;
-            const res = await postOutputAiVisual(oid, null);
+
+            const channelIds = scopeChannels.map(c => c.id).filter(id => id != null);
+            const res = await postOutputAiVisual(oid, {
+                channel_ids: channelIds,
+                capture_missing: true,
+            });
             const data = await res.json().catch(() => ({}));
             if (res.ok) {
                 if (data.task_id) rememberPreviewTask(data.task_id, oid);
-                showToast(data.message || '已提交 AI 视觉检测，请到任务中心查看进度', 'info');
+                showToast(data.message || `已提交 AI 视觉检测（${channelIds.length} 个频道），请到任务中心查看进度`, 'info');
                 taskCenter.toggle();
             } else showToast(data.detail || data.message || '提交失败', 'error');
         }

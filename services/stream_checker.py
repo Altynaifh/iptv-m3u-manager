@@ -374,6 +374,9 @@ class StreamChecker:
             from services.realtime_push import rebuild_manual_status_from_db, refresh_output_and_broadcast
 
             with Session(engine) as refresh_session:
+                if auto_disable:
+                    from services.output_postprocess import enforce_screenshot_fail_disablement
+                    await enforce_screenshot_fail_disablement(refresh_session, output_id)
                 status = rebuild_manual_status_from_db(refresh_session, output_id)
                 await refresh_output_and_broadcast(refresh_session, output_id, status_text=status)
 
