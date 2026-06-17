@@ -246,7 +246,7 @@
                     <label
                         style="display: block; margin-bottom: 8px; opacity: 0.9; font-size: 0.95em; font-weight: 500;">EPG
                         节目预告 (可选)</label>
-                    <input type="text" id="out_epg" placeholder="EPG XML 链接 (例如: http://epg.51zmt.top:8000/api/xml/)" aria-label="EPG节目预告链接">
+                    <input type="text" id="out_epg" placeholder="多个节目表用 | 分隔，例如: https://.../pl.xml.gz|https://epg.112114.xyz/pp.xml.gz" aria-label="EPG节目预告链接">
                 </div>
 
                 <div class="form-group" style="display: flex; align-items: center; gap: 8px;">
@@ -1889,6 +1889,7 @@
             const onlyIds = options.onlyChannelIds;
             let epgIdx = 0;
             let queued = 0;
+            const pending = [];
             sections.forEach((sec, si) => {
                 if (onlySectionIndex != null && si !== onlySectionIndex) {
                     epgIdx += (sec.channels || []).length;
@@ -1915,16 +1916,14 @@
                     if (cell) {
                         cell.innerHTML = '<span style="font-size:0.85em;color:var(--text-loading);">⏳ 更新中...</span>';
                     }
-                    if (forceRefresh) {
-                        const dedupeKey = epgDedupeKey(window.currentEPGUrl, c, effectiveTvgName(c));
-                        window.epgCache.delete(dedupeKey);
-                        pendingEpgRequests.delete(dedupeKey);
-                    }
-                    enqueueEpgLoad(window.currentEPGUrl, effectiveTvgName(c), cellId, c.logo, c.id, forceRefresh, c);
+                    pending.push({ channel: c, cellId });
                     queued += 1;
                 });
                 epgIdx += chs.length;
             });
+            if (pending.length) {
+                runBatchEpgMatch(pending, { refresh: forceRefresh || !!options.forceEpg });
+            }
             return queued;
         }
 
@@ -3187,7 +3186,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         <div class="mobile-channel-card__info">
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">名称:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap"><strong>${c.name}</strong></span></div>
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">TVG:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap">${formatTvgNameCellHtml(c)}</span></div>
-                            ${window.currentEPGUrl ? `<div class="mobile-channel-card__row"><span class="mobile-channel-card__label">节目:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap" id="${epgCellId}">${previewEpgSnapshotSpan(c, '<span class="mobile-channel-card__epg-tag mobile-channel-card__epg-tag--empty">加载中...</span>')}</span></div>` : ''}
+                            ${window.currentEPGUrl ? `<div class="mobile-channel-card__row"><span class="mobile-channel-card__label">节目:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap" id="${epgCellId}" data-epg-channel-id="${c.id}">${previewEpgSnapshotSpan(c, '<span class="mobile-channel-card__epg-tag mobile-channel-card__epg-tag--empty">加载中...</span>')}</span></div>` : ''}
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label preview-col-source-group-label">分组:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap"><strong>${previewChannelGroupLabel(c)}</strong></span></div>
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">来源:</span><span class="mobile-channel-card__value mobile-channel-card__value--nowrap">${c.source || '未知'}</span></div>
                             <div class="mobile-channel-card__row"><span class="mobile-channel-card__label">状态:</span><span class="mobile-channel-card__value" data-channel-status-id="${c.id}">${statusText}</span></div>
@@ -3223,7 +3222,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         <td style="padding: 10px;">${channelLogoSlotHtml(c)}</td>
                         <td style="padding: 10px;">${c.name}</td>
                         <td style="padding: 10px;">${formatTvgNameCellHtml(c)}</td>
-                        ${window.currentEPGUrl ? `<td id="${epgCellId}" style="padding: 10px;">${previewEpgSnapshotSpan(c)}</td>` : ''}
+                        ${window.currentEPGUrl ? `<td id="${epgCellId}" data-epg-channel-id="${c.id}" style="padding: 10px;">${previewEpgSnapshotSpan(c)}</td>` : ''}
                         <td style="padding: 10px;">${previewChannelGroupLabel(c)}</td>
                         <td style="padding: 10px;"><span style="font-size: 0.85em; opacity: 0.7;">${c.source || '未知'}</span></td>
                         <td style="padding: 10px;" data-channel-status-id="${c.id}">${statusHtml}</td>
@@ -3461,7 +3460,7 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                         <td style="padding: 10px;" data-label="名称：">${c.name}</td>
                         <td style="padding: 10px;" data-label="TVG：">${formatTvgNameCellHtml(c)}</td>
                         ${window.currentEPGUrl ? `
-                        <td id="epg_${renderOffset}_${batch.indexOf(c)}" style="padding: 10px;" data-label="节目：">
+                        <td id="epg_${renderOffset}_${batch.indexOf(c)}" data-epg-channel-id="${c.id}" style="padding: 10px;" data-label="节目：">
                             <span style="font-size: 0.85em; color: var(--text-loading);">⏳ 加载中...</span>
                         </td>` : ''}
                         <td style="padding: 10px;" data-label="分组：">${previewChannelGroupLabel(c)}</td>
@@ -3480,14 +3479,13 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 list.insertAdjacentHTML('beforeend', html);
             }
 
-            // 批量加载 EPG (防卡死)
             if (window.currentEPGUrl) {
-                batch.forEach((c, idx) => {
-                    const isRefresh = !!window.forceRefreshEPG || (window.refreshSelectedOnly && window.selectedChannelIds.has(c.id));
-                    // 移动端使用不同的 cell ID 前缀
-                    const cellId = isMobileCardMode ? `mobile_epg_${renderOffset}_${idx}` : `epg_${renderOffset}_${idx}`;
-                    enqueueEpgLoad(window.currentEPGUrl, effectiveTvgName(c), cellId, c.logo, c.id, isRefresh, c);
-                });
+                const isRefresh = !!window.forceRefreshEPG;
+                const pending = batch.map((c, idx) => ({
+                    channel: c,
+                    cellId: isMobileCardMode ? `mobile_epg_${renderOffset}_${idx}` : `epg_${renderOffset}_${idx}`,
+                }));
+                runBatchEpgMatch(pending, { refresh: isRefresh });
             }
 
             renderOffset = end;
@@ -3556,71 +3554,118 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             }
         }
 
-        // EPG 性能优化
-        window.epgCache = new Map(); // 会话级缓存
-        const pendingEpgRequests = new Map(); // 请求去重
-        window._epgBatchRefreshPending = false; // 批量刷新时仅首条请求触发下载
+        // EPG：刷新时服务端一次拉取多源到本地，再仅对已启用频道批量匹配
 
-        function epgDedupeKey(epgUrl, channelObj, tvgName) {
-            const tvgId = (channelObj?.tvg_id || '').trim();
-            const name = (tvgName || '').trim();
-            return `${epgUrl}_${tvgId || name}`;
+        function updateChannelEpgSnapshot(channelId, epg) {
+            if (!channelId || !epg) return;
+            const patch = { epg_program: epg.program, epg_logo: epg.logo };
+            [currentChannels, filteredChannels].forEach((list) => {
+                if (!list) return;
+                const ch = list.find((c) => Number(c.id) === Number(channelId));
+                if (ch) Object.assign(ch, patch);
+            });
+            if (window._previewGroupPayload) {
+                ['manual_groups', 'ai_groups'].forEach((key) => {
+                    (window._previewGroupPayload[key] || []).forEach((sec) => {
+                        (sec.channels || []).forEach((ch) => {
+                            if (Number(ch.id) === Number(channelId)) Object.assign(ch, patch);
+                        });
+                    });
+                });
+            }
+        }
+
+        function applyBatchEpgPrograms(programs, channelItems = null) {
+            const map = programs || {};
+            const paintCell = (channelId, epg, cellId) => {
+                if (cellId) {
+                    const cell = document.getElementById(cellId);
+                    if (cell) applyEpgData(cell, epg, cellId);
+                }
+                document.querySelectorAll(`[data-epg-channel-id="${channelId}"]`).forEach((cell) => {
+                    applyEpgData(cell, epg, cell.id);
+                });
+            };
+            if (channelItems && channelItems.length) {
+                channelItems.forEach(({ channel, cellId }) => {
+                    const epg = map[String(channel.id)];
+                    if (!epg) return;
+                    updateChannelEpgSnapshot(channel.id, epg);
+                    paintCell(channel.id, epg, cellId);
+                });
+                return;
+            }
+            Object.entries(map).forEach(([id, epg]) => {
+                updateChannelEpgSnapshot(Number(id), epg);
+                paintCell(id, epg, null);
+            });
+        }
+
+        async function runBatchEpgMatch(channelItems, { refresh = false } = {}) {
+            const enabledItems = (channelItems || []).filter(
+                (item) => item.channel && item.channel.is_enabled !== false
+            );
+            if (!enabledItems.length) return {};
+
+            const channelIds = enabledItems.map((item) => item.channel.id);
+            const run = async () => {
+                if (window.currentPreviewOutputId) {
+                    const res = await fetch(`/outputs/${window.currentPreviewOutputId}/epg/match`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ refresh, channel_ids: channelIds }),
+                    });
+                    if (!res.ok) throw new Error(await res.text());
+                    const data = await res.json();
+                    applyBatchEpgPrograms(data.programs, enabledItems);
+                    return data;
+                }
+                if (!window.currentEPGUrl) return { programs: {} };
+                const res = await fetch('/api/epg/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        epg_url: window.currentEPGUrl,
+                        refresh,
+                        channels: enabledItems.map(({ channel }) => ({
+                            id: channel.id,
+                            tvg_id: channel.tvg_id || '',
+                            tvg_name: effectiveTvgName(channel),
+                            name: channel.name || '',
+                            logo: channel.logo || '',
+                            is_enabled: channel.is_enabled !== false,
+                        })),
+                    }),
+                });
+                if (!res.ok) throw new Error(await res.text());
+                const data = await res.json();
+                applyBatchEpgPrograms(data.programs, enabledItems);
+                return data;
+            };
+
+            return run();
         }
 
         async function loadChannelEPG(epgUrl, tvgName, cellId, currentLogo, channelId, isRefresh = false, channelObj = null) {
             const cell = document.getElementById(cellId);
             if (!cell) return;
-
+            if (!isRefresh && channelHasEpgSnapshot(channelObj)) {
+                applyEpgData(cell, { program: channelObj.epg_program, logo: channelObj.epg_logo }, cellId);
+                return;
+            }
+            if (channelObj && channelObj.is_enabled === false) {
+                applyEpgData(cell, { program: '频道已禁用' }, cellId);
+                return;
+            }
             try {
-                if (!isRefresh && channelHasEpgSnapshot(channelObj)) {
-                    applyEpgData(cell, { program: channelObj.epg_program, logo: channelObj.epg_logo }, cellId);
-                    return;
-                }
-
-                const tvgId = (channelObj?.tvg_id || '').trim();
-                const dedupeKey = epgDedupeKey(epgUrl, channelObj, tvgName);
-                let actualRefresh = !!isRefresh;
-                if (actualRefresh && window._epgBatchRefreshPending) {
-                    window._epgBatchRefreshPending = false;
-                } else if (actualRefresh) {
-                    actualRefresh = false;
-                }
-
-                // 1. 检查缓存 (如果不是刷新请求，则尝试读缓存)
-                if (!isRefresh && window.epgCache.has(dedupeKey)) {
-                    applyEpgData(cell, window.epgCache.get(dedupeKey), cellId);
-                    return;
-                }
-
-                // 2. 检查是否有相同请求在处理
-                if (pendingEpgRequests.has(dedupeKey)) {
-                    const data = await pendingEpgRequests.get(dedupeKey);
-                    applyEpgData(cell, data, cellId);
-                    return;
-                }
-
-                // 3. 发起请求
-                const fetchPromise = (async () => {
-                    const url = `/api/epg/current?epg_url=${encodeURIComponent(epgUrl)}&tvg_id=${encodeURIComponent(tvgId)}&tvg_name=${encodeURIComponent(tvgName || '')}&current_logo=${encodeURIComponent(currentLogo || '')}&refresh=${actualRefresh}`;
-                    const res = await fetch(url);
-                    return await res.json();
-                })();
-
-                pendingEpgRequests.set(dedupeKey, fetchPromise);
-
-                const data = await fetchPromise;
-                // 成功后更新缓存 (刷新请求也会覆盖缓存)
-                window.epgCache.set(dedupeKey, data);
-                pendingEpgRequests.delete(dedupeKey);
-
-                applyEpgData(cell, data, cellId);
+                await runBatchEpgMatch([{ channel: channelObj || { id: channelId, tvg_name: tvgName, logo: currentLogo }, cellId }], {
+                    refresh: !!isRefresh,
+                });
             } catch (e) {
-                if (cell) {
-                    cell.innerText = '加载失败';
-                    cell.style.color = 'var(--text-failure, #ef4444)';
-                    cell.title = e.message;
-                    console.error("EPG Load Error:", e);
-                }
+                cell.innerText = '加载失败';
+                cell.style.color = 'var(--text-failure, #ef4444)';
+                cell.title = e.message;
+                console.error('EPG Load Error:', e);
             }
         }
 
@@ -3646,36 +3691,28 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
             }
         }
 
-        // EPG 请求队列 (防卡死)
         const epgQueue = [];
         let activeEpgRequests = 0;
-        const MAX_EPG_CONCURRENCY = 5; // 降低并发，减少服务端压力
-        const EPG_REQ_TIMEOUT = 12000; // 12秒陈旧请求自动丢弃
+        const EPG_REQ_TIMEOUT = 12000;
 
         function enqueueEpgLoad(...args) {
-            epgQueue.push({
-                args: args,
-                time: Date.now()
-            });
+            epgQueue.push({ args, time: Date.now() });
             processEpgQueue();
         }
 
         async function processEpgQueue() {
-            if (activeEpgRequests >= MAX_EPG_CONCURRENCY || epgQueue.length === 0) return;
-
+            if (activeEpgRequests > 0 || !epgQueue.length) return;
             const item = epgQueue.shift();
-            // 如果请求太旧了（比如滑动很快产生的过往请求），直接丢弃
             if (Date.now() - item.time > EPG_REQ_TIMEOUT) {
                 processEpgQueue();
                 return;
             }
-
             activeEpgRequests++;
             try {
                 await loadChannelEPG(...item.args);
             } finally {
                 activeEpgRequests--;
-                setTimeout(processEpgQueue, 20); // 稍微拉开一点间距
+                setTimeout(processEpgQueue, 20);
             }
         }
 
@@ -3695,10 +3732,16 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
 
             let targets = pool;
             if (window.selectedChannelIds.size > 0) {
-                targets = pool.filter(c => window.selectedChannelIds.has(c.id));
+                targets = pool.filter((c) => window.selectedChannelIds.has(c.id));
             }
             if (!targets.length) {
                 showToast('请先勾选要刷新的频道', 'info');
+                return;
+            }
+
+            const enabledTargets = targets.filter((c) => c.is_enabled !== false);
+            if (!enabledTargets.length) {
+                showToast('所选频道均已禁用，无需刷新节目', 'info');
                 return;
             }
 
@@ -3709,41 +3752,26 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                 btn.disabled = true;
             }
 
-            const targetIds = new Set(targets.map(c => c.id));
-            const isMobile = window.innerWidth <= 768;
-            const sections = getActivePreviewGroupSections();
-            let queued = 0;
-            window._epgBatchRefreshPending = true;
-            if (sections.length > 0) {
-                queued = enqueueGroupedPreviewEpg(sections, isMobile, {
-                    forceRefresh: true,
-                    onlyChannelIds: targetIds,
-                    includeCollapsed: true,
-                });
-            } else {
-                window.refreshSelectedOnly = true;
-                targets.forEach((c) => {
-                    const dedupeKey = epgDedupeKey(window.currentEPGUrl, c, effectiveTvgName(c));
-                    window.epgCache.delete(dedupeKey);
-                    pendingEpgRequests.delete(dedupeKey);
-                });
-                renderOffset = 0;
-                renderBaseTable(document.getElementById('channel_list'), window.lastRenderShowActions);
-                window.refreshSelectedOnly = false;
-                queued = targets.length;
-            }
+            document.querySelectorAll('[data-epg-channel-id]').forEach((cell) => {
+                const id = Number(cell.getAttribute('data-epg-channel-id'));
+                if (!enabledTargets.some((c) => c.id === id)) return;
+                cell.innerHTML = '<span style="font-size:0.85em;color:var(--text-loading);">⏳ 更新中...</span>';
+            });
 
-            if (queued > 0) {
-                showToast(`正在刷新 ${queued} 个频道的节目信息`, 'info');
-            } else {
-                showToast('所选频道未在当前展开的分组中，请先展开分组或取消折叠', 'info');
-            }
-
-            if (btn) {
-                setTimeout(() => {
+            try {
+                const data = await runBatchEpgMatch(
+                    enabledTargets.map((channel) => ({ channel, cellId: null })),
+                    { refresh: true }
+                );
+                const matched = data && data.matched != null ? data.matched : Object.keys(data.programs || {}).length;
+                showToast(`已刷新 ${matched} 个已启用频道的节目信息`, 'success');
+            } catch (e) {
+                showToast(`刷新节目失败: ${e.message}`, 'error');
+            } finally {
+                if (btn) {
                     btn.innerText = originalText || '刷新节目';
                     btn.disabled = false;
-                }, 1200);
+                }
             }
         }
 

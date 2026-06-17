@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Response
 from fastapi.responses import FileResponse
-from sqlmodel import Session, select
-from typing import List, Dict, Any
+from sqlmodel import Session, select, SQLModel
+from typing import List, Dict, Any, Optional
 import json
 from datetime import datetime, timedelta
 import re
@@ -9,7 +9,7 @@ import re
 from models import OutputSource, Subscription, Channel, TaskRecord
 from database import get_session
 from services.generator import M3UGenerator
-from services.epg import refresh_epg_group
+from services.epg import EPGManager, refresh_epg_group, split_epg_urls
 from services.stream_checker import StreamChecker
 from routers.subscriptions import process_subscription_refresh
 from services.output_resolver import export_m3u_channels, filter_candidates, preview_export_groups, aggregate_channels
@@ -22,6 +22,12 @@ from services.output_stats import (
 import uuid
 
 router = APIRouter(tags=["outputs"])
+
+
+class OutputEpgMatchRequest(SQLModel):
+    """聚合源批量节目匹配请求。"""
+    refresh: bool = False
+    channel_ids: Optional[List[int]] = None
 
 
 def _normalize_keyword_rules(raw_keywords: list) -> list:
@@ -203,6 +209,44 @@ def update_output(output_id: int, output_data: OutputSource, session: Session = 
     session.refresh(output)
     return output
 
+
+
+@router.post("/outputs/{output_id}/epg/match")
+async def match_output_epg(
+    output_id: int,
+    req: OutputEpgMatchRequest,
+    session: Session = Depends(get_session),
+):
+    """一次拉取多源 EPG 到本地，再仅对已启用导出频道批量匹配。"""
+    out = session.get(OutputSource, output_id)
+    if not out:
+        raise HTTPException(status_code=404, detail="输出源不存在")
+    if not out.epg_url:
+        raise HTTPException(status_code=400, detail="聚合源未配置节目表")
+
+    enabled_channels = export_m3u_channels(session, out, None)
+    if req.channel_ids:
+        wanted = {int(i) for i in req.channel_ids}
+        enabled_channels = [c for c in enabled_channels if c.id in wanted]
+
+    loaded = await EPGManager.refresh_and_load(out.epg_url, refresh=req.refresh)
+    if not loaded:
+        return {
+            "programs": {},
+            "matched": 0,
+            "enabled_total": len(enabled_channels),
+            "source_count": len(split_epg_urls(out.epg_url or "")),
+            "message": "EPG 加载失败",
+        }
+
+    results = EPGManager.batch_lookup_channels(out.epg_url, enabled_channels, enabled_only=True)
+    return {
+        "programs": {str(k): v for k, v in results.items()},
+        "matched": len(results),
+        "enabled_total": len(enabled_channels),
+        "source_count": len(split_epg_urls(out.epg_url or "")),
+        "refreshed": bool(req.refresh),
+    }
 
 
 @router.get("/outputs/{output_id}/export-preview")

@@ -17,10 +17,6 @@ EPG_CACHE_DIR = "./epg_cache"
 if not os.path.exists(EPG_CACHE_DIR):
     os.makedirs(EPG_CACHE_DIR, exist_ok=True)
 
-# 珠三角地面台 EPG 不含港澳台，自动追加通用补源
-_GD_PL_EPG_URL = "https://raw.githubusercontent.com/litiande03/epg/refs/heads/master/pl.xml.gz"
-_HK_TW_SUPPLEMENT_URL = "https://epg.112114.xyz/pp.xml.gz"
-
 # 并发控制与请求合并
 _url_locks: Dict[str, asyncio.Lock] = {}
 _pending_futures: Dict[str, asyncio.Future] = {}  # 用于合并相同 URL 组合的解析任务
@@ -41,14 +37,6 @@ def split_epg_urls(epg_url: str) -> List[str]:
     return urls
 
 
-def expand_epg_urls(epg_url: str) -> List[str]:
-    """展开用户配置并附加已知补源。"""
-    urls = split_epg_urls(epg_url)
-    if _GD_PL_EPG_URL in urls and _HK_TW_SUPPLEMENT_URL not in urls:
-        urls.append(_HK_TW_SUPPLEMENT_URL)
-    return urls
-
-
 def primary_epg_url_for_export(epg_url: str) -> str:
     """M3U x-tvg-url 只写主链，避免播放器不识别多链。"""
     urls = split_epg_urls(epg_url)
@@ -57,15 +45,15 @@ def primary_epg_url_for_export(epg_url: str) -> str:
 
 def epg_config_key(epg_url: str) -> str:
     """同一组 EPG 源共用内存缓存键。"""
-    expanded = expand_epg_urls(epg_url)
-    if not expanded:
+    urls = split_epg_urls(epg_url)
+    if not urls:
         return ""
-    return md5("|".join(expanded).encode()).hexdigest()
+    return md5("|".join(urls).encode()).hexdigest()
 
 
 async def refresh_epg_group(epg_url: str, refresh: bool = False) -> None:
-    """按配置刷新一组 EPG 源（含自动补源）。"""
-    for url in expand_epg_urls(epg_url):
+    """按配置刷新一组 EPG 源到本地磁盘缓存。"""
+    for url in split_epg_urls(epg_url):
         await fetch_epg_cached(url, refresh=refresh)
 
 
@@ -148,7 +136,7 @@ class EPGManager:
     def _load_parsed_from_disk(cls, epg_url: str) -> Dict[str, Any]:
         """从磁盘加载一组 EPG 源并合并。"""
         parts = []
-        for url in expand_epg_urls(epg_url):
+        for url in split_epg_urls(epg_url):
             cache_path = os.path.join(EPG_CACHE_DIR, f"{md5(url.encode()).hexdigest()}.xml")
             if os.path.exists(cache_path):
                 parts.append(cls._parse_epg_file(cache_path))
@@ -174,9 +162,107 @@ class EPGManager:
             "name_map": parsed["name_map"],
             "logos": parsed["logos"],
             "reverse_logos": parsed.get("reverse_logos", {}),
-            "source_count": len(expand_epg_urls(epg_url)),
+            "source_count": len(split_epg_urls(epg_url)),
         }
         return True
+
+    @staticmethod
+    def _channel_is_enabled(channel) -> bool:
+        if hasattr(channel, "is_enabled"):
+            return bool(channel.is_enabled)
+        if isinstance(channel, dict):
+            return bool(channel.get("is_enabled", True))
+        return True
+
+    @staticmethod
+    def _channel_lookup_fields(channel):
+        from services.channel_logo_overlay import effective_tvg_name_channel, effective_tvg_name_dict
+
+        if isinstance(channel, dict):
+            ch_id = channel.get("id")
+            tvg_id = (channel.get("tvg_id") or "").strip()
+            tvg_name = effective_tvg_name_dict(channel)
+            logo = channel.get("logo")
+            return ch_id, tvg_id, tvg_name, logo
+        ch_id = getattr(channel, "id", None)
+        tvg_id = (getattr(channel, "tvg_id", None) or "").strip()
+        tvg_name = effective_tvg_name_channel(channel)
+        logo = getattr(channel, "logo", None)
+        return ch_id, tvg_id, tvg_name, logo
+
+    @classmethod
+    def batch_lookup_channels(
+        cls,
+        epg_url: str,
+        channels: List[Any],
+        *,
+        enabled_only: bool = True,
+    ) -> Dict[int, Dict[str, Any]]:
+        """对已加载的 EPG 内存缓存批量匹配频道节目。"""
+        if not epg_url or not cls.ensure_parsed_cache_sync(epg_url):
+            return {}
+        cache_key = epg_config_key(epg_url)
+        entry = cls._cache.get(cache_key)
+        if not entry:
+            return {}
+        results: Dict[int, Dict[str, Any]] = {}
+        for channel in channels or []:
+            if enabled_only and not cls._channel_is_enabled(channel):
+                continue
+            ch_id, tvg_id, tvg_name, logo = cls._channel_lookup_fields(channel)
+            if ch_id is None:
+                continue
+            prog = cls._lookup_in_memory(entry, tvg_id, tvg_name, logo)
+            results[int(ch_id)] = {
+                "program": prog.get("title", "无节目信息"),
+                "logo": prog.get("logo"),
+            }
+        return results
+
+    @classmethod
+    async def refresh_and_load(cls, epg_url: str, refresh: bool = False) -> bool:
+        """下载（可选强制）并解析多源 EPG 到内存，整组只执行一次。"""
+        if not epg_url:
+            return False
+
+        cache_key = epg_config_key(epg_url)
+        now_ts = datetime.now(timezone.utc).timestamp()
+
+        if not refresh and cache_key in cls._cache:
+            entry = cls._cache[cache_key]
+            if now_ts - entry["timestamp"] < 3600:
+                return bool(entry.get("programs") or entry.get("name_map"))
+
+        actual_refresh = refresh
+        if refresh:
+            last_ref = _url_refresh_timestamps.get(cache_key, 0)
+            if time.time() - last_ref < 300:
+                if time.time() >= _cd_log_suppress_until.get(cache_key, 0):
+                    print(f"[EPG] 刷新受限 (5分钟CD): {epg_url}")
+                    _cd_log_suppress_until[cache_key] = time.time() + 300
+                actual_refresh = False
+            else:
+                _url_refresh_timestamps[cache_key] = time.time()
+
+        async with _locks_lock:
+            if cache_key in _pending_futures:
+                fut = _pending_futures[cache_key]
+            else:
+                fut = asyncio.get_event_loop().create_future()
+                _pending_futures[cache_key] = fut
+                asyncio.create_task(cls._bg_refresh_at_url(epg_url, cache_key, actual_refresh))
+
+        try:
+            await asyncio.wait_for(fut, timeout=120.0)
+        except Exception as e:
+            import traceback
+
+            print(f"[EPG] 加载异常: {epg_url} -> {e}")
+            traceback.print_exc()
+            return False
+
+        entry = cls._cache.get(cache_key)
+        return bool(entry and (entry.get("programs") or entry.get("name_map")))
 
     @classmethod
     def lookup_program_sync(
@@ -203,58 +289,23 @@ class EPGManager:
         current_logo: str = None,
         refresh: bool = False,
     ) -> dict:
-        """获取频道节目 (带请求合并与超时保护)"""
+        """获取单频道节目（内部走 refresh_and_load）。"""
         if not epg_url:
             return {"title": "无 EPG 链接", "logo": None}
-
+        if not await cls.refresh_and_load(epg_url, refresh=refresh):
+            return {"title": "无节目信息", "logo": None}
         cache_key = epg_config_key(epg_url)
-        now_ts = datetime.now(timezone.utc).timestamp()
-
-        # 1. 内存缓存极速命中
-        if not refresh and cache_key in cls._cache:
-            entry = cls._cache[cache_key]
-            if now_ts - entry["timestamp"] < 3600:
-                return cls._lookup_in_memory(entry, channel_id, channel_name, current_logo)
-
-        # 2. 刷新频率控制 (Anti-Storm): 5 分钟内同一配置只允许一次真正的 refresh=True
-        actual_refresh = refresh
-        if refresh:
-            last_ref = _url_refresh_timestamps.get(cache_key, 0)
-            if time.time() - last_ref < 300:
-                if time.time() >= _cd_log_suppress_until.get(cache_key, 0):
-                    print(f"[EPG] 刷新受限 (5分钟CD): {epg_url}")
-                    _cd_log_suppress_until[cache_key] = time.time() + 300
-                actual_refresh = False
-            else:
-                _url_refresh_timestamps[cache_key] = time.time()
-
-        # 3. 请求合并逻辑 (Future Coalescing)
-        async with _locks_lock:
-            if cache_key in _pending_futures:
-                fut = _pending_futures[cache_key]
-            else:
-                fut = asyncio.get_event_loop().create_future()
-                _pending_futures[cache_key] = fut
-                asyncio.create_task(cls._bg_refresh_at_url(epg_url, cache_key, actual_refresh))
-
-        try:
-            await asyncio.wait_for(fut, timeout=10.0)
-            if cache_key in cls._cache:
-                return cls._lookup_in_memory(cls._cache[cache_key], channel_id, channel_name, current_logo)
-        except Exception as e:
-            import traceback
-
-            print(f"[EPG] API 异常: {epg_url} -> {e}")
-            traceback.print_exc()
-
-        return {"title": "无节目信息", "logo": None}
+        entry = cls._cache.get(cache_key)
+        if not entry:
+            return {"title": "无节目信息", "logo": None}
+        return cls._lookup_in_memory(entry, channel_id, channel_name, current_logo)
 
     @classmethod
     async def _bg_refresh_at_url(cls, epg_url: str, cache_key: str, refresh: bool):
         """后台执行真正的数据抓取与解析"""
         try:
             parts = []
-            source_urls = expand_epg_urls(epg_url)
+            source_urls = split_epg_urls(epg_url)
             for url in source_urls:
                 xml_path = await fetch_epg_cached(url, refresh=refresh)
                 if xml_path and os.path.exists(xml_path):

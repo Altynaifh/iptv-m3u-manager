@@ -160,29 +160,29 @@ def _enrich_preview_epg(
     out=None,
     members=None,
     validate_cluster_logos: bool = True,
+    session=None,
 ) -> dict:
-    """生成预览节目表快照：先查 EPG，再按验证供体统一覆盖同频道 tvg-name/台标。"""
-    from services.channel_logo_overlay import (
-        apply_validated_cluster_overlays_to_preview,
-        effective_tvg_name_dict,
-    )
+    """生成预览节目表快照：仅对已启用导出频道批量匹配 EPG。"""
+    from services.channel_logo_overlay import apply_validated_cluster_overlays_to_preview
     from services.epg import EPGManager
 
-    if epg_url and EPGManager.ensure_parsed_cache_sync(epg_url):
-        for key in ("manual_groups", "ai_groups"):
-            for sec in payload.get(key) or []:
-                for ch in sec.get("channels") or []:
-                    prog = EPGManager.lookup_program_sync(
-                        epg_url,
-                        "",
-                        effective_tvg_name_dict(ch),
-                        ch.get("logo"),
-                    )
-                    ch["epg_program"] = prog.get("title")
-                    ch["epg_logo"] = prog.get("logo")
-        payload["epg_snapshot_at"] = datetime.utcnow().isoformat()
-        if validate_cluster_logos and out is not None and members:
-            apply_validated_cluster_overlays_to_preview(payload, out, members, epg_url)
+    if epg_url and out is not None and session is not None:
+        enabled_channels = export_m3u_channels(session, out, None)
+        if enabled_channels and EPGManager.ensure_parsed_cache_sync(epg_url):
+            results = EPGManager.batch_lookup_channels(
+                epg_url, enabled_channels, enabled_only=True
+            )
+            for key in ("manual_groups", "ai_groups"):
+                for sec in payload.get(key) or []:
+                    for ch in sec.get("channels") or []:
+                        cid = ch.get("id")
+                        if cid not in results:
+                            continue
+                        ch["epg_program"] = results[cid]["program"]
+                        ch["epg_logo"] = results[cid]["logo"]
+            payload["epg_snapshot_at"] = datetime.utcnow().isoformat()
+            if validate_cluster_logos and members:
+                apply_validated_cluster_overlays_to_preview(payload, out, members, epg_url)
     return payload
 
 
@@ -225,6 +225,7 @@ def _build_output_artifacts_impl(session: Session, out: OutputSource) -> Dict[st
         out.epg_url,
         out=out,
         members=aggregate_channels(session, out, None),
+        session=session,
     )
     _atomic_write_json_gz(preview_artifact_path(out.id), payload)
 

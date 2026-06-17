@@ -1,13 +1,13 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 import asyncio
 import aiohttp
 import os
 import signal
-from typing import Optional
+from typing import Optional, List
 from sqlmodel import SQLModel
 
 from services.connectivity import check_url
-from services.epg import EPGManager, fetch_epg_cached, md5
+from services.epg import EPGManager, fetch_epg_cached, md5, split_epg_urls
 
 router = APIRouter(tags=["tools"])
 
@@ -16,6 +16,23 @@ from sqlmodel import Session, select
 from database import get_session
 from fastapi import Depends
 from models import Channel
+
+class EpgBatchChannel(SQLModel):
+    """订阅预览批量匹配的单条频道。"""
+    id: int
+    tvg_id: Optional[str] = ""
+    tvg_name: Optional[str] = ""
+    name: Optional[str] = ""
+    logo: Optional[str] = ""
+    is_enabled: bool = True
+
+
+class EpgBatchRequest(SQLModel):
+    """订阅场景：一次拉取多源 EPG，再批量匹配已启用频道。"""
+    epg_url: str
+    refresh: bool = False
+    channels: List[EpgBatchChannel] = []
+
 
 class CheckRequest(SQLModel):
     """检测请求数据"""
@@ -32,9 +49,34 @@ from models import TaskRecord
 
 @router.get("/api/epg/current")
 async def get_epg_current(epg_url: str, tvg_id: str = None, tvg_name: str = None, current_logo: str = None, refresh: bool = False):
-    """看现在播啥节目"""
+    """看现在播啥节目（单频道，兼容旧调用）"""
     prog_data = await EPGManager.get_program(epg_url, tvg_id, tvg_name, current_logo, refresh=refresh)
     return {"program": prog_data.get("title", ""), "logo": prog_data.get("logo")}
+
+
+@router.post("/api/epg/batch")
+async def epg_batch_match(req: EpgBatchRequest):
+    """一次拉取多源 EPG 到本地，再仅对已启用频道批量匹配。"""
+    if not req.epg_url:
+        raise HTTPException(status_code=400, detail="缺少 epg_url")
+    targets = [c.model_dump() for c in (req.channels or []) if c.is_enabled]
+    loaded = await EPGManager.refresh_and_load(req.epg_url, refresh=req.refresh)
+    if not loaded:
+        return {
+            "programs": {},
+            "matched": 0,
+            "target_total": len(targets),
+            "source_count": len(split_epg_urls(req.epg_url)),
+            "message": "EPG 加载失败",
+        }
+    results = EPGManager.batch_lookup_channels(req.epg_url, targets, enabled_only=True)
+    return {
+        "programs": {str(k): v for k, v in results.items()},
+        "matched": len(results),
+        "target_total": len(targets),
+        "source_count": len(split_epg_urls(req.epg_url)),
+        "refreshed": bool(req.refresh),
+    }
 
 @router.post("/check-connectivity")
 async def check_connectivity(req: CheckRequest):
