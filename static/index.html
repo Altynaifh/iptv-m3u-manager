@@ -1778,8 +1778,12 @@
             }
         }
 
+        const EPG_MISS_TITLES = new Set(['无节目信息', '无 EPG 链接', 'No Program Info', '']);
+
         function channelHasEpgSnapshot(c) {
-            return !!(c && c.epg_program != null && c.epg_program !== undefined);
+            if (!c || c.epg_program == null || c.epg_program === undefined) return false;
+            const title = String(c.epg_program).trim();
+            return title.length > 0 && !EPG_MISS_TITLES.has(title);
         }
 
         function effectiveTvgName(channel) {
@@ -3946,8 +3950,13 @@ ${window.currentEPGUrl ? '<th style="padding: 10px;">当前节目</th>' : ''}
                     enabledTargets.map((channel) => ({ channel, cellId: null })),
                     { refresh: true }
                 );
-                const matched = data && data.matched != null ? data.matched : Object.keys(data.programs || {}).length;
-                showToast(`已刷新 ${matched} 个已启用频道的节目信息`, 'success');
+                const programs = (data && data.programs) || {};
+                const matched = data && data.matched != null
+                    ? data.matched
+                    : Object.values(programs).filter((p) => p && p.program && !EPG_MISS_TITLES.has(String(p.program).trim())).length;
+                const oid = window.currentPreviewOutputId;
+                if (oid) delete window._aggregatePreviewPayloadByOutputId[oid];
+                showToast(`已刷新 ${matched} 个频道的节目信息（已写入预览缓存）`, 'success');
             } catch (e) {
                 showToast(`刷新节目失败: ${e.message}`, 'error');
             } finally {

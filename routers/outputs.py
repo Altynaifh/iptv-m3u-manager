@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Response
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select, SQLModel
 from typing import List, Dict, Any, Optional
+import asyncio
 import json
 from datetime import datetime, timedelta
 import re
@@ -248,12 +249,26 @@ async def match_output_epg(
     results = await EPGManager.batch_lookup_channels_async(
         out.epg_url, enabled_channels, enabled_only=True
     )
+    programs = {str(k): v for k, v in results.items()}
+    matched = sum(
+        1
+        for v in results.values()
+        if (v.get("program") or "").strip() not in ("", "无节目信息", "无 EPG 链接")
+    )
+
+    from services.output_artifacts import patch_preview_epg_snapshot, schedule_rebuild_output_artifacts
+
+    patched = await asyncio.to_thread(patch_preview_epg_snapshot, output_id, programs)
+    if not patched:
+        schedule_rebuild_output_artifacts(output_id, epg_refresh=False)
+
     return {
-        "programs": {str(k): v for k, v in results.items()},
-        "matched": len(results),
+        "programs": programs,
+        "matched": matched,
         "enabled_total": len(enabled_channels),
         "source_count": len(split_epg_urls(out.epg_url or "")),
         "refreshed": bool(req.refresh),
+        "persisted": patched,
     }
 
 

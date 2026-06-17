@@ -233,6 +233,45 @@ def try_get_preview_gzip_fast(
     return gz_bytes, cache
 
 
+def patch_preview_epg_snapshot(output_id: int, programs: Dict[Any, Dict[str, Any]]) -> bool:
+    """将批量 EPG 匹配结果写入预览 gzip，供刷新页面后直读。"""
+    if not programs:
+        return False
+    payload = _read_preview_file(output_id)
+    if not payload:
+        return False
+    lookup: Dict[int, Dict[str, Any]] = {}
+    for cid, info in programs.items():
+        try:
+            lookup[int(cid)] = info
+        except (TypeError, ValueError):
+            continue
+    if not lookup:
+        return False
+    touched = 0
+    for key in ("manual_groups", "ai_groups"):
+        for sec in payload.get(key) or []:
+            for ch in sec.get("channels") or []:
+                cid = ch.get("id")
+                if cid is None:
+                    continue
+                info = lookup.get(int(cid))
+                if not info:
+                    continue
+                ch["epg_program"] = info.get("program")
+                ch["epg_logo"] = info.get("logo")
+                touched += 1
+    if not touched:
+        return False
+    snapshot_at = datetime.utcnow().isoformat()
+    payload["epg_snapshot_at"] = snapshot_at
+    _atomic_write_json_gz(preview_artifact_path(output_id), payload)
+    meta = _read_artifact_meta(output_id) or {}
+    meta["epg_snapshot_at"] = snapshot_at
+    _atomic_write_text(preview_meta_path(output_id), json.dumps(meta, ensure_ascii=False))
+    return True
+
+
 def _enrich_preview_epg(
     payload: dict,
     epg_url: Optional[str],
